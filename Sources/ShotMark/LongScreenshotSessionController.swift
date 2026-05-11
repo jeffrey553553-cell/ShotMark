@@ -177,6 +177,7 @@ final class LongScreenshotSessionController {
     private let scrollCaptureInterval: TimeInterval = 0.075
     private let trailingCaptureDelay: TimeInterval = 0.09
     private let scrollDirectionThreshold: CGFloat = 0.1
+    private let directionalConfidenceRatio = 0.86
 
     init(selection: CaptureSelection) {
         self.selection = selection
@@ -662,7 +663,7 @@ final class LongScreenshotSessionController {
               appendHeight <= current.height * 3 / 4 else {
             return nil
         }
-        guard !reverseMovementIsLikely(previous: previous, current: current, downOverlapRows: match.rows, downScore: match.score) else {
+        guard downwardMovementIsLikely(previous: previous, current: current, downMatch: match) else {
             return nil
         }
 
@@ -725,7 +726,8 @@ final class LongScreenshotSessionController {
         let overlapRows = current.height - appendHeight
         let score = overlapQualityScore(previous: previous, current: current, overlapRows: overlapRows)
         guard score < 22 else { return nil }
-        guard !reverseMovementIsLikely(previous: previous, current: current, downOverlapRows: overlapRows, downScore: score) else {
+        let downMatch = OverlapMatch(rows: overlapRows, score: score)
+        guard downwardMovementIsLikely(previous: previous, current: current, downMatch: downMatch) else {
             return nil
         }
 
@@ -768,11 +770,54 @@ final class LongScreenshotSessionController {
         return OverlapMatch(rows: imageRows, score: bestScore)
     }
 
-    private func reverseMovementIsLikely(previous: CGImage, current: CGImage, downOverlapRows: Int, downScore: Double) -> Bool {
+    private func reverseVerticalOverlap(previous: CGImage, current: CGImage) -> OverlapMatch? {
+        guard previous.width == current.width, previous.height == current.height else { return nil }
+        guard
+            let previousSample = FrameSample(image: previous, width: 72, height: 160),
+            let currentSample = FrameSample(image: current, width: 72, height: 160)
+        else {
+            return nil
+        }
+
+        let maximumRows = max(8, previousSample.height - 2)
+        let minimumRows = max(8, previousSample.height / 8)
+        var bestRows = 0
+        var bestScore = Double.greatestFiniteMagnitude
+
+        for rows in stride(from: maximumRows, through: minimumRows, by: -1) {
+            let score = reverseOverlapScore(
+                previous: previousSample,
+                current: currentSample,
+                rows: rows
+            )
+            let sizeBias = Double(maximumRows - rows) * 0.015
+            let biasedScore = score + sizeBias
+            if biasedScore < bestScore {
+                bestScore = biasedScore
+                bestRows = rows
+            }
+        }
+
+        guard bestRows > 0 else { return nil }
+        let ratio = CGFloat(bestRows) / CGFloat(previousSample.height)
+        let imageRows = min(current.height - 1, max(0, Int((CGFloat(current.height) * ratio).rounded())))
+        return OverlapMatch(rows: imageRows, score: bestScore)
+    }
+
+    private func downwardMovementIsLikely(previous: CGImage, current: CGImage, downMatch: OverlapMatch) -> Bool {
         guard previous.width == current.width, previous.height == current.height else { return false }
-        let reverseScore = reverseOverlapQualityScore(previous: previous, current: current, overlapRows: downOverlapRows)
-        guard reverseScore.isFinite else { return false }
-        return reverseScore + 3.0 < downScore
+        guard downMatch.rows >= current.height / 10 else { return false }
+        guard let reverseMatch = reverseVerticalOverlap(previous: previous, current: current) else { return true }
+
+        let reverseAppendHeight = current.height - reverseMatch.rows
+        let reverseLooksScrollable = reverseMatch.rows >= current.height / 10
+            && reverseAppendHeight >= max(14, current.height / 100)
+            && reverseAppendHeight <= current.height * 3 / 4
+
+        guard reverseLooksScrollable else { return true }
+
+        let requiredLead = max(3.0, min(12.0, reverseMatch.score * (1.0 - directionalConfidenceRatio)))
+        return downMatch.score + requiredLead < reverseMatch.score
     }
 
     private func overlapQualityScore(previous: CGImage, current: CGImage, overlapRows: Int) -> Double {
@@ -792,25 +837,6 @@ final class LongScreenshotSessionController {
             max(8, Int((CGFloat(previousSample.height) * ratio).rounded()))
         )
         return overlapScore(previous: previousSample, current: currentSample, rows: sampleRows)
-    }
-
-    private func reverseOverlapQualityScore(previous: CGImage, current: CGImage, overlapRows: Int) -> Double {
-        guard previous.width == current.width, previous.height == current.height else {
-            return Double.greatestFiniteMagnitude
-        }
-        guard
-            let previousSample = FrameSample(image: previous, width: 72, height: 160),
-            let currentSample = FrameSample(image: current, width: 72, height: 160)
-        else {
-            return Double.greatestFiniteMagnitude
-        }
-
-        let ratio = CGFloat(overlapRows) / CGFloat(current.height)
-        let sampleRows = min(
-            previousSample.height - 2,
-            max(8, Int((CGFloat(previousSample.height) * ratio).rounded()))
-        )
-        return reverseOverlapScore(previous: previousSample, current: currentSample, rows: sampleRows)
     }
 
     private func overlapScore(previous: FrameSample, current: FrameSample, rows: Int) -> Double {

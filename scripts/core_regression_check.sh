@@ -66,7 +66,9 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "LongScreenshotHotKeyService" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "kVK_Escape" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "primaryScrollDirectionSign" Sources/ShotMark/LongScreenshotSessionController.swift
-  rg -q "reverseMovementIsLikely" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "downwardMovementIsLikely" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "reverseVerticalOverlap" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "directionalConfidenceRatio" Sources/ShotMark/LongScreenshotSessionController.swift
 '
 
 SCREEN_INFO="$(system_profiler SPDisplaysDataType 2>/dev/null || true)"
