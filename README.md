@@ -57,6 +57,8 @@ CODE_SIGN_IDENTITY="ShotMark Local Developer" scripts/build_app.sh
 scripts/package_dmg.sh
 ```
 
+生成的 DMG 中包含 `ShotMark.app` 和 `Applications` 快捷方式。安装或升级时，打开 DMG 后把 `ShotMark.app` 拖到 `Applications`，如果旧版已存在，Finder 会提示是否替换。
+
 可选签名和公证：
 
 ```bash

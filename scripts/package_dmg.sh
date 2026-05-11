@@ -15,6 +15,7 @@ trap cleanup EXIT
 
 mkdir -p "$DIST_DIR"
 ditto --norsrc "$APP_PATH" "$DMG_ROOT/ShotMark.app"
+ln -s /Applications "$DMG_ROOT/Applications"
 hdiutil create -volname "$VOLUME_NAME" -srcfolder "$DMG_ROOT" -ov -format UDZO "$DMG_PATH"
 
 if [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then

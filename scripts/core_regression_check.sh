@@ -17,11 +17,30 @@ run_step() {
   echo
 }
 
+verify_dmg_install_layout() {
+  (
+    set -euo pipefail
+    local mount_dir
+    mount_dir="$(mktemp -d "${TMPDIR:-/tmp}/shotmark-dmg-mount.XXXXXX")"
+    cleanup() {
+      hdiutil detach "$mount_dir" -quiet >/dev/null 2>&1 || true
+      rmdir "$mount_dir" >/dev/null 2>&1 || true
+    }
+    trap cleanup EXIT
+
+    hdiutil attach "$ROOT_DIR/dist/ShotMark.dmg" -nobrowse -readonly -mountpoint "$mount_dir" >/dev/null
+    [[ -d "$mount_dir/ShotMark.app" ]]
+    [[ -L "$mount_dir/Applications" ]]
+    [[ "$(readlink "$mount_dir/Applications")" == "/Applications" ]]
+  )
+}
+
 run_step "Swift debug build" swift build --disable-sandbox
 run_step "Release app build" "$ROOT_DIR/scripts/build_app.sh"
 run_step "Code signature verify" codesign --verify --deep --verbose=2 "$ROOT_DIR/dist/ShotMark.app"
 run_step "DMG package" "$ROOT_DIR/scripts/package_dmg.sh"
 run_step "DMG verify" hdiutil verify "$ROOT_DIR/dist/ShotMark.dmg"
+run_step "DMG install layout verify" verify_dmg_install_layout
 run_step "P1 editing and recording static checks" bash -c '
   set -euo pipefail
   rg -q "case rectangle, arrow, number, text, mosaic, ocr, pin, longScreenshot, record, recordQuality, undo, redo, delete" Sources/ShotMark/SelectionOverlayController.swift
@@ -61,6 +80,7 @@ Generated: $TIMESTAMP
 - Code signature verify: PASS
 - DMG package: PASS
 - DMG verify: PASS
+- DMG install layout verify: PASS
 - P1 editing and recording static checks: PASS
 
 ## Environment Snapshot
