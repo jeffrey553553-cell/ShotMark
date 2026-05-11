@@ -63,6 +63,9 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "intersection\\(targetScreen\\.frame\\)" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "ToastContentView" Sources/ShotMark/ToastWindowController.swift
   rg -q "NSColor\\(calibratedWhite: 0\\.06, alpha: 0\\.88\\)" Sources/ShotMark/ToastWindowController.swift
+  rg -q "installEscapeKeyMonitor" Sources/ShotMark/OCRResultPanelController.swift
+  rg -q "event.keyCode == 53" Sources/ShotMark/OCRResultPanelController.swift
+  rg -q "onClose" Sources/ShotMark/OCRResultPanelController.swift
   rg -q "LongScreenshotHotKeyService" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "kVK_Escape" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "primaryScrollDirectionSign" Sources/ShotMark/LongScreenshotSessionController.swift
@@ -129,6 +132,7 @@ Mark each item PASS/FAIL after running it.
 | Copy | Press Cmd+C or Enter | Clipboard image pastes into Preview/Notes/Chat correctly | |
 | Pin | Click pin icon | Pinned image floats above other windows; close button removes it | |
 | OCR | Click OCR on Chinese+English text | OCR panel shows recognized text; copy all works | |
+| OCR | Open OCR panel and press Esc | OCR panel closes and screenshot/editor focus returns | |
 | Toast | Save or copy in light mode | Success toast remains readable with dark pill, check icon and white text | |
 | Recording | Select area -> record -> choose quality | Recording overlay/timer appears; Stop saves MP4 to Downloads | |
 | Recording audio | Record with Silent/System/Microphone/System+Microphone | Selected audio mode is captured; microphone modes prompt clearly when permission is missing | |

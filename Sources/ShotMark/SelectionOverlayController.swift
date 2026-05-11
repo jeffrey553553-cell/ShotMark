@@ -2291,6 +2291,12 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private func showOCRPanel(text: String) {
         ocrPanelController?.close()
         let panel = OCRResultPanelController(text: text)
+        panel.onClose = { [weak self, weak panel] in
+            guard let self, let panel, self.ocrPanelController === panel else { return }
+            self.removeOCRDismissEventMonitor()
+            self.ocrPanelController = nil
+            self.window?.makeFirstResponder(self)
+        }
         panel.onCopyAll = { [weak self] in
             self?.removeOCRDismissEventMonitor()
             self?.ocrPanelController = nil

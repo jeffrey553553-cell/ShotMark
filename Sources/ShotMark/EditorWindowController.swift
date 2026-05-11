@@ -140,6 +140,12 @@ final class EditorWindowController: NSWindowController {
     private func showOCRPanel(text: String) {
         ocrPanelController?.close()
         let panel = OCRResultPanelController(text: text)
+        panel.onClose = { [weak self, weak panel] in
+            if let panel, self?.ocrPanelController === panel {
+                self?.ocrPanelController = nil
+                self?.canvasView.window?.makeFirstResponder(self?.canvasView)
+            }
+        }
         panel.onCopyAll = { [weak self] in
             self?.ocrPanelController = nil
             self?.toolbarController.showToast("文字已复制")

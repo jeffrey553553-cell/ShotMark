@@ -18,6 +18,8 @@ final class OCRResultPanelController: NSWindowController {
     private var availabilityTask: Task<Void, Never>?
     private var scrollTopWithoutTabs: NSLayoutConstraint?
     private var scrollTopWithTabs: NSLayoutConstraint?
+    private var escapeKeyMonitor: Any?
+    private var didClose = false
     private var recognizedText: String
     private var translatedText: String?
     private var selectedTab: OCRTab = .original
@@ -30,6 +32,7 @@ final class OCRResultPanelController: NSWindowController {
         }
     }
     var onCopyAll: (() -> Void)?
+    var onClose: (() -> Void)?
 
     init(text: String) {
         self.recognizedText = text
@@ -79,8 +82,19 @@ final class OCRResultPanelController: NSWindowController {
     }
 
     func show() {
+        installEscapeKeyMonitor()
         window?.makeKeyAndOrderFront(nil)
         textView.window?.makeFirstResponder(textView)
+    }
+
+    override func close() {
+        availabilityTask?.cancel()
+        removeEscapeKeyMonitor()
+        super.close()
+
+        guard !didClose else { return }
+        didClose = true
+        onClose?()
     }
 
     func update(lines: [OCRLine]) {
@@ -176,6 +190,25 @@ final class OCRResultPanelController: NSWindowController {
         ])
         updateTabState()
         updateTranslateButtonState()
+    }
+
+    private func installEscapeKeyMonitor() {
+        removeEscapeKeyMonitor()
+        escapeKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            guard self.window?.isVisible == true, event.keyCode == 53 else {
+                return event
+            }
+            self.close()
+            return nil
+        }
+    }
+
+    private func removeEscapeKeyMonitor() {
+        if let escapeKeyMonitor {
+            NSEvent.removeMonitor(escapeKeyMonitor)
+            self.escapeKeyMonitor = nil
+        }
     }
 
     @objc private func copyAll() {
