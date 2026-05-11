@@ -2,7 +2,6 @@ import AppKit
 import Carbon
 import CoreGraphics
 import Foundation
-import Vision
 
 enum LongScreenshotSessionError: LocalizedError {
     case noFrames
@@ -62,7 +61,19 @@ private struct OverlapMatch {
     let score: Double
 }
 
+private enum StitchDirection {
+    case downward
+    case upward
+}
+
 private struct FrameAppendPlan {
+    let cropRect: CGRect
+    let direction: StitchDirection
+}
+
+private struct DirectionalAppendCandidate {
+    let direction: StitchDirection
+    let match: OverlapMatch
     let cropRect: CGRect
 }
 
@@ -166,6 +177,7 @@ final class LongScreenshotSessionController {
     private var trailingScrollCaptureWorkItem: DispatchWorkItem?
     private var lastScrollCaptureAt = Date.distantPast
     private var primaryScrollDirectionSign: CGFloat?
+    private var primaryStitchDirection: StitchDirection?
     private var isCapturing = false
     private var needsCaptureAfterCurrent = false
     private var finishAfterCapture = false
@@ -618,7 +630,12 @@ final class LongScreenshotSessionController {
                 let plan = appendPlan(previous: lastAcceptedFrame, current: current),
                 let segment = current.cropping(to: plan.cropRect)
             else { continue }
-            segments.append(segment)
+            switch plan.direction {
+            case .downward:
+                segments.append(segment)
+            case .upward:
+                segments.insert(segment, at: 0)
+            }
             lastAcceptedFrame = current
         }
 
@@ -641,8 +658,16 @@ final class LongScreenshotSessionController {
             return false
         }
 
-        stitchedSegments.append(segment)
+        switch plan.direction {
+        case .downward:
+            stitchedSegments.append(segment)
+        case .upward:
+            stitchedSegments.insert(segment, at: 0)
+        }
         lastAcceptedFrame = image
+        if primaryStitchDirection == nil {
+            primaryStitchDirection = plan.direction
+        }
         stitchedImageCache = composeSegments(stitchedSegments)
         return true
     }
@@ -650,26 +675,29 @@ final class LongScreenshotSessionController {
     private func appendPlan(previous: CGImage, current: CGImage) -> FrameAppendPlan? {
         guard previous.width == current.width, previous.height == current.height else { return nil }
 
-        if let plan = translationalAppendPlan(previous: previous, current: current) {
-            return plan
-        }
-
-        guard let match = verticalOverlap(previous: previous, current: current) else { return nil }
-        let appendHeight = current.height - match.rows
-        let minimumAppendHeight = max(14, current.height / 100)
-        guard match.rows >= current.height / 10,
-              match.score < 18,
-              appendHeight >= minimumAppendHeight,
-              appendHeight <= current.height * 3 / 4 else {
-            return nil
-        }
-        guard downwardMovementIsLikely(previous: previous, current: current, downMatch: match) else {
-            return nil
-        }
-
-        return FrameAppendPlan(
-            cropRect: CGRect(x: 0, y: match.rows, width: current.width, height: appendHeight)
+        let downCandidate = appendCandidate(
+            direction: .downward,
+            match: verticalOverlap(previous: previous, current: current),
+            imageSize: CGSize(width: current.width, height: current.height)
         )
+        let upCandidate = appendCandidate(
+            direction: .upward,
+            match: reverseVerticalOverlap(previous: previous, current: current),
+            imageSize: CGSize(width: current.width, height: current.height)
+        )
+
+        let selected: DirectionalAppendCandidate?
+        if let primaryStitchDirection {
+            selected = lockedCandidate(
+                direction: primaryStitchDirection,
+                downCandidate: downCandidate,
+                upCandidate: upCandidate
+            )
+        } else {
+            selected = unlockedCandidate(downCandidate: downCandidate, upCandidate: upCandidate)
+        }
+        guard let selected else { return nil }
+        return FrameAppendPlan(cropRect: selected.cropRect, direction: selected.direction)
     }
 
     private func composeSegments(_ segments: [CGImage]) -> CGImage? {
@@ -701,39 +729,6 @@ final class LongScreenshotSessionController {
         }
 
         return context.makeImage()
-    }
-
-    private func translationalAppendPlan(previous: CGImage, current: CGImage) -> FrameAppendPlan? {
-        let request = VNTranslationalImageRegistrationRequest(targetedCGImage: current, options: [:])
-        let handler = VNImageRequestHandler(cgImage: previous, orientation: .up, options: [:])
-
-        do {
-            try handler.perform([request])
-        } catch {
-            return nil
-        }
-
-        guard let transform = request.results?.first?.alignmentTransform else { return nil }
-        guard abs(transform.tx) <= CGFloat(current.width) * 0.12 else { return nil }
-        let verticalDelta = abs(transform.ty)
-        let appendHeight = Int(verticalDelta.rounded())
-        let minimumAppendHeight = max(14, current.height / 100)
-        guard appendHeight >= minimumAppendHeight,
-              appendHeight <= current.height * 3 / 4 else {
-            return nil
-        }
-
-        let overlapRows = current.height - appendHeight
-        let score = overlapQualityScore(previous: previous, current: current, overlapRows: overlapRows)
-        guard score < 22 else { return nil }
-        let downMatch = OverlapMatch(rows: overlapRows, score: score)
-        guard downwardMovementIsLikely(previous: previous, current: current, downMatch: downMatch) else {
-            return nil
-        }
-
-        return FrameAppendPlan(
-            cropRect: CGRect(x: 0, y: overlapRows, width: current.width, height: appendHeight)
-        )
     }
 
     private func verticalOverlap(previous: CGImage, current: CGImage) -> OverlapMatch? {
@@ -804,20 +799,66 @@ final class LongScreenshotSessionController {
         return OverlapMatch(rows: imageRows, score: bestScore)
     }
 
-    private func downwardMovementIsLikely(previous: CGImage, current: CGImage, downMatch: OverlapMatch) -> Bool {
-        guard previous.width == current.width, previous.height == current.height else { return false }
-        guard downMatch.rows >= current.height / 10 else { return false }
-        guard let reverseMatch = reverseVerticalOverlap(previous: previous, current: current) else { return true }
+    private func appendCandidate(direction: StitchDirection, match: OverlapMatch?, imageSize: CGSize) -> DirectionalAppendCandidate? {
+        guard let match else { return nil }
+        let height = Int(imageSize.height)
+        let width = Int(imageSize.width)
+        let appendHeight = height - match.rows
+        let minimumAppendHeight = max(14, height / 100)
+        guard match.rows >= height / 10,
+              match.score < 18,
+              appendHeight >= minimumAppendHeight,
+              appendHeight <= height * 3 / 4 else {
+            return nil
+        }
 
-        let reverseAppendHeight = current.height - reverseMatch.rows
-        let reverseLooksScrollable = reverseMatch.rows >= current.height / 10
-            && reverseAppendHeight >= max(14, current.height / 100)
-            && reverseAppendHeight <= current.height * 3 / 4
+        let cropRect: CGRect
+        switch direction {
+        case .downward:
+            cropRect = CGRect(x: 0, y: match.rows, width: width, height: appendHeight)
+        case .upward:
+            cropRect = CGRect(x: 0, y: 0, width: width, height: appendHeight)
+        }
+        return DirectionalAppendCandidate(direction: direction, match: match, cropRect: cropRect)
+    }
 
-        guard reverseLooksScrollable else { return true }
+    private func lockedCandidate(
+        direction: StitchDirection,
+        downCandidate: DirectionalAppendCandidate?,
+        upCandidate: DirectionalAppendCandidate?
+    ) -> DirectionalAppendCandidate? {
+        let preferred = direction == .downward ? downCandidate : upCandidate
+        let opposite = direction == .downward ? upCandidate : downCandidate
+        guard let preferred else { return nil }
+        guard let opposite else { return preferred }
+        return candidate(preferred, isClearlyBetterThan: opposite) ? preferred : nil
+    }
 
-        let requiredLead = max(3.0, min(12.0, reverseMatch.score * (1.0 - directionalConfidenceRatio)))
-        return downMatch.score + requiredLead < reverseMatch.score
+    private func unlockedCandidate(
+        downCandidate: DirectionalAppendCandidate?,
+        upCandidate: DirectionalAppendCandidate?
+    ) -> DirectionalAppendCandidate? {
+        switch (downCandidate, upCandidate) {
+        case let (down?, nil):
+            return down
+        case let (nil, up?):
+            return up
+        case let (down?, up?):
+            if candidate(down, isClearlyBetterThan: up) {
+                return down
+            }
+            if candidate(up, isClearlyBetterThan: down) {
+                return up
+            }
+            return nil
+        case (nil, nil):
+            return nil
+        }
+    }
+
+    private func candidate(_ lhs: DirectionalAppendCandidate, isClearlyBetterThan rhs: DirectionalAppendCandidate) -> Bool {
+        let requiredLead = max(3.0, min(12.0, rhs.match.score * (1.0 - directionalConfidenceRatio)))
+        return lhs.match.score + requiredLead < rhs.match.score
     }
 
     private func overlapQualityScore(previous: CGImage, current: CGImage, overlapRows: Int) -> Double {
@@ -904,6 +945,7 @@ final class LongScreenshotSessionController {
         lastAcceptedFrame = nil
         stitchedImageCache = nil
         primaryScrollDirectionSign = nil
+        primaryStitchDirection = nil
         isCapturing = false
         needsCaptureAfterCurrent = false
         finishAfterCapture = false

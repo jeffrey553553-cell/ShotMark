@@ -66,9 +66,11 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "LongScreenshotHotKeyService" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "kVK_Escape" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "primaryScrollDirectionSign" Sources/ShotMark/LongScreenshotSessionController.swift
-  rg -q "downwardMovementIsLikely" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "reverseVerticalOverlap" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "directionalConfidenceRatio" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "primaryStitchDirection" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "case upward" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "stitchedSegments.insert\\(segment, at: 0\\)" Sources/ShotMark/LongScreenshotSessionController.swift
 '
 
 SCREEN_INFO="$(system_profiler SPDisplaysDataType 2>/dev/null || true)"
@@ -134,6 +136,7 @@ Mark each item PASS/FAIL after running it.
 | Mosaic | Draw mosaic over text | Text under the drawn area is blurred, no visible border is drawn | |
 | Long screenshot | Start long screenshot and press Esc | Session cancels and returns without saving/copying | |
 | Long screenshot | Scroll down, then scroll upward repeatedly | Preview does not keep appending reversed/duplicate content | |
+| Long screenshot | Start near page bottom, scroll upward | New upper content is prepended above the starting frame | |
 | Edit | Draw rectangle/arrow/text/mosaic, then Cmd+Z/Cmd+Shift+Z | Undo and redo restore the previous annotation state | |
 | Edit | Select an annotation and press Delete | The selected annotation is removed only after selection | |
 | Edit | Select rectangle/mosaic and drag corner handles | The object resizes without moving unrelated annotations | |
