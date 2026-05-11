@@ -11,7 +11,7 @@ final class SelectionOverlayController {
     private var windows: [NSWindow] = []
 
     func show() {
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         windows = NSScreen.screens.map { screen in
             let view = SelectionOverlayView(screen: screen)
             view.onCancel = { [weak self] in self?.cancel() }
@@ -26,15 +26,15 @@ final class SelectionOverlayController {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                     self.delegate?.selectionOverlayController(self, didRequestOCRCapture: selection) { result in
                         DispatchQueue.main.async {
-                            self.windows.forEach { $0.makeKeyAndOrderFront(nil) }
-                            view?.window?.makeFirstResponder(view)
+                            self.bringWindowsToFront(preferred: view?.window)
+                            view?.prepareForCaptureFocus()
                             completion(result)
                         }
                     }
                 }
             }
 
-            let window = FloatingEditorPanel(
+            let window = SelectionOverlayPanel(
                 contentRect: screen.frame,
                 styleMask: .borderless,
                 backing: .buffered,
@@ -47,11 +47,15 @@ final class SelectionOverlayController {
             window.hasShadow = false
             window.sharingType = .none
             window.ignoresMouseEvents = false
-            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+            window.acceptsMouseMovedEvents = true
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
             window.contentView = view
-            window.makeKeyAndOrderFront(nil)
+            window.setFrame(screen.frame, display: false)
+            window.orderFrontRegardless()
+            view.prepareForCaptureFocus()
             return window
         }
+        bringWindowsToFront()
     }
 
     func cancel() {
@@ -66,6 +70,27 @@ final class SelectionOverlayController {
         }
         windows.removeAll()
     }
+
+    private func bringWindowsToFront(preferred: NSWindow? = nil) {
+        windows.forEach {
+            $0.orderFrontRegardless()
+            ($0.contentView as? SelectionOverlayView)?.prepareForCaptureFocus()
+        }
+
+        let targetWindow = preferred ?? windowUnderCurrentMouse() ?? windows.first
+        targetWindow?.makeKeyAndOrderFront(nil)
+        (targetWindow?.contentView as? SelectionOverlayView)?.prepareForCaptureFocus()
+    }
+
+    private func windowUnderCurrentMouse() -> NSWindow? {
+        let mouseLocation = NSEvent.mouseLocation
+        return windows.first { $0.frame.contains(mouseLocation) }
+    }
+}
+
+private final class SelectionOverlayPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 }
 
 final class SelectionOverlayView: NSView, NSTextViewDelegate {
@@ -258,8 +283,16 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     override var isFlipped: Bool { false }
 
     override func viewDidMoveToWindow() {
-        window?.makeFirstResponder(self)
+        prepareForCaptureFocus()
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    func prepareForCaptureFocus() {
         window?.acceptsMouseMovedEvents = true
+        window?.makeFirstResponder(self)
     }
 
     override func updateTrackingAreas() {
@@ -314,7 +347,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     override func mouseDown(with event: NSEvent) {
-        let point = event.locationInWindow
+        window?.makeFirstResponder(self)
+        let point = convert(event.locationInWindow, from: nil)
         if ocrPanelController != nil {
             closeTransientPanels()
             needsDisplay = true
@@ -421,7 +455,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             return
         }
 
-        let point = event.locationInWindow
+        let point = convert(event.locationInWindow, from: nil)
         updateRecordingMenuHover(at: point, selectionRect: selectionRect)
 
         if let button = hoveredToolbarButton(at: point, selectionRect: selectionRect) {
@@ -436,7 +470,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        let point = event.locationInWindow
+        let point = convert(event.locationInWindow, from: nil)
         let relative = relativePoint(point)
 
         switch dragMode {
@@ -475,7 +509,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     override func mouseUp(with event: NSEvent) {
-        let point = relativePoint(event.locationInWindow)
+        let point = relativePoint(convert(event.locationInWindow, from: nil))
         let textEditIndex = pendingTextEditIndex
         let shouldBeginTextEdit = textEditIndex != nil && !pendingTextEditDidMove
 
@@ -630,16 +664,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private func currentCaptureSelection() -> CaptureSelection? {
-        guard let selectionRect, selectionRect.width >= 8, selectionRect.height >= 8, let window else { return nil }
-        let origin = window.convertPoint(toScreen: selectionRect.origin)
-        let maxPoint = window.convertPoint(toScreen: CGPoint(x: selectionRect.maxX, y: selectionRect.maxY))
-        let screenRect = CGRect(
-            x: min(origin.x, maxPoint.x),
-            y: min(origin.y, maxPoint.y),
-            width: abs(maxPoint.x - origin.x),
-            height: abs(maxPoint.y - origin.y)
-        ).integral
-        return CaptureSelection(rectInScreen: screenRect, screen: targetScreen)
+        guard let selectionRect else { return nil }
+        return captureSelection(for: selectionRect)
     }
 
     private var hasMosaicWork: Bool {
@@ -1172,14 +1198,22 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     private func captureSelection(for selectionRect: CGRect) -> CaptureSelection? {
         guard selectionRect.width >= 8, selectionRect.height >= 8, let window else { return nil }
-        let origin = window.convertPoint(toScreen: selectionRect.origin)
-        let maxPoint = window.convertPoint(toScreen: CGPoint(x: selectionRect.maxX, y: selectionRect.maxY))
-        let screenRect = CGRect(
+        let originInWindow = convert(selectionRect.origin, to: nil)
+        let maxPointInWindow = convert(CGPoint(x: selectionRect.maxX, y: selectionRect.maxY), to: nil)
+        let origin = window.convertPoint(toScreen: originInWindow)
+        let maxPoint = window.convertPoint(toScreen: maxPointInWindow)
+        let rawScreenRect = CGRect(
             x: min(origin.x, maxPoint.x),
             y: min(origin.y, maxPoint.y),
             width: abs(maxPoint.x - origin.x),
             height: abs(maxPoint.y - origin.y)
-        ).integral
+        )
+        let clippedScreenRect = rawScreenRect.intersection(targetScreen.frame)
+        guard !clippedScreenRect.isNull, !clippedScreenRect.isEmpty else { return nil }
+        let screenRect = clippedScreenRect
+            .integral
+            .intersection(targetScreen.frame)
+        guard screenRect.width >= 8, screenRect.height >= 8 else { return nil }
         return CaptureSelection(rectInScreen: screenRect, screen: targetScreen)
     }
 

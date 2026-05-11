@@ -38,6 +38,10 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "requestMicrophoneAccess" Sources/ShotMark/PermissionService.swift
   rg -q "openMicrophoneSettings" Sources/ShotMark/PermissionService.swift
   rg -q "captureMicrophone = audioMode.capturesMicrophone" Sources/ShotMark/VideoRecordingService.swift
+  rg -q "acceptsFirstMouse" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "windowUnderCurrentMouse" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "convert\\(event\\.locationInWindow, from: nil\\)" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "intersection\\(targetScreen\\.frame\\)" Sources/ShotMark/SelectionOverlayController.swift
 '
 
 SCREEN_INFO="$(system_profiler SPDisplaysDataType 2>/dev/null || true)"
@@ -86,6 +90,7 @@ Mark each item PASS/FAIL after running it.
 | --- | --- | --- | --- |
 | Permissions | Status bar -> permission rows | Screen Recording and Microphone show allowed after permission is granted; if not, menu offers settings and restart/quit path | |
 | Single screen | Option+A on built-in/main screen | Selection overlay appears; selection can move and resize | |
+| Immediate drag | Press Option+A, then drag without a focus click | Selection starts on the first mouse down after the shortcut | |
 | External screen | Option+A with cursor on external screen | Overlay appears on target display; capture area matches selected display | |
 | Retina | Capture text/icons on Retina screen | Output PNG is sharp and selection bounds match pixels | |
 | Full screen | Select nearly entire screen | Toolbar stays visible and final image has no blue selection frame | |
