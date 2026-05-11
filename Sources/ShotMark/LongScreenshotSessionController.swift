@@ -830,8 +830,10 @@ final class LongScreenshotSessionController {
         let preferred = direction == .downward ? downCandidate : upCandidate
         let opposite = direction == .downward ? upCandidate : downCandidate
         guard let preferred else { return nil }
-        guard let opposite else { return preferred }
-        return candidate(preferred, isClearlyBetterThan: opposite) ? preferred : nil
+        if let opposite, candidate(opposite, isClearlyBetterThan: preferred) {
+            return nil
+        }
+        return preferred
     }
 
     private func unlockedCandidate(
@@ -850,7 +852,7 @@ final class LongScreenshotSessionController {
             if candidate(up, isClearlyBetterThan: down) {
                 return up
             }
-            return nil
+            return down.match.score <= up.match.score ? down : up
         case (nil, nil):
             return nil
         }
