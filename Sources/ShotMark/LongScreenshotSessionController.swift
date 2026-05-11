@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import CoreGraphics
 import Foundation
 import Vision
@@ -65,6 +66,85 @@ private struct FrameAppendPlan {
     let cropRect: CGRect
 }
 
+private enum LongScreenshotHotKeyAction {
+    case cancel
+}
+
+private final class LongScreenshotHotKeyService {
+    var onAction: ((LongScreenshotHotKeyAction) -> Void)?
+
+    private var eventHandlerRef: EventHandlerRef?
+    private var hotKeyRef: EventHotKeyRef?
+    private let signature: OSType = 0x4C53484B // LSHK
+    private let cancelHotKeyID: UInt32 = 1
+
+    func registerCancelHotKey() {
+        guard eventHandlerRef == nil, hotKeyRef == nil else { return }
+
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        let installStatus = InstallEventHandler(
+            GetApplicationEventTarget(),
+            { _, eventRef, userData in
+                guard let userData else { return noErr }
+                let service = Unmanaged<LongScreenshotHotKeyService>.fromOpaque(userData).takeUnretainedValue()
+                var hotKeyID = EventHotKeyID()
+                GetEventParameter(
+                    eventRef,
+                    EventParamName(kEventParamDirectObject),
+                    EventParamType(typeEventHotKeyID),
+                    nil,
+                    MemoryLayout<EventHotKeyID>.size,
+                    nil,
+                    &hotKeyID
+                )
+                guard hotKeyID.signature == service.signature else { return noErr }
+                if hotKeyID.id == service.cancelHotKeyID {
+                    DispatchQueue.main.async {
+                        service.onAction?(.cancel)
+                    }
+                }
+                return noErr
+            },
+            1,
+            &eventType,
+            Unmanaged.passUnretained(self).toOpaque(),
+            &eventHandlerRef
+        )
+        guard installStatus == noErr else { return }
+
+        let id = EventHotKeyID(signature: signature, id: cancelHotKeyID)
+        let registerStatus = RegisterEventHotKey(
+            UInt32(kVK_Escape),
+            0,
+            id,
+            GetApplicationEventTarget(),
+            0,
+            &hotKeyRef
+        )
+        if registerStatus != noErr {
+            unregister()
+        }
+    }
+
+    func unregister() {
+        if let hotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
+            self.hotKeyRef = nil
+        }
+        if let eventHandlerRef {
+            RemoveEventHandler(eventHandlerRef)
+            self.eventHandlerRef = nil
+        }
+    }
+
+    deinit {
+        unregister()
+    }
+}
+
 final class LongScreenshotSessionController {
     var onFinish: ((Result<(CaptureResult, LongScreenshotCommitAction), Error>) -> Void)?
     var onCancel: (() -> Void)?
@@ -81,9 +161,11 @@ final class LongScreenshotSessionController {
     private var globalScrollMonitor: Any?
     private var localKeyMonitor: Any?
     private var globalKeyMonitor: Any?
+    private var hotKeyService: LongScreenshotHotKeyService?
     private var throttledScrollCaptureWorkItem: DispatchWorkItem?
     private var trailingScrollCaptureWorkItem: DispatchWorkItem?
     private var lastScrollCaptureAt = Date.distantPast
+    private var primaryScrollDirectionSign: CGFloat?
     private var isCapturing = false
     private var needsCaptureAfterCurrent = false
     private var finishAfterCapture = false
@@ -94,6 +176,7 @@ final class LongScreenshotSessionController {
 
     private let scrollCaptureInterval: TimeInterval = 0.075
     private let trailingCaptureDelay: TimeInterval = 0.09
+    private let scrollDirectionThreshold: CGFloat = 0.1
 
     init(selection: CaptureSelection) {
         self.selection = selection
@@ -105,6 +188,7 @@ final class LongScreenshotSessionController {
         showPreviewWindow()
         installScrollMonitors()
         installKeyMonitors()
+        installHotKeys()
         captureFrame()
     }
 
@@ -145,11 +229,11 @@ final class LongScreenshotSessionController {
 
     private func installScrollMonitors() {
         localScrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-            self?.scheduleCaptureAfterScroll()
+            self?.handleScroll(event)
             return event
         }
-        globalScrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel) { [weak self] _ in
-            self?.scheduleCaptureAfterScroll()
+        globalScrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            self?.handleScroll(event)
         }
     }
 
@@ -161,6 +245,18 @@ final class LongScreenshotSessionController {
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             _ = self?.handleKey(event)
         }
+    }
+
+    private func installHotKeys() {
+        let service = LongScreenshotHotKeyService()
+        service.onAction = { [weak self] action in
+            switch action {
+            case .cancel:
+                self?.cancel()
+            }
+        }
+        service.registerCancelHotKey()
+        hotKeyService = service
     }
 
     private func handleKey(_ event: NSEvent) -> Bool {
@@ -178,6 +274,42 @@ final class LongScreenshotSessionController {
             return true
         }
         return false
+    }
+
+    private func handleScroll(_ event: NSEvent) {
+        let verticalDelta = dominantVerticalScrollDelta(event)
+        guard abs(verticalDelta) >= scrollDirectionThreshold else { return }
+        let sign: CGFloat = verticalDelta > 0 ? 1 : -1
+
+        if let primaryScrollDirectionSign, primaryScrollDirectionSign != sign {
+            pauseCaptureForReverseScroll()
+            return
+        }
+
+        if primaryScrollDirectionSign == nil {
+            primaryScrollDirectionSign = sign
+        }
+        scheduleCaptureAfterScroll()
+    }
+
+    private func dominantVerticalScrollDelta(_ event: NSEvent) -> CGFloat {
+        let preciseY = event.scrollingDeltaY
+        let legacyY = event.deltaY
+        let vertical = abs(preciseY) >= abs(legacyY) ? preciseY : legacyY
+        let preciseX = event.scrollingDeltaX
+        let legacyX = event.deltaX
+        let horizontal = abs(preciseX) >= abs(legacyX) ? preciseX : legacyX
+        return abs(vertical) >= abs(horizontal) ? vertical : 0
+    }
+
+    private func pauseCaptureForReverseScroll() {
+        throttledScrollCaptureWorkItem?.cancel()
+        throttledScrollCaptureWorkItem = nil
+        trailingScrollCaptureWorkItem?.cancel()
+        trailingScrollCaptureWorkItem = nil
+        needsCaptureAfterCurrent = false
+        updateControlView(status: "反向滚动，暂停采集")
+        updatePreview(status: "反向滚动暂停")
     }
 
     private func scheduleCaptureAfterScroll() {
@@ -234,10 +366,15 @@ final class LongScreenshotSessionController {
                     switch result {
                     case .success(let capture):
                         let cleaned = self.cleanedCapture(capture)
-                        self.captures.append(cleaned)
-                        self.acceptFrameForStitching(cleaned.image)
-                        self.updateControlView(status: "滚动页面继续采集")
-                        self.updatePreview(status: "继续滚动采集")
+                        let accepted = self.acceptFrameForStitching(cleaned.image)
+                        if accepted {
+                            self.captures.append(cleaned)
+                            self.updateControlView(status: "滚动页面继续采集")
+                            self.updatePreview(status: "继续滚动采集")
+                        } else {
+                            self.updateControlView(status: "未检测到新内容")
+                            self.updatePreview(status: "未追加")
+                        }
                     case .failure(let error):
                         self.cleanup()
                         self.onFinish?(.failure(error))
@@ -487,24 +624,26 @@ final class LongScreenshotSessionController {
         return composeSegments(segments)
     }
 
-    private func acceptFrameForStitching(_ image: CGImage) {
+    @discardableResult
+    private func acceptFrameForStitching(_ image: CGImage) -> Bool {
         guard let previous = lastAcceptedFrame else {
             stitchedSegments = [image]
             lastAcceptedFrame = image
             stitchedImageCache = composeSegments(stitchedSegments)
-            return
+            return true
         }
 
         guard
             let plan = appendPlan(previous: previous, current: image),
             let segment = image.cropping(to: plan.cropRect)
         else {
-            return
+            return false
         }
 
         stitchedSegments.append(segment)
         lastAcceptedFrame = image
         stitchedImageCache = composeSegments(stitchedSegments)
+        return true
     }
 
     private func appendPlan(previous: CGImage, current: CGImage) -> FrameAppendPlan? {
@@ -521,6 +660,9 @@ final class LongScreenshotSessionController {
               match.score < 18,
               appendHeight >= minimumAppendHeight,
               appendHeight <= current.height * 3 / 4 else {
+            return nil
+        }
+        guard !reverseMovementIsLikely(previous: previous, current: current, downOverlapRows: match.rows, downScore: match.score) else {
             return nil
         }
 
@@ -583,6 +725,9 @@ final class LongScreenshotSessionController {
         let overlapRows = current.height - appendHeight
         let score = overlapQualityScore(previous: previous, current: current, overlapRows: overlapRows)
         guard score < 22 else { return nil }
+        guard !reverseMovementIsLikely(previous: previous, current: current, downOverlapRows: overlapRows, downScore: score) else {
+            return nil
+        }
 
         return FrameAppendPlan(
             cropRect: CGRect(x: 0, y: overlapRows, width: current.width, height: appendHeight)
@@ -623,6 +768,13 @@ final class LongScreenshotSessionController {
         return OverlapMatch(rows: imageRows, score: bestScore)
     }
 
+    private func reverseMovementIsLikely(previous: CGImage, current: CGImage, downOverlapRows: Int, downScore: Double) -> Bool {
+        guard previous.width == current.width, previous.height == current.height else { return false }
+        let reverseScore = reverseOverlapQualityScore(previous: previous, current: current, overlapRows: downOverlapRows)
+        guard reverseScore.isFinite else { return false }
+        return reverseScore + 3.0 < downScore
+    }
+
     private func overlapQualityScore(previous: CGImage, current: CGImage, overlapRows: Int) -> Double {
         guard previous.width == current.width, previous.height == current.height else {
             return Double.greatestFiniteMagnitude
@@ -642,6 +794,25 @@ final class LongScreenshotSessionController {
         return overlapScore(previous: previousSample, current: currentSample, rows: sampleRows)
     }
 
+    private func reverseOverlapQualityScore(previous: CGImage, current: CGImage, overlapRows: Int) -> Double {
+        guard previous.width == current.width, previous.height == current.height else {
+            return Double.greatestFiniteMagnitude
+        }
+        guard
+            let previousSample = FrameSample(image: previous, width: 72, height: 160),
+            let currentSample = FrameSample(image: current, width: 72, height: 160)
+        else {
+            return Double.greatestFiniteMagnitude
+        }
+
+        let ratio = CGFloat(overlapRows) / CGFloat(current.height)
+        let sampleRows = min(
+            previousSample.height - 2,
+            max(8, Int((CGFloat(previousSample.height) * ratio).rounded()))
+        )
+        return reverseOverlapScore(previous: previousSample, current: currentSample, rows: sampleRows)
+    }
+
     private func overlapScore(previous: FrameSample, current: FrameSample, rows: Int) -> Double {
         var total = 0
         var count = 0
@@ -649,6 +820,21 @@ final class LongScreenshotSessionController {
         for row in 0..<rows {
             let previousOffset = (previousStart + row) * previous.width
             let currentOffset = row * current.width
+            for column in 0..<previous.width {
+                total += abs(Int(previous.pixels[previousOffset + column]) - Int(current.pixels[currentOffset + column]))
+                count += 1
+            }
+        }
+        return count > 0 ? Double(total) / Double(count) : Double.greatestFiniteMagnitude
+    }
+
+    private func reverseOverlapScore(previous: FrameSample, current: FrameSample, rows: Int) -> Double {
+        var total = 0
+        var count = 0
+        let currentStart = current.height - rows
+        for row in 0..<rows {
+            let previousOffset = row * previous.width
+            let currentOffset = (currentStart + row) * current.width
             for column in 0..<previous.width {
                 total += abs(Int(previous.pixels[previousOffset + column]) - Int(current.pixels[currentOffset + column]))
                 count += 1
@@ -678,6 +864,8 @@ final class LongScreenshotSessionController {
             NSEvent.removeMonitor(globalKeyMonitor)
             self.globalKeyMonitor = nil
         }
+        hotKeyService?.unregister()
+        hotKeyService = nil
         window?.orderOut(nil)
         window = nil
         controlView = nil
@@ -689,6 +877,7 @@ final class LongScreenshotSessionController {
         stitchedSegments.removeAll()
         lastAcceptedFrame = nil
         stitchedImageCache = nil
+        primaryScrollDirectionSign = nil
         isCapturing = false
         needsCaptureAfterCurrent = false
         finishAfterCapture = false
