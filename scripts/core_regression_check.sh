@@ -66,6 +66,11 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "installEscapeKeyMonitor" Sources/ShotMark/OCRResultPanelController.swift
   rg -q "event.keyCode == 53" Sources/ShotMark/OCRResultPanelController.swift
   rg -q "onClose" Sources/ShotMark/OCRResultPanelController.swift
+  rg -q "ScreenSnapshot" Sources/ShotMark/Models.swift
+  rg -q "captureSnapshots" Sources/ShotMark/CaptureService.swift
+  rg -q "frozenSnapshot" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "frozenCapture" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "captureFrozenScreensAndShowOverlay" Sources/ShotMark/ScreenshotCoordinator.swift
   rg -q "LongScreenshotHotKeyService" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "kVK_Escape" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "primaryScrollDirectionSign" Sources/ShotMark/LongScreenshotSessionController.swift
@@ -124,6 +129,7 @@ Mark each item PASS/FAIL after running it.
 | Permissions | Status bar -> permission rows | Screen Recording and Microphone show allowed after permission is granted; if not, menu offers settings and restart/quit path | |
 | Single screen | Option+A on built-in/main screen | Selection overlay appears; selection can move and resize | |
 | Immediate drag | Press Option+A, then drag without a focus click | Selection starts on the first mouse down after the shortcut | |
+| Frozen frame | Play a video, press Option+A, then select/save later | Overlay and final PNG keep the frame from screenshot entry instead of later video frames | |
 | External screen | Option+A with cursor on external screen | Overlay appears on target display; capture area matches selected display | |
 | Retina | Capture text/icons on Retina screen | Output PNG is sharp and selection bounds match pixels | |
 | Full screen | Select nearly entire screen | Toolbar stays visible and final image has no blue selection frame | |

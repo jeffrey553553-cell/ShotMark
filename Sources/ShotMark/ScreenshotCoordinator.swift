@@ -44,7 +44,7 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
             DispatchQueue.main.async {
                 guard let self else { return }
                 if isGranted {
-                    self.showSelectionOverlay()
+                    self.captureFrozenScreensAndShowOverlay()
                 } else {
                     PermissionService.requestScreenRecordingAccess()
                     self.showPermissionHelp()
@@ -53,9 +53,24 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
         }
     }
 
-    private func showSelectionOverlay() {
+    private func captureFrozenScreensAndShowOverlay() {
+        let screens = NSScreen.screens
+        captureService.captureSnapshots(screens: screens) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success(let snapshots):
+                    self.showSelectionOverlay(frozenSnapshots: snapshots)
+                case .failure(let error):
+                    self.showError(error, title: "截图失败")
+                }
+            }
+        }
+    }
+
+    private func showSelectionOverlay(frozenSnapshots: [ScreenSnapshot]) {
         overlayController?.cancel()
-        let controller = SelectionOverlayController()
+        let controller = SelectionOverlayController(frozenSnapshots: frozenSnapshots)
         controller.delegate = self
         overlayController = controller
         controller.show()
@@ -72,7 +87,7 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
         overlayController = nil
     }
 
-    func selectionOverlayController(_ controller: SelectionOverlayController, didCommit selection: CaptureSelection, annotations: [Annotation], action: CaptureCommitAction) {
+    func selectionOverlayController(_ controller: SelectionOverlayController, didCommit selection: CaptureSelection, frozenCapture: CaptureResult?, annotations: [Annotation], action: CaptureCommitAction) {
         overlayController = nil
         switch action {
         case .recordVideo(let quality, let audioMode):
@@ -84,6 +99,10 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
                 self?.startLongScreenshot(selection: selection)
             }
         case .copyToClipboard, .saveToFile, .pinToScreen:
+            if let frozenCapture {
+                handle(frozenCapture, annotations: annotations, action: action)
+                return
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
                 self?.capture(selection, annotations: annotations, action: action)
             }

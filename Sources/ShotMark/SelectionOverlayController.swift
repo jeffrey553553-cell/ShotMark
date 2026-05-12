@@ -1,7 +1,7 @@
 import AppKit
 
 protocol SelectionOverlayControllerDelegate: AnyObject {
-    func selectionOverlayController(_ controller: SelectionOverlayController, didCommit selection: CaptureSelection, annotations: [Annotation], action: CaptureCommitAction)
+    func selectionOverlayController(_ controller: SelectionOverlayController, didCommit selection: CaptureSelection, frozenCapture: CaptureResult?, annotations: [Annotation], action: CaptureCommitAction)
     func selectionOverlayController(_ controller: SelectionOverlayController, didRequestOCRCapture selection: CaptureSelection, completion: @escaping (Result<CaptureResult, Error>) -> Void)
     func selectionOverlayControllerDidCancel(_ controller: SelectionOverlayController)
 }
@@ -9,16 +9,27 @@ protocol SelectionOverlayControllerDelegate: AnyObject {
 final class SelectionOverlayController {
     weak var delegate: SelectionOverlayControllerDelegate?
     private var windows: [NSWindow] = []
+    private let frozenSnapshots: [ScreenSnapshot]
+
+    init(frozenSnapshots: [ScreenSnapshot] = []) {
+        self.frozenSnapshots = frozenSnapshots
+    }
 
     func show() {
         NSApp.activate()
         windows = NSScreen.screens.map { screen in
-            let view = SelectionOverlayView(screen: screen)
+            let view = SelectionOverlayView(screen: screen, frozenSnapshot: frozenSnapshot(for: screen))
             view.onCancel = { [weak self] in self?.cancel() }
-            view.onCommit = { [weak self] selection, annotations, action in
+            view.onCommit = { [weak self] selection, frozenCapture, annotations, action in
                 guard let self else { return }
                 self.closeWindows()
-                self.delegate?.selectionOverlayController(self, didCommit: selection, annotations: annotations, action: action)
+                self.delegate?.selectionOverlayController(
+                    self,
+                    didCommit: selection,
+                    frozenCapture: frozenCapture,
+                    annotations: annotations,
+                    action: action
+                )
             }
             view.onOCRCapture = { [weak self, weak view] selection, completion in
                 guard let self else { return }
@@ -86,6 +97,16 @@ final class SelectionOverlayController {
         let mouseLocation = NSEvent.mouseLocation
         return windows.first { $0.frame.contains(mouseLocation) }
     }
+
+    private func frozenSnapshot(for screen: NSScreen) -> ScreenSnapshot? {
+        frozenSnapshots.first { snapshot in
+            if let snapshotDisplayID = snapshot.screen.shotMarkDisplayID,
+               let screenDisplayID = screen.shotMarkDisplayID {
+                return snapshotDisplayID == screenDisplayID
+            }
+            return snapshot.screen.frame == screen.frame
+        }
+    }
 }
 
 private final class SelectionOverlayPanel: NSPanel {
@@ -94,7 +115,7 @@ private final class SelectionOverlayPanel: NSPanel {
 }
 
 final class SelectionOverlayView: NSView, NSTextViewDelegate {
-    var onCommit: ((CaptureSelection, [Annotation], CaptureCommitAction) -> Void)?
+    var onCommit: ((CaptureSelection, CaptureResult?, [Annotation], CaptureCommitAction) -> Void)?
     var onOCRCapture: ((CaptureSelection, @escaping (Result<CaptureResult, Error>) -> Void) -> Void)?
     var onCancel: (() -> Void)?
 
@@ -193,6 +214,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private let targetScreen: NSScreen
+    private let frozenSnapshot: ScreenSnapshot?
+    private let frozenCaptureService = CaptureService()
     private let mosaicPreviewCaptureService = CaptureService()
     private var selectionRect: CGRect?
     private var dragMode: DragMode?
@@ -268,8 +291,9 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         .black
     ]
 
-    init(screen: NSScreen) {
+    init(screen: NSScreen, frozenSnapshot: ScreenSnapshot?) {
         targetScreen = screen
+        self.frozenSnapshot = frozenSnapshot
         super.init(frame: CGRect(origin: .zero, size: screen.frame.size))
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
@@ -549,8 +573,13 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.black.withAlphaComponent(0.50).setFill()
-        bounds.fill()
+        if frozenSnapshot != nil {
+            drawFrozenSnapshot()
+            drawDimmingOverlay(excluding: selectionRect)
+        } else {
+            NSColor.black.withAlphaComponent(0.50).setFill()
+            bounds.fill()
+        }
 
         guard let selectionRect else {
             drawInitialHint()
@@ -558,8 +587,10 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         }
 
         requestMosaicPreviewCaptureIfNeeded()
-        NSColor.clear.setFill()
-        selectionRect.fill(using: .clear)
+        if frozenSnapshot == nil {
+            NSColor.clear.setFill()
+            selectionRect.fill(using: .clear)
+        }
         drawSelectionFrame(selectionRect)
         drawAnnotations(in: selectionRect)
         drawDimensionBadge(for: selectionRect)
@@ -568,6 +599,39 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         drawVideoQualityMenu(for: selectionRect)
         drawToolbarTooltip(for: selectionRect)
         drawShortcutLetterMenu(for: selectionRect)
+    }
+
+    private func drawFrozenSnapshot() {
+        guard let frozenSnapshot else { return }
+        NSGraphicsContext.current?.imageInterpolation = .high
+        let image = NSImage(cgImage: frozenSnapshot.image, size: bounds.size)
+        image.draw(
+            in: bounds,
+            from: .zero,
+            operation: .copy,
+            fraction: 1,
+            respectFlipped: true,
+            hints: nil
+        )
+    }
+
+    private func drawDimmingOverlay(excluding rect: CGRect?) {
+        NSColor.black.withAlphaComponent(0.50).setFill()
+        guard let rect else {
+            bounds.fill()
+            return
+        }
+
+        let clipped = rect.intersection(bounds)
+        guard !clipped.isNull, !clipped.isEmpty else {
+            bounds.fill()
+            return
+        }
+
+        CGRect(x: bounds.minX, y: bounds.minY, width: bounds.width, height: max(0, clipped.minY - bounds.minY)).fill()
+        CGRect(x: bounds.minX, y: clipped.maxY, width: bounds.width, height: max(0, bounds.maxY - clipped.maxY)).fill()
+        CGRect(x: bounds.minX, y: clipped.minY, width: max(0, clipped.minX - bounds.minX), height: clipped.height).fill()
+        CGRect(x: clipped.maxX, y: clipped.minY, width: max(0, bounds.maxX - clipped.maxX), height: clipped.height).fill()
     }
 
     private func beginAnnotation(tool: AnnotationTool, at point: CGPoint) {
@@ -660,7 +724,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private func commitSelection(_ action: CaptureCommitAction) {
         commitActiveText()
         guard let selection = currentCaptureSelection() else { return }
-        onCommit?(selection, annotations, action)
+        onCommit?(selection, frozenCapture(for: selection), annotations, action)
     }
 
     private func currentCaptureSelection() -> CaptureSelection? {
@@ -688,6 +752,13 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private func requestMosaicPreviewCaptureIfNeeded() {
         guard hasMosaicWork, let selectionRect, let selection = currentCaptureSelection() else { return }
         if let mosaicPreviewImage, let mosaicPreviewRect, rectsMatch(mosaicPreviewRect, selectionRect), mosaicPreviewImage.width > 0 {
+            return
+        }
+
+        if let capture = frozenCapture(for: selection) {
+            mosaicPreviewImage = capture.image
+            mosaicPreviewRect = selectionRect
+            needsDisplay = true
             return
         }
 
@@ -1215,6 +1286,11 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             .intersection(targetScreen.frame)
         guard screenRect.width >= 8, screenRect.height >= 8 else { return nil }
         return CaptureSelection(rectInScreen: screenRect, screen: targetScreen)
+    }
+
+    private func frozenCapture(for selection: CaptureSelection) -> CaptureResult? {
+        guard let frozenSnapshot else { return nil }
+        return try? frozenCaptureService.capture(selection: selection, from: frozenSnapshot)
     }
 
     private func drawButton(_ button: OverlayButton, in rect: CGRect, highlighted: Bool, enabled: Bool = true) {
@@ -2262,29 +2338,38 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         isOCRBusy = true
         needsDisplay = true
 
+        if let capture = frozenCapture(for: selection) {
+            handleOCRCaptureResult(.success(capture))
+            return
+        }
+
         onOCRCapture(selection) { [weak self] result in
             guard let self else { return }
-            switch result {
-            case .success(let capture):
-                self.showOCRPanel(text: "OCR 识别中...")
-                OCRService().recognizeText(in: capture.image) { [weak self] ocrResult in
-                    DispatchQueue.main.async {
-                        guard let self else { return }
-                        self.isOCRBusy = false
-                        self.needsDisplay = true
-                        switch ocrResult {
-                        case .success(let lines):
-                            self.updateOCRPanel(lines)
-                        case .failure(let error):
-                            self.showOCRPanel(text: "OCR 失败：\(error.localizedDescription)")
-                        }
+            self.handleOCRCaptureResult(result)
+        }
+    }
+
+    private func handleOCRCaptureResult(_ result: Result<CaptureResult, Error>) {
+        switch result {
+        case .success(let capture):
+            showOCRPanel(text: "OCR 识别中...")
+            OCRService().recognizeText(in: capture.image) { [weak self] ocrResult in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.isOCRBusy = false
+                    self.needsDisplay = true
+                    switch ocrResult {
+                    case .success(let lines):
+                        self.updateOCRPanel(lines)
+                    case .failure(let error):
+                        self.showOCRPanel(text: "OCR 失败：\(error.localizedDescription)")
                     }
                 }
-            case .failure(let error):
-                self.isOCRBusy = false
-                self.needsDisplay = true
-                self.showOCRPanel(text: "OCR 失败：\(error.localizedDescription)")
             }
+        case .failure(let error):
+            isOCRBusy = false
+            needsDisplay = true
+            showOCRPanel(text: "OCR 失败：\(error.localizedDescription)")
         }
     }
 

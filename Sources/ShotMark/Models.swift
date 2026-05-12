@@ -7,6 +7,13 @@ struct CaptureSelection {
     let screen: NSScreen
 }
 
+struct ScreenSnapshot {
+    let image: CGImage
+    let screen: NSScreen
+    let screenScale: CGFloat
+    let createdAt: Date
+}
+
 enum CaptureCommitAction {
     case copyToClipboard
     case saveToFile
@@ -97,6 +104,12 @@ struct CaptureResult {
 
     var imagePointSize: CGSize {
         CGSize(width: CGFloat(image.width) / screenScale, height: CGFloat(image.height) / screenScale)
+    }
+}
+
+extension NSScreen {
+    var shotMarkDisplayID: CGDirectDisplayID? {
+        deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
     }
 }
 
