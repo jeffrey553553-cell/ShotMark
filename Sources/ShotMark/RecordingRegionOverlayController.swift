@@ -29,6 +29,7 @@ final class RecordingRegionOverlayController {
             window.backgroundColor = .clear
             window.isOpaque = false
             window.hasShadow = false
+            window.sharingType = .none
             window.ignoresMouseEvents = true
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
             window.contentView = view
@@ -72,6 +73,7 @@ final class RecordingRegionOverlayController {
         window.backgroundColor = .clear
         window.isOpaque = false
         window.hasShadow = true
+        window.sharingType = .none
         window.ignoresMouseEvents = false
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         window.contentView = view

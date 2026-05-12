@@ -57,6 +57,7 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "requestMicrophoneAccess" Sources/ShotMark/PermissionService.swift
   rg -q "openMicrophoneSettings" Sources/ShotMark/PermissionService.swift
   rg -q "captureMicrophone = audioMode.capturesMicrophone" Sources/ShotMark/VideoRecordingService.swift
+  rg -q "window.sharingType = .none" Sources/ShotMark/RecordingRegionOverlayController.swift
   rg -q "acceptsFirstMouse" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "windowUnderCurrentMouse" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "convert\\(event\\.locationInWindow, from: nil\\)" Sources/ShotMark/SelectionOverlayController.swift
@@ -140,7 +141,7 @@ Mark each item PASS/FAIL after running it.
 | OCR | Click OCR on Chinese+English text | OCR panel shows recognized text; copy all works | |
 | OCR | Open OCR panel and press Esc | OCR panel closes and screenshot/editor focus returns | |
 | Toast | Save or copy in light mode | Success toast remains readable with dark pill, check icon and white text | |
-| Recording | Select area -> record -> choose quality | Recording overlay/timer appears; Stop saves MP4 to Downloads | |
+| Recording | Select area -> record -> choose quality | Recording overlay/timer appears; Stop saves MP4 to Downloads without red frame/overlay in the video | |
 | Recording audio | Record with Silent/System/Microphone/System+Microphone | Selected audio mode is captured; microphone modes prompt clearly when permission is missing | |
 | Recording stop | Press Option+A while recording | Recording stops and saved file plays | |
 | Mosaic | Draw mosaic over text | Text under the drawn area is blurred, no visible border is drawn | |
