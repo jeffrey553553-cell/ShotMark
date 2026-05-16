@@ -80,6 +80,15 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "primaryStitchDirection" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "case upward" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "stitchedSegments.insert\\(segment, at: 0\\)" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "static let defaultShortcut" Sources/ShotMark/GlobalShortcut.swift
+  rg -q "\\.defaultShortcut" Sources/ShotMark/Models.swift Sources/ShotMark/SettingsWindowController.swift Sources/ShotMark/AppDelegate.swift
+  rg -q "shotmark.captureShortcut" Sources/ShotMark/Models.swift
+  rg -q "func register\\(shortcut: GlobalShortcut\\)" Sources/ShotMark/HotKeyService.swift
+  rg -q "RegisterEventHotKey\\(" Sources/ShotMark/HotKeyService.swift
+  rg -q "startShortcutRecording" Sources/ShotMark/SettingsWindowController.swift
+  rg -q "stopShortcutRecording\\(reactivateHotKey:" Sources/ShotMark/SettingsWindowController.swift
+  rg -q "setShortcutRecorderActive" Sources/ShotMark/AppDelegate.swift
+  rg -q "recordingMenuTitle" Sources/ShotMark/AppDelegate.swift
 '
 
 SCREEN_INFO="$(system_profiler SPDisplaysDataType 2>/dev/null || true)"
@@ -128,10 +137,11 @@ Mark each item PASS/FAIL after running it.
 | Area | Case | Expected | Result |
 | --- | --- | --- | --- |
 | Permissions | Status bar -> permission rows | Screen Recording and Microphone show allowed after permission is granted; if not, menu offers settings and restart/quit path | |
-| Single screen | Option+A on built-in/main screen | Selection overlay appears; selection can move and resize | |
-| Immediate drag | Press Option+A, then drag without a focus click | Selection starts on the first mouse down after the shortcut | |
-| Frozen frame | Play a video, press Option+A, then select/save later | Overlay and final PNG keep the frame from screenshot entry instead of later video frames | |
-| External screen | Option+A with cursor on external screen | Overlay appears on target display; capture area matches selected display | |
+| Settings | Change screenshot shortcut, then restore default | New shortcut triggers capture; occupied/reserved shortcuts show an error; default returns to Option+A after restore | |
+| Single screen | Configured screenshot shortcut on built-in/main screen | Selection overlay appears; selection can move and resize | |
+| Immediate drag | Press configured shortcut, then drag without a focus click | Selection starts on the first mouse down after the shortcut | |
+| Frozen frame | Play a video, press configured shortcut, then select/save later | Overlay and final PNG keep the frame from screenshot entry instead of later video frames | |
+| External screen | Configured shortcut with cursor on external screen | Overlay appears on target display; capture area matches selected display | |
 | Retina | Capture text/icons on Retina screen | Output PNG is sharp and selection bounds match pixels | |
 | Full screen | Select nearly entire screen | Toolbar stays visible and final image has no blue selection frame | |
 | Small area | Select small area around text | Toolbar stays usable; output only contains selected area | |
@@ -143,7 +153,7 @@ Mark each item PASS/FAIL after running it.
 | Toast | Save or copy in light mode | Success toast remains readable with dark pill, check icon and white text | |
 | Recording | Select area -> record -> choose quality | Recording overlay/timer appears; Stop saves MP4 to Downloads without red frame/overlay in the video | |
 | Recording audio | Record with Silent/System/Microphone/System+Microphone | Selected audio mode is captured; microphone modes prompt clearly when permission is missing | |
-| Recording stop | Press Option+A while recording | Recording stops and saved file plays | |
+| Recording stop | Press configured screenshot shortcut while recording | Recording stops and saved file plays | |
 | Mosaic | Draw mosaic over text | Text under the drawn area is blurred, no visible border is drawn | |
 | Long screenshot | Start long screenshot and press Esc | Session cancels and returns without saving/copying | |
 | Long screenshot | Scroll down, then scroll upward repeatedly | Preview does not keep appending reversed/duplicate content | |

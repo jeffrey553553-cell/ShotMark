@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hotKeyService: HotKeyService?
     private var coordinator: ScreenshotCoordinator?
     private var settingsWindowController: SettingsWindowController?
+    private var shortcutObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let coordinator = ScreenshotCoordinator()
@@ -20,15 +21,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.coordinator = coordinator
         configureStatusItem()
 
-        let hotKeyService = HotKeyService()
-        hotKeyService.onPressed = { [weak self] in
-            self?.performPrimaryAction()
-        }
-        do {
-            try hotKeyService.registerOptionA()
-            self.hotKeyService = hotKeyService
-        } catch {
-            showError(title: "快捷键注册失败", message: error.localizedDescription)
+        configureHotKey()
+        shortcutObserver = NotificationCenter.default.addObserver(
+            forName: .shotMarkShortcutDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateShortcutTitles()
         }
 
         if CommandLine.arguments.contains("--demo") {
@@ -42,7 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let menu = NSMenu()
         menu.delegate = self
-        let primaryItem = NSMenuItem(title: "截图  Option+A", action: #selector(primaryActionMenuItem), keyEquivalent: "")
+        let primaryItem = NSMenuItem(title: primaryMenuTitle(), action: #selector(primaryActionMenuItem), keyEquivalent: "")
         menu.addItem(primaryItem)
         menu.addItem(.separator())
         let screenRecordingStatusItem = NSMenuItem(title: "屏幕录制权限：检查中", action: nil, keyEquivalent: "")
@@ -88,7 +87,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openSettings() {
         if settingsWindowController == nil {
-            settingsWindowController = SettingsWindowController()
+            settingsWindowController = SettingsWindowController(
+                onShortcutChange: { [weak self] shortcut in
+                    guard let self else { return }
+                    try self.setPrimaryShortcut(shortcut)
+                },
+                onShortcutRecordingStateChange: { [weak self] isRecording in
+                    self?.setShortcutRecorderActive(isRecording)
+                }
+            )
         }
         settingsWindowController?.showWindow(nil)
         settingsWindowController?.window?.makeKeyAndOrderFront(nil)
@@ -125,7 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .idle:
             recordingStartedAt = nil
             statusItem?.button?.title = "ShotMark"
-            primaryMenuItem?.title = "截图  Option+A"
+            primaryMenuItem?.title = primaryMenuTitle()
             primaryMenuItem?.isEnabled = true
         case .starting:
             recordingStartedAt = nil
@@ -134,7 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             primaryMenuItem?.isEnabled = false
         case .recording(let startedAt):
             recordingStartedAt = startedAt
-            primaryMenuItem?.title = "■ 停止录制  Option+A"
+            primaryMenuItem?.title = recordingMenuTitle()
             primaryMenuItem?.isEnabled = true
             updateRecordingTimerTitle()
             let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
@@ -156,6 +163,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let minutes = elapsed / 60
         let seconds = elapsed % 60
         statusItem?.button?.title = String(format: "■%02d:%02d", minutes, seconds)
+    }
+
+    private func configureHotKey() {
+        let hotKeyService = HotKeyService()
+        hotKeyService.onPressed = { [weak self] in
+            self?.performPrimaryAction()
+        }
+        self.hotKeyService = hotKeyService
+
+        do {
+            try hotKeyService.register(shortcut: AppSettings.shared.shortcut)
+        } catch {
+            let fallback = GlobalShortcut.defaultShortcut
+            AppSettings.shared.setShortcut(fallback)
+            do {
+                try hotKeyService.register(shortcut: fallback)
+            } catch {
+                showError(title: "快捷键注册失败", message: error.localizedDescription)
+            }
+        }
+    }
+
+    private func setPrimaryShortcut(_ shortcut: GlobalShortcut) throws {
+        let previous = AppSettings.shared.shortcut
+
+        do {
+            try hotKeyService?.register(shortcut: shortcut)
+            if shortcut != previous {
+                AppSettings.shared.setShortcut(shortcut)
+            }
+            updateShortcutTitles()
+        } catch {
+            try? hotKeyService?.register(shortcut: previous)
+            throw error
+        }
+    }
+
+    private func setShortcutRecorderActive(_ isRecording: Bool) {
+        if isRecording {
+            hotKeyService?.unregisterHotKey()
+            return
+        }
+
+        do {
+            try hotKeyService?.register(shortcut: AppSettings.shared.shortcut)
+        } catch {
+            showError(title: "快捷键注册失败", message: error.localizedDescription)
+        }
+    }
+
+    private func updateShortcutTitles() {
+        guard let primaryMenuItem else { return }
+        switch coordinator?.currentRecordingState ?? .idle {
+        case .idle:
+            primaryMenuItem.title = primaryMenuTitle()
+        case .recording:
+            primaryMenuItem.title = recordingMenuTitle()
+        case .starting, .stopping:
+            break
+        }
+    }
+
+    private func primaryMenuTitle() -> String {
+        "截图  \(AppSettings.shared.shortcutDescription)"
+    }
+
+    private func recordingMenuTitle() -> String {
+        "■ 停止录制  \(AppSettings.shared.shortcutDescription)"
     }
 
     private func updatePermissionMenuItems() {
@@ -181,5 +256,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.informativeText = message
         alert.alertStyle = .warning
         alert.runModal()
+    }
+
+    deinit {
+        if let shortcutObserver {
+            NotificationCenter.default.removeObserver(shortcutObserver)
+        }
     }
 }

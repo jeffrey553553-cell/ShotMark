@@ -178,20 +178,49 @@ final class EditorState {
     }
 }
 
-struct AppSettings {
+extension Notification.Name {
+    static let shotMarkShortcutDidChange = Notification.Name("ShotMarkShortcutDidChange")
+}
+
+final class AppSettings {
     static let shared = AppSettings()
 
     let saveDirectory: URL
     let imageFormat: String
-    let shortcutDescription: String
     let hidesDockIcon: Bool
+    private let defaults = UserDefaults.standard
+    private let shortcutKey = "shotmark.captureShortcut"
 
     private init() {
         saveDirectory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads")
         imageFormat = "png"
-        shortcutDescription = "Option + A"
         hidesDockIcon = true
+    }
+
+    var shortcut: GlobalShortcut {
+        guard
+            let data = defaults.data(forKey: shortcutKey),
+            let shortcut = try? JSONDecoder().decode(GlobalShortcut.self, from: data),
+            shortcut.isValidForCapture
+        else {
+            return .defaultShortcut
+        }
+        return shortcut
+    }
+
+    var shortcutDescription: String {
+        shortcut.displayName
+    }
+
+    func setShortcut(_ shortcut: GlobalShortcut) {
+        guard let data = try? JSONEncoder().encode(shortcut) else { return }
+        defaults.set(data, forKey: shortcutKey)
+        NotificationCenter.default.post(name: .shotMarkShortcutDidChange, object: shortcut)
+    }
+
+    func resetShortcut() {
+        setShortcut(.defaultShortcut)
     }
 }
 

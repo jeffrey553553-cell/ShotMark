@@ -26,6 +26,10 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
         }
     }
 
+    var currentRecordingState: RecordingUIState {
+        recordingState
+    }
+
     func handlePrimaryShortcut() {
         switch recordingState {
         case .idle:

@@ -8,7 +8,7 @@ enum HotKeyError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .registrationFailed(let status):
-            return "RegisterEventHotKey failed with status \(status)."
+            return "这个快捷键已被系统或其他应用占用，请换一个。RegisterEventHotKey status: \(status)."
         case .handlerInstallFailed(let status):
             return "InstallEventHandler failed with status \(status)."
         }
@@ -23,7 +23,33 @@ final class HotKeyService {
     private let signature: OSType = 0x53484D4B // SHMK
     private let hotKeyID: UInt32 = 1
 
-    func registerOptionA() throws {
+    func register(shortcut: GlobalShortcut) throws {
+        try installEventHandlerIfNeeded()
+        unregisterHotKey()
+
+        let id = EventHotKeyID(signature: signature, id: hotKeyID)
+        let registerStatus = RegisterEventHotKey(
+            shortcut.keyCode,
+            shortcut.modifiers,
+            id,
+            GetApplicationEventTarget(),
+            0,
+            &hotKeyRef
+        )
+        guard registerStatus == noErr else {
+            throw HotKeyError.registrationFailed(registerStatus)
+        }
+    }
+
+    func unregisterHotKey() {
+        if let hotKeyRef {
+            UnregisterEventHotKey(hotKeyRef)
+            self.hotKeyRef = nil
+        }
+    }
+
+    private func installEventHandlerIfNeeded() throws {
+        guard eventHandlerRef == nil else { return }
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         let installStatus = InstallEventHandler(
             GetApplicationEventTarget(),
@@ -55,25 +81,10 @@ final class HotKeyService {
         guard installStatus == noErr else {
             throw HotKeyError.handlerInstallFailed(installStatus)
         }
-
-        let id = EventHotKeyID(signature: signature, id: hotKeyID)
-        let registerStatus = RegisterEventHotKey(
-            UInt32(kVK_ANSI_A),
-            UInt32(optionKey),
-            id,
-            GetApplicationEventTarget(),
-            0,
-            &hotKeyRef
-        )
-        guard registerStatus == noErr else {
-            throw HotKeyError.registrationFailed(registerStatus)
-        }
     }
 
     deinit {
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-        }
+        unregisterHotKey()
         if let eventHandlerRef {
             RemoveEventHandler(eventHandlerRef)
         }
