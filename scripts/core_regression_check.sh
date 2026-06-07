@@ -94,7 +94,8 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "committedValue" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "textInputPadding" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "textContainerInset = NSSize" Sources/ShotMark/SelectionOverlayController.swift
-  rg -q "widthTracksTextView = true" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "widthTracksTextView = false" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "containerSize = CGSize" Sources/ShotMark/SelectionOverlayController.swift
 '
 
 SCREEN_INFO="$(system_profiler SPDisplaysDataType 2>/dev/null || true)"
@@ -171,6 +172,7 @@ Mark each item PASS/FAIL after running it.
 | Edit | Select arrow and drag endpoint handles | Arrow start/end handles move independently | |
 | Edit | Select number marker and adjust style panel | Marker size/color/opacity update and export correctly | |
 | Edit | Type text annotation continuously, press Return to create a new line, then click outside | Text stays anchored while typing, tail newlines do not shift the block, and it does not jump after focus leaves | |
+| Edit | Type a long text annotation without pressing Return | Text input expands horizontally instead of auto-wrapping; committed text matches the input layout | |
 | Edit | Select mosaic and adjust style panel strength | Mosaic blur strength changes; no color controls are shown | |
 
 ## Notes

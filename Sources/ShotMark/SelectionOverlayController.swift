@@ -2284,15 +2284,19 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         textView.drawsBackground = false
         textView.insertionPointColor = .systemRed
         textView.isRichText = false
-        textView.isHorizontallyResizable = false
-        textView.isVerticallyResizable = false
+        textView.isHorizontallyResizable = true
+        textView.isVerticallyResizable = true
         textView.autoresizingMask = []
         textView.minSize = CGSize(width: 24, height: 24)
         textView.maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainerInset = NSSize(width: textInputPadding.width, height: textInputPadding.height)
         textView.textContainer?.lineFragmentPadding = 0
-        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.widthTracksTextView = false
         textView.textContainer?.lineBreakMode = .byClipping
+        textView.textContainer?.containerSize = CGSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
         textView.string = initialText
         addSubview(textView)
 
