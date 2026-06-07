@@ -91,7 +91,10 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "recordingMenuTitle" Sources/ShotMark/AppDelegate.swift
   rg -q "activeTextTopY" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "currentTextAnnotationOrigin" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "committedValue" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "textInputPadding" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "textContainerInset = NSSize" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "widthTracksTextView = true" Sources/ShotMark/SelectionOverlayController.swift
 '
 
 SCREEN_INFO="$(system_profiler SPDisplaysDataType 2>/dev/null || true)"
@@ -167,7 +170,7 @@ Mark each item PASS/FAIL after running it.
 | Edit | Select arrow, increase thickness, then draw | Arrow line and arrowhead remain visible at thick sizes | |
 | Edit | Select arrow and drag endpoint handles | Arrow start/end handles move independently | |
 | Edit | Select number marker and adjust style panel | Marker size/color/opacity update and export correctly | |
-| Edit | Type text annotation continuously, then click outside | Text stays anchored while typing and does not jump after focus leaves | |
+| Edit | Type text annotation continuously, press Return to create a new line, then click outside | Text stays anchored while typing, tail newlines do not shift the block, and it does not jump after focus leaves | |
 | Edit | Select mosaic and adjust style panel strength | Mosaic blur strength changes; no color controls are shown | |
 
 ## Notes

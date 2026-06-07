@@ -2271,7 +2271,12 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         guard let selectionRect else { return }
 
         let absolute = CGPoint(x: selectionRect.minX + point.x, y: selectionRect.minY + point.y)
-        let textView = NSTextView(frame: CGRect(x: absolute.x, y: absolute.y - textInputPadding.height, width: textInputMinSize.width, height: textInputMinSize.height))
+        let textView = NSTextView(frame: CGRect(
+            x: absolute.x - textInputPadding.width,
+            y: absolute.y - textInputPadding.height,
+            width: textInputMinSize.width,
+            height: textInputMinSize.height
+        ))
         textView.delegate = self
         textView.font = .systemFont(ofSize: textStyle.size, weight: .semibold)
         textView.textColor = effectiveColor(textStyle)
@@ -2279,16 +2284,15 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         textView.drawsBackground = false
         textView.insertionPointColor = .systemRed
         textView.isRichText = false
-        textView.isHorizontallyResizable = true
-        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = false
         textView.autoresizingMask = []
         textView.minSize = CGSize(width: 24, height: 24)
         textView.maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.textContainerInset = .zero
+        textView.textContainerInset = NSSize(width: textInputPadding.width, height: textInputPadding.height)
         textView.textContainer?.lineFragmentPadding = 0
-        textView.textContainer?.widthTracksTextView = false
+        textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.lineBreakMode = .byClipping
-        textView.textContainer?.containerSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.string = initialText
         addSubview(textView)
 
@@ -2297,7 +2301,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         activeTextTopY = absolute.y + AnnotationTextLayout.size(
             for: initialText.isEmpty ? " " : initialText,
             fontSize: textStyle.size
-        ).height + textInputPadding.height
+        ).height
         activeTextIsEditingExisting = editingExisting
         window?.makeFirstResponder(textView)
         textView.setSelectedRange(NSRange(location: textView.string.count, length: 0))
@@ -2309,7 +2313,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         let origin = activeTextOrigin ?? .zero
         let value = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
         let isEditingExisting = activeTextIsEditingExisting
-        let resolvedOrigin = currentTextAnnotationOrigin(for: textView) ?? origin
+        let resolvedOrigin = currentTextAnnotationOrigin(for: textView, committedValue: value) ?? origin
         activeTextView = nil
         activeTextOrigin = nil
         activeTextTopY = nil
@@ -2336,16 +2340,20 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         frame.size.width = min(maxWidth, max(textInputMinSize.width, ceil(used.width) + textInputPadding.width * 2))
         frame.size.height = max(textInputMinSize.height, ceil(used.height) + textInputPadding.height * 2)
         if let activeTextTopY {
-            frame.origin.y = activeTextTopY - frame.height
+            frame.origin.y = activeTextTopY + textInputPadding.height - frame.height
         }
         textView.frame = frame
     }
 
-    private func currentTextAnnotationOrigin(for textView: NSTextView) -> CGPoint? {
-        guard let selectionRect else { return nil }
+    private func currentTextAnnotationOrigin(for textView: NSTextView, committedValue: String) -> CGPoint? {
+        guard let selectionRect, let activeTextTopY else { return nil }
+        let committedHeight = AnnotationTextLayout.size(
+            for: committedValue.isEmpty ? " " : committedValue,
+            fontSize: textStyle.size
+        ).height
         return CGPoint(
-            x: textView.frame.minX - selectionRect.minX,
-            y: textView.frame.minY + textInputPadding.height - selectionRect.minY
+            x: textView.frame.minX + textInputPadding.width - selectionRect.minX,
+            y: activeTextTopY - committedHeight - selectionRect.minY
         )
     }
 
