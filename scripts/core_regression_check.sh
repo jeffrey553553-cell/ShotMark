@@ -111,6 +111,14 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "containerSize = CGSize" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "annotationRectangleBorderContains" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "rectangleBorderContains" Sources/ShotMark/AnnotationCanvasView.swift
+  rg -q "WindowCandidate" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "CGWindowListCopyWindowInfo" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "pendingInitialSelection" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "initialSelectionDragThreshold" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "updateHoveredWindowCandidate" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "selectWindowCandidate" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "drawWindowCandidateHover" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "点击窗口快速选择" Sources/ShotMark/SelectionOverlayController.swift
 '
 
 SCREEN_INFO="$(system_profiler SPDisplaysDataType 2>/dev/null || true)"
@@ -161,6 +169,9 @@ Mark each item PASS/FAIL after running it.
 | Permissions | Status bar -> permission rows | Screen Recording and Microphone show allowed after permission is granted; if not, menu offers settings and restart/quit path | |
 | Settings | Change screenshot shortcut, then restore default | New shortcut triggers capture; occupied/reserved shortcuts show an error; default returns to Option+A after restore | |
 | Single screen | Configured screenshot shortcut on built-in/main screen | Selection overlay appears; selection can move and resize | |
+| Window pick | Hover a visible app window before dragging | Window is highlighted with a clear click-to-select hint | |
+| Window pick | Click a hovered app window | Selection snaps to that window and remains editable with the normal toolbar | |
+| Window pick | Press down on a window, then drag more than a few pixels | Free-form rectangle selection starts instead of selecting the window | |
 | Immediate drag | Press configured shortcut, then drag without a focus click | Selection starts on the first mouse down after the shortcut | |
 | Frozen frame | Play a video, press configured shortcut, then select/save later | Overlay and final PNG keep the frame from screenshot entry instead of later video frames | |
 | External screen | Configured shortcut with cursor on external screen | Overlay appears on target display; capture area matches selected display | |

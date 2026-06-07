@@ -149,7 +149,16 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         var filled: Bool = false
     }
 
+    private struct WindowCandidate {
+        let id: CGWindowID
+        let title: String
+        let ownerName: String
+        let screenRect: CGRect
+        let localRect: CGRect
+    }
+
     private enum DragMode {
+        case pendingInitialSelection(start: CGPoint, candidate: WindowCandidate?)
         case drawingSelection(start: CGPoint)
         case movingSelection(startPoint: CGPoint, originalRect: CGRect)
         case resizingSelection(handle: RectHandle, originalRect: CGRect)
@@ -253,6 +262,9 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private var shouldRefreshMosaicPreviewAfterCurrentCapture = false
     private var hoverTrackingArea: NSTrackingArea?
     private var hoverClearWorkItem: DispatchWorkItem?
+    private var windowCandidates: [WindowCandidate] = []
+    private var hoveredWindowCandidate: WindowCandidate?
+    private let initialSelectionDragThreshold: CGFloat = 5
     private let shortcutOptions: [ShortcutOption] = {
         let letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".map { ShortcutOption(display: String($0), key: String($0)) }
         let digits = "0123456789".map { ShortcutOption(display: String($0), key: String($0)) }
@@ -300,6 +312,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         super.init(frame: CGRect(origin: .zero, size: screen.frame.size))
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
+        windowCandidates = Self.loadWindowCandidates(for: screen)
     }
 
     required init?(coder: NSCoder) {
@@ -320,6 +333,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     func prepareForCaptureFocus() {
         window?.acceptsMouseMovedEvents = true
         window?.makeFirstResponder(self)
+        refreshWindowHoverUnderCurrentMouse()
     }
 
     override func updateTrackingAreas() {
@@ -471,17 +485,21 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         undoStack.removeAll()
         redoStack.removeAll()
         invalidateMosaicPreview()
-        dragMode = .drawingSelection(start: point)
-        selectionRect = CGRect(origin: point, size: .zero)
+        let initialCandidate = windowCandidate(at: point)
+        hoveredWindowCandidate = initialCandidate
+        dragMode = .pendingInitialSelection(start: point, candidate: initialCandidate)
+        selectionRect = nil
         needsDisplay = true
     }
 
     override func mouseMoved(with event: NSEvent) {
         guard let selectionRect else {
             setHoveredButton(nil)
+            updateHoveredWindowCandidate(at: convert(event.locationInWindow, from: nil))
             return
         }
 
+        hoveredWindowCandidate = nil
         let point = convert(event.locationInWindow, from: nil)
         updateRecordingMenuHover(at: point, selectionRect: selectionRect)
 
@@ -493,7 +511,9 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     override func mouseExited(with event: NSEvent) {
+        hoveredWindowCandidate = nil
         scheduleHoveredButtonClear()
+        needsDisplay = true
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -501,6 +521,13 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         let relative = relativePoint(point)
 
         switch dragMode {
+        case .pendingInitialSelection(let start, _):
+            if distance(point, start) >= initialSelectionDragThreshold {
+                hoveredWindowCandidate = nil
+                selectionRect = normalizedRect(from: start, to: point)
+                dragMode = .drawingSelection(start: start)
+                invalidateMosaicPreview()
+            }
         case .drawingSelection(let start):
             selectionRect = normalizedRect(from: start, to: point)
             invalidateMosaicPreview()
@@ -541,6 +568,10 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         let shouldBeginTextEdit = textEditIndex != nil && !pendingTextEditDidMove
 
         switch dragMode {
+        case .pendingInitialSelection(_, let candidate):
+            if let candidate {
+                selectWindowCandidate(candidate)
+            }
         case .drawingRectangle(let start, _):
             let rect = normalizedRect(from: start, to: point)
             if rect.width > 4, rect.height > 4 {
@@ -576,15 +607,18 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        let hoverRect = selectionRect == nil ? hoveredWindowCandidate?.localRect : nil
         if frozenSnapshot != nil {
             drawFrozenSnapshot()
-            drawDimmingOverlay(excluding: selectionRect)
+            drawDimmingOverlay(excluding: selectionRect ?? hoverRect)
         } else {
-            NSColor.black.withAlphaComponent(0.50).setFill()
-            bounds.fill()
+            drawDimmingOverlay(excluding: selectionRect ?? hoverRect)
         }
 
         guard let selectionRect else {
+            if let hoveredWindowCandidate {
+                drawWindowCandidateHover(hoveredWindowCandidate)
+            }
             drawInitialHint()
             return
         }
@@ -819,6 +853,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         drawSelectedAnnotationHandles()
 
         switch dragMode {
+        case .pendingInitialSelection:
+            break
         case .drawingRectangle(let start, let current):
             AnnotationDrawing.draw([.rectangle(rect: normalizedRect(from: start, to: current), color: effectiveColor(rectangleStyle), lineWidth: rectangleStyle.size, filled: rectangleStyle.filled)], in: selectionRect.size)
         case .drawingMosaic(let start, let current):
@@ -1603,14 +1639,72 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         text.draw(at: CGPoint(x: badge.minX + 9, y: badge.midY - size.height / 2), withAttributes: attributes)
     }
 
+    private func drawWindowCandidateHover(_ candidate: WindowCandidate) {
+        let rect = candidate.localRect.intersection(bounds).integral
+        guard !rect.isNull, !rect.isEmpty else { return }
+
+        NSGraphicsContext.saveGraphicsState()
+        let glow = NSShadow()
+        glow.shadowBlurRadius = 14
+        glow.shadowOffset = .zero
+        glow.shadowColor = NSColor.controlAccentColor.withAlphaComponent(0.40)
+        glow.set()
+
+        NSColor.white.withAlphaComponent(0.92).setStroke()
+        let outer = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+        outer.lineWidth = 2
+        outer.stroke()
+        NSGraphicsContext.restoreGraphicsState()
+
+        NSColor.controlAccentColor.withAlphaComponent(0.88).setStroke()
+        let inner = NSBezierPath(roundedRect: rect.insetBy(dx: 2, dy: 2), xRadius: 7, yRadius: 7)
+        inner.lineWidth = 1
+        inner.stroke()
+
+        let subtitle = candidate.ownerName.isEmpty ? "点击选中窗口" : "点击选中窗口 · \(candidate.ownerName)"
+        drawHintPill(subtitle, preferredOrigin: CGPoint(x: rect.minX + 10, y: rect.maxY + 10), maxWidth: bounds.width - 32)
+    }
+
     private func drawInitialHint() {
-        let text = "拖拽框选截图区域"
+        let text = hoveredWindowCandidate == nil
+            ? "拖拽框选 · 点击窗口快速选择 · Esc 取消"
+            : "拖拽框选 · 点击选中窗口 · Esc 取消"
+        drawHintPill(text, preferredOrigin: CGPoint(x: bounds.midX, y: bounds.midY), centered: true, maxWidth: bounds.width - 32)
+    }
+
+    private func drawHintPill(_ text: String, preferredOrigin: CGPoint, centered: Bool = false, maxWidth: CGFloat) {
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 20, weight: .semibold),
+            .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
             .foregroundColor: NSColor.white
         ]
-        let size = text.size(withAttributes: attributes)
-        text.draw(at: CGPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2), withAttributes: attributes)
+        let rawSize = text.size(withAttributes: attributes)
+        let width = min(maxWidth, rawSize.width + 22)
+        let height = rawSize.height + 12
+        let origin: CGPoint
+        if centered {
+            origin = CGPoint(x: preferredOrigin.x - width / 2, y: preferredOrigin.y - height / 2)
+        } else {
+            origin = preferredOrigin
+        }
+        let frame = CGRect(origin: origin, size: CGSize(width: width, height: height))
+        let clampedFrame = CGRect(
+            x: min(max(frame.minX, bounds.minX + 16), bounds.maxX - width - 16),
+            y: min(max(frame.minY, bounds.minY + 16), bounds.maxY - height - 16),
+            width: width,
+            height: height
+        )
+
+        NSColor.black.withAlphaComponent(0.74).setFill()
+        NSBezierPath(roundedRect: clampedFrame, xRadius: 8, yRadius: 8).fill()
+        NSColor.white.withAlphaComponent(0.14).setStroke()
+        let border = NSBezierPath(roundedRect: clampedFrame.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8)
+        border.lineWidth = 1
+        border.stroke()
+
+        text.draw(
+            at: CGPoint(x: clampedFrame.midX - rawSize.width / 2, y: clampedFrame.midY - rawSize.height / 2),
+            withAttributes: attributes
+        )
     }
 
     private func handleButtonClick(at point: CGPoint, selectionRect: CGRect) -> Bool {
@@ -2478,6 +2572,119 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             NSEvent.removeMonitor(monitor)
             ocrDismissEventMonitor = nil
         }
+    }
+
+    private func updateHoveredWindowCandidate(at point: CGPoint) {
+        let next = windowCandidate(at: point)
+        if hoveredWindowCandidate?.id != next?.id {
+            hoveredWindowCandidate = next
+            needsDisplay = true
+        }
+        if next == nil {
+            NSCursor.crosshair.set()
+        } else {
+            NSCursor.pointingHand.set()
+        }
+    }
+
+    private func refreshWindowHoverUnderCurrentMouse() {
+        guard selectionRect == nil, let window else { return }
+        let windowPoint = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        let localPoint = convert(windowPoint, from: nil)
+        guard bounds.contains(localPoint) else { return }
+        updateHoveredWindowCandidate(at: localPoint)
+    }
+
+    private func windowCandidate(at point: CGPoint) -> WindowCandidate? {
+        windowCandidates.first { $0.localRect.insetBy(dx: -2, dy: -2).contains(point) }
+    }
+
+    private func selectWindowCandidate(_ candidate: WindowCandidate) {
+        selectedTool = nil
+        selectedAnnotationIndex = nil
+        annotations.removeAll()
+        undoStack.removeAll()
+        redoStack.removeAll()
+        hoveredWindowCandidate = nil
+        setSelectionRect(clamped(candidate.localRect), keepingAnnotationsStationary: false)
+        needsDisplay = true
+    }
+
+    private static func loadWindowCandidates(for screen: NSScreen) -> [WindowCandidate] {
+        guard let windowInfo = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            return []
+        }
+
+        let ownPID = getpid()
+        return windowInfo.compactMap { info in
+            guard
+                let windowID = (info[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
+                let ownerPID = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+                ownerPID != ownPID,
+                let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue,
+                layer == 0,
+                (info[kCGWindowIsOnscreen as String] as? Bool) != false,
+                ((info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1) > 0.05,
+                let boundsDictionary = info[kCGWindowBounds as String] as? NSDictionary
+            else {
+                return nil
+            }
+
+            var quartzBounds = CGRect.zero
+            guard CGRectMakeWithDictionaryRepresentation(boundsDictionary as CFDictionary, &quartzBounds) else {
+                return nil
+            }
+
+            let ownerName = (info[kCGWindowOwnerName as String] as? String) ?? ""
+            let title = (info[kCGWindowName as String] as? String) ?? ""
+            guard !isIgnoredWindow(ownerName: ownerName, title: title, quartzBounds: quartzBounds, screen: screen) else {
+                return nil
+            }
+
+            let screenRect = appKitScreenRect(fromQuartzWindowBounds: quartzBounds)
+            let clippedScreenRect = screenRect.intersection(screen.frame).integral
+            guard
+                !clippedScreenRect.isNull,
+                !clippedScreenRect.isEmpty,
+                clippedScreenRect.width >= 48,
+                clippedScreenRect.height >= 48
+            else {
+                return nil
+            }
+
+            let localRect = clippedScreenRect.offsetBy(dx: -screen.frame.minX, dy: -screen.frame.minY)
+            return WindowCandidate(
+                id: CGWindowID(windowID),
+                title: title,
+                ownerName: ownerName,
+                screenRect: clippedScreenRect,
+                localRect: localRect
+            )
+        }
+    }
+
+    private static func isIgnoredWindow(ownerName: String, title: String, quartzBounds: CGRect, screen: NSScreen) -> Bool {
+        if ownerName == "Window Server" || ownerName == "Dock" {
+            return true
+        }
+        if title == "Desktop" || title == "Backstop Menubar" {
+            return true
+        }
+
+        let screenRect = appKitScreenRect(fromQuartzWindowBounds: quartzBounds)
+        let clipped = screenRect.intersection(screen.frame)
+        let isNearlyFullScreen = clipped.width >= screen.frame.width - 2 && clipped.height >= screen.frame.height - 2
+        return isNearlyFullScreen && title.isEmpty
+    }
+
+    private static func appKitScreenRect(fromQuartzWindowBounds quartzBounds: CGRect) -> CGRect {
+        let mainDisplayHeight = NSScreen.main?.frame.height ?? NSScreen.screens.first?.frame.height ?? 0
+        return CGRect(
+            x: quartzBounds.minX,
+            y: mainDisplayHeight - quartzBounds.maxY,
+            width: quartzBounds.width,
+            height: quartzBounds.height
+        )
     }
 
     private func relativePoint(_ point: CGPoint) -> CGPoint {
