@@ -225,6 +225,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private var nextMarkerNumber = 1
     private var activeTextView: NSTextView?
     private var activeTextOrigin: CGPoint?
+    private var activeTextTopY: CGFloat?
     private var ocrPanelController: OCRResultPanelController?
     private var ocrDismissEventMonitor: Any?
     private var isOCRBusy = false
@@ -281,6 +282,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private var arrowStyle = ToolStyle(color: .systemRed, size: 4, opacity: 1)
     private var numberMarkerStyle = ToolStyle(color: .systemRed, size: 13, opacity: 1)
     private var textStyle = ToolStyle(color: .systemRed, size: 18, opacity: 1)
+    private let textInputMinSize = CGSize(width: 80, height: 28)
+    private let textInputPadding = CGSize(width: 6, height: 4)
     private let styleColors: [NSColor] = [
         .systemRed,
         .systemPink,
@@ -2268,7 +2271,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         guard let selectionRect else { return }
 
         let absolute = CGPoint(x: selectionRect.minX + point.x, y: selectionRect.minY + point.y)
-        let textView = NSTextView(frame: CGRect(x: absolute.x, y: absolute.y - 4, width: 80, height: 28))
+        let textView = NSTextView(frame: CGRect(x: absolute.x, y: absolute.y - textInputPadding.height, width: textInputMinSize.width, height: textInputMinSize.height))
         textView.delegate = self
         textView.font = .systemFont(ofSize: textStyle.size, weight: .semibold)
         textView.textColor = effectiveColor(textStyle)
@@ -2291,6 +2294,10 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
         activeTextView = textView
         activeTextOrigin = point
+        activeTextTopY = absolute.y + AnnotationTextLayout.size(
+            for: initialText.isEmpty ? " " : initialText,
+            fontSize: textStyle.size
+        ).height + textInputPadding.height
         activeTextIsEditingExisting = editingExisting
         window?.makeFirstResponder(textView)
         textView.setSelectedRange(NSRange(location: textView.string.count, length: 0))
@@ -2302,14 +2309,16 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         let origin = activeTextOrigin ?? .zero
         let value = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
         let isEditingExisting = activeTextIsEditingExisting
+        let resolvedOrigin = currentTextAnnotationOrigin(for: textView) ?? origin
         activeTextView = nil
         activeTextOrigin = nil
+        activeTextTopY = nil
         activeTextIsEditingExisting = false
         textView.delegate = nil
         textView.removeFromSuperview()
         if !value.isEmpty {
             add(
-                .text(origin: origin, value: value, color: effectiveColor(textStyle), fontSize: textStyle.size),
+                .text(origin: resolvedOrigin, value: value, color: effectiveColor(textStyle), fontSize: textStyle.size),
                 registersUndo: !isEditingExisting
             )
             selectedAnnotationIndex = nil
@@ -2317,14 +2326,27 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     func textDidChange(_ notification: Notification) {
-        guard let textView = activeTextView, let textContainer = textView.textContainer else { return }
-        textView.layoutManager?.ensureLayout(for: textContainer)
-        let used = textView.layoutManager?.usedRect(for: textContainer).size ?? textView.frame.size
+        guard let textView = activeTextView else { return }
+        let used = AnnotationTextLayout.size(
+            for: textView.string.isEmpty ? " " : textView.string,
+            fontSize: textStyle.size
+        )
         var frame = textView.frame
         let maxWidth = max(80, bounds.maxX - frame.minX - 12)
-        frame.size.width = min(maxWidth, max(80, ceil(used.width) + 6))
-        frame.size.height = max(28, ceil(used.height) + 6)
+        frame.size.width = min(maxWidth, max(textInputMinSize.width, ceil(used.width) + textInputPadding.width * 2))
+        frame.size.height = max(textInputMinSize.height, ceil(used.height) + textInputPadding.height * 2)
+        if let activeTextTopY {
+            frame.origin.y = activeTextTopY - frame.height
+        }
         textView.frame = frame
+    }
+
+    private func currentTextAnnotationOrigin(for textView: NSTextView) -> CGPoint? {
+        guard let selectionRect else { return nil }
+        return CGPoint(
+            x: textView.frame.minX - selectionRect.minX,
+            y: textView.frame.minY + textInputPadding.height - selectionRect.minY
+        )
     }
 
     func textDidEndEditing(_ notification: Notification) {
