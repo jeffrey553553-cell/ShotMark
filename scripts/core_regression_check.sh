@@ -75,11 +75,16 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "LongScreenshotHotKeyService" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "kVK_Escape" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "primaryScrollDirectionSign" Sources/ShotMark/LongScreenshotSessionController.swift
-  rg -q "reverseVerticalOverlap" Sources/ShotMark/LongScreenshotSessionController.swift
-  rg -q "directionalConfidenceRatio" Sources/ShotMark/LongScreenshotSessionController.swift
-  rg -q "primaryStitchDirection" Sources/ShotMark/LongScreenshotSessionController.swift
-  rg -q "case upward" Sources/ShotMark/LongScreenshotSessionController.swift
-  rg -q "stitchedSegments.insert\\(segment, at: 0\\)" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "pendingExpectedScrollDeltaPixels" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "LongScreenshotStitcher" Sources/ShotMark/LongScreenshotStitcher.swift Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "ContentSlice" Sources/ShotMark/LongScreenshotStitcher.swift
+  rg -q "detectStaticBand" Sources/ShotMark/LongScreenshotStitcher.swift
+  rg -q "detectStaticSideBand" Sources/ShotMark/LongScreenshotStitcher.swift
+  rg -q "matchingColumnBounds" Sources/ShotMark/LongScreenshotStitcher.swift
+  rg -q "case upward" Sources/ShotMark/LongScreenshotStitcher.swift
+  rg -q "contentSlices.insert\\(slice, at: 0\\)" Sources/ShotMark/LongScreenshotStitcher.swift
+  rg -q "ignoredAlignmentFailed" Sources/ShotMark/LongScreenshotStitcher.swift
+  rg -q "isAmbiguous" Sources/ShotMark/LongScreenshotStitcher.swift
   rg -q "static let defaultShortcut" Sources/ShotMark/GlobalShortcut.swift
   rg -q "\\.defaultShortcut" Sources/ShotMark/Models.swift Sources/ShotMark/SettingsWindowController.swift Sources/ShotMark/AppDelegate.swift
   rg -q "shotmark.captureShortcut" Sources/ShotMark/Models.swift

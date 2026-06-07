@@ -22,59 +22,41 @@ enum LongScreenshotCommitAction {
     case saveToFile
 }
 
-private struct FrameSample {
-    let width: Int
-    let height: Int
-    let pixels: [UInt8]
-
-    init?(image: CGImage, width: Int = 56, height: Int = 120) {
-        self.width = width
-        self.height = height
-        var pixels = [UInt8](repeating: 0, count: width * height)
-        let colorSpace = CGColorSpaceCreateDeviceGray()
-        let created = pixels.withUnsafeMutableBytes { buffer in
-            guard let baseAddress = buffer.baseAddress else { return false }
-            guard let context = CGContext(
-                data: baseAddress,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: width,
-                space: colorSpace,
-                bitmapInfo: CGImageAlphaInfo.none.rawValue
-            ) else {
-                return false
-            }
-
-            context.interpolationQuality = .low
-            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-            return true
+private extension LongScreenshotStitchUpdate {
+    var isAccepted: Bool {
+        switch outcome {
+        case .initialized, .appended:
+            true
+        case .ignoredNoMovement, .ignoredAlignmentFailed:
+            false
         }
-
-        guard created else { return nil }
-        self.pixels = pixels
     }
-}
 
-private struct OverlapMatch {
-    let rows: Int
-    let score: Double
-}
+    var statusText: String {
+        switch outcome {
+        case .initialized:
+            "已锁定首帧"
+        case .appended(let deltaY):
+            "已追加 \(deltaY)px，继续滚动"
+        case .ignoredNoMovement:
+            "未检测到新内容"
+        case .ignoredAlignmentFailed:
+            "拼接置信度低，放慢滚动"
+        }
+    }
 
-private enum StitchDirection {
-    case downward
-    case upward
-}
-
-private struct FrameAppendPlan {
-    let cropRect: CGRect
-    let direction: StitchDirection
-}
-
-private struct DirectionalAppendCandidate {
-    let direction: StitchDirection
-    let match: OverlapMatch
-    let cropRect: CGRect
+    var previewStatusText: String {
+        switch outcome {
+        case .initialized:
+            "首帧已采集"
+        case .appended:
+            "预览已更新"
+        case .ignoredNoMovement:
+            "无新增内容"
+        case .ignoredAlignmentFailed:
+            "等待更清晰的重叠区域"
+        }
+    }
 }
 
 private enum LongScreenshotHotKeyAction {
@@ -161,10 +143,9 @@ final class LongScreenshotSessionController {
     var onCancel: (() -> Void)?
 
     private let captureService = CaptureService()
+    private let stitcher = LongScreenshotStitcher()
     private let selection: CaptureSelection
     private var captures: [CaptureResult] = []
-    private var stitchedSegments: [CGImage] = []
-    private var lastAcceptedFrame: CGImage?
     private var stitchedImageCache: CGImage?
     private var window: NSPanel?
     private var controlView: LongScreenshotControlView?
@@ -176,8 +157,8 @@ final class LongScreenshotSessionController {
     private var throttledScrollCaptureWorkItem: DispatchWorkItem?
     private var trailingScrollCaptureWorkItem: DispatchWorkItem?
     private var lastScrollCaptureAt = Date.distantPast
+    private var pendingExpectedScrollDeltaPixels = 0
     private var primaryScrollDirectionSign: CGFloat?
-    private var primaryStitchDirection: StitchDirection?
     private var isCapturing = false
     private var needsCaptureAfterCurrent = false
     private var finishAfterCapture = false
@@ -189,7 +170,6 @@ final class LongScreenshotSessionController {
     private let scrollCaptureInterval: TimeInterval = 0.075
     private let trailingCaptureDelay: TimeInterval = 0.09
     private let scrollDirectionThreshold: CGFloat = 0.1
-    private let directionalConfidenceRatio = 0.86
 
     init(selection: CaptureSelection) {
         self.selection = selection
@@ -218,13 +198,13 @@ final class LongScreenshotSessionController {
             return
         }
 
-        guard !captures.isEmpty else {
+        guard stitcher.acceptedFrameCount > 0 else {
             cleanup()
             onFinish?(.failure(LongScreenshotSessionError.noFrames))
             return
         }
 
-        guard let stitched = stitchedImageCache ?? stitch(captures.map(\.image)) else {
+        guard let stitched = stitchedImageCache ?? stitcher.mergedImage() else {
             cleanup()
             onFinish?(.failure(LongScreenshotSessionError.stitchingFailed))
             return
@@ -302,6 +282,7 @@ final class LongScreenshotSessionController {
         if primaryScrollDirectionSign == nil {
             primaryScrollDirectionSign = sign
         }
+        pendingExpectedScrollDeltaPixels += expectedScrollDeltaPixels(from: event, verticalDelta: verticalDelta)
         scheduleCaptureAfterScroll()
     }
 
@@ -315,12 +296,19 @@ final class LongScreenshotSessionController {
         return abs(vertical) >= abs(horizontal) ? vertical : 0
     }
 
+    private func expectedScrollDeltaPixels(from event: NSEvent, verticalDelta: CGFloat) -> Int {
+        let pointDelta = abs(verticalDelta) * (event.hasPreciseScrollingDeltas ? 1 : 18)
+        let scale = max(1, selection.screen.backingScaleFactor)
+        return max(1, Int((pointDelta * scale).rounded()))
+    }
+
     private func pauseCaptureForReverseScroll() {
         throttledScrollCaptureWorkItem?.cancel()
         throttledScrollCaptureWorkItem = nil
         trailingScrollCaptureWorkItem?.cancel()
         trailingScrollCaptureWorkItem = nil
         needsCaptureAfterCurrent = false
+        pendingExpectedScrollDeltaPixels = 0
         updateControlView(status: "反向滚动，暂停采集")
         updatePreview(status: "反向滚动暂停")
     }
@@ -367,6 +355,8 @@ final class LongScreenshotSessionController {
 
         isCapturing = true
         needsCaptureAfterCurrent = false
+        let expectedDeltaPixels = pendingExpectedScrollDeltaPixels > 0 ? pendingExpectedScrollDeltaPixels : nil
+        pendingExpectedScrollDeltaPixels = 0
         updateControlView(status: "正在采集...")
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.015) { [weak self] in
@@ -379,14 +369,15 @@ final class LongScreenshotSessionController {
                     switch result {
                     case .success(let capture):
                         let cleaned = self.cleanedCapture(capture)
-                        let accepted = self.acceptFrameForStitching(cleaned.image)
-                        if accepted {
+                        let update = self.stitcher.append(cleaned.image, expectedDeltaPixels: expectedDeltaPixels)
+                        self.stitchedImageCache = update?.mergedImage
+                        if update?.isAccepted == true {
                             self.captures.append(cleaned)
-                            self.updateControlView(status: "滚动页面继续采集")
-                            self.updatePreview(status: "继续滚动采集")
+                            self.updateControlView(status: update?.statusText ?? "滚动页面继续采集")
+                            self.updatePreview(status: update?.previewStatusText ?? "继续滚动采集")
                         } else {
-                            self.updateControlView(status: "未检测到新内容")
-                            self.updatePreview(status: "未追加")
+                            self.updateControlView(status: update?.statusText ?? "未检测到新内容")
+                            self.updatePreview(status: update?.previewStatusText ?? "未追加")
                         }
                     case .failure(let error):
                         self.cleanup()
@@ -620,298 +611,6 @@ final class LongScreenshotSessionController {
         )
     }
 
-    private func stitch(_ images: [CGImage]) -> CGImage? {
-        guard !images.isEmpty else { return nil }
-        var segments: [CGImage] = [images[0]]
-        var lastAcceptedFrame = images[0]
-
-        for current in images.dropFirst() {
-            guard
-                let plan = appendPlan(previous: lastAcceptedFrame, current: current),
-                let segment = current.cropping(to: plan.cropRect)
-            else { continue }
-            switch plan.direction {
-            case .downward:
-                segments.append(segment)
-            case .upward:
-                segments.insert(segment, at: 0)
-            }
-            lastAcceptedFrame = current
-        }
-
-        return composeSegments(segments)
-    }
-
-    @discardableResult
-    private func acceptFrameForStitching(_ image: CGImage) -> Bool {
-        guard let previous = lastAcceptedFrame else {
-            stitchedSegments = [image]
-            lastAcceptedFrame = image
-            stitchedImageCache = composeSegments(stitchedSegments)
-            return true
-        }
-
-        guard
-            let plan = appendPlan(previous: previous, current: image),
-            let segment = image.cropping(to: plan.cropRect)
-        else {
-            return false
-        }
-
-        switch plan.direction {
-        case .downward:
-            stitchedSegments.append(segment)
-        case .upward:
-            stitchedSegments.insert(segment, at: 0)
-        }
-        lastAcceptedFrame = image
-        if primaryStitchDirection == nil {
-            primaryStitchDirection = plan.direction
-        }
-        stitchedImageCache = composeSegments(stitchedSegments)
-        return true
-    }
-
-    private func appendPlan(previous: CGImage, current: CGImage) -> FrameAppendPlan? {
-        guard previous.width == current.width, previous.height == current.height else { return nil }
-
-        let downCandidate = appendCandidate(
-            direction: .downward,
-            match: verticalOverlap(previous: previous, current: current),
-            imageSize: CGSize(width: current.width, height: current.height)
-        )
-        let upCandidate = appendCandidate(
-            direction: .upward,
-            match: reverseVerticalOverlap(previous: previous, current: current),
-            imageSize: CGSize(width: current.width, height: current.height)
-        )
-
-        let selected: DirectionalAppendCandidate?
-        if let primaryStitchDirection {
-            selected = lockedCandidate(
-                direction: primaryStitchDirection,
-                downCandidate: downCandidate,
-                upCandidate: upCandidate
-            )
-        } else {
-            selected = unlockedCandidate(downCandidate: downCandidate, upCandidate: upCandidate)
-        }
-        guard let selected else { return nil }
-        return FrameAppendPlan(cropRect: selected.cropRect, direction: selected.direction)
-    }
-
-    private func composeSegments(_ segments: [CGImage]) -> CGImage? {
-        guard !segments.isEmpty else { return nil }
-        let width = segments.map(\.width).max() ?? 0
-        let height = segments.reduce(0) { $0 + $1.height }
-        guard width > 0, height > 0 else { return nil }
-
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        guard let context = CGContext(
-            data: nil,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: colorSpace,
-            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
-        ) else {
-            return nil
-        }
-
-        context.setFillColor(NSColor.clear.cgColor)
-        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-
-        var y = height
-        for image in segments {
-            y -= image.height
-            context.draw(image, in: CGRect(x: 0, y: y, width: image.width, height: image.height))
-        }
-
-        return context.makeImage()
-    }
-
-    private func verticalOverlap(previous: CGImage, current: CGImage) -> OverlapMatch? {
-        guard previous.width == current.width, previous.height == current.height else { return nil }
-        guard
-            let previousSample = FrameSample(image: previous, width: 72, height: 160),
-            let currentSample = FrameSample(image: current, width: 72, height: 160)
-        else {
-            return nil
-        }
-
-        let maximumRows = max(8, previousSample.height - 2)
-        let minimumRows = max(8, previousSample.height / 8)
-        var bestRows = 0
-        var bestScore = Double.greatestFiniteMagnitude
-
-        for rows in stride(from: maximumRows, through: minimumRows, by: -1) {
-            let score = overlapScore(
-                previous: previousSample,
-                current: currentSample,
-                rows: rows
-            )
-            let sizeBias = Double(maximumRows - rows) * 0.015
-            let biasedScore = score + sizeBias
-            if biasedScore < bestScore {
-                bestScore = biasedScore
-                bestRows = rows
-            }
-        }
-
-        guard bestRows > 0 else { return nil }
-        let ratio = CGFloat(bestRows) / CGFloat(previousSample.height)
-        let imageRows = min(current.height - 1, max(0, Int((CGFloat(current.height) * ratio).rounded())))
-        return OverlapMatch(rows: imageRows, score: bestScore)
-    }
-
-    private func reverseVerticalOverlap(previous: CGImage, current: CGImage) -> OverlapMatch? {
-        guard previous.width == current.width, previous.height == current.height else { return nil }
-        guard
-            let previousSample = FrameSample(image: previous, width: 72, height: 160),
-            let currentSample = FrameSample(image: current, width: 72, height: 160)
-        else {
-            return nil
-        }
-
-        let maximumRows = max(8, previousSample.height - 2)
-        let minimumRows = max(8, previousSample.height / 8)
-        var bestRows = 0
-        var bestScore = Double.greatestFiniteMagnitude
-
-        for rows in stride(from: maximumRows, through: minimumRows, by: -1) {
-            let score = reverseOverlapScore(
-                previous: previousSample,
-                current: currentSample,
-                rows: rows
-            )
-            let sizeBias = Double(maximumRows - rows) * 0.015
-            let biasedScore = score + sizeBias
-            if biasedScore < bestScore {
-                bestScore = biasedScore
-                bestRows = rows
-            }
-        }
-
-        guard bestRows > 0 else { return nil }
-        let ratio = CGFloat(bestRows) / CGFloat(previousSample.height)
-        let imageRows = min(current.height - 1, max(0, Int((CGFloat(current.height) * ratio).rounded())))
-        return OverlapMatch(rows: imageRows, score: bestScore)
-    }
-
-    private func appendCandidate(direction: StitchDirection, match: OverlapMatch?, imageSize: CGSize) -> DirectionalAppendCandidate? {
-        guard let match else { return nil }
-        let height = Int(imageSize.height)
-        let width = Int(imageSize.width)
-        let appendHeight = height - match.rows
-        let minimumAppendHeight = max(14, height / 100)
-        guard match.rows >= height / 10,
-              match.score < 18,
-              appendHeight >= minimumAppendHeight,
-              appendHeight <= height * 3 / 4 else {
-            return nil
-        }
-
-        let cropRect: CGRect
-        switch direction {
-        case .downward:
-            cropRect = CGRect(x: 0, y: match.rows, width: width, height: appendHeight)
-        case .upward:
-            cropRect = CGRect(x: 0, y: 0, width: width, height: appendHeight)
-        }
-        return DirectionalAppendCandidate(direction: direction, match: match, cropRect: cropRect)
-    }
-
-    private func lockedCandidate(
-        direction: StitchDirection,
-        downCandidate: DirectionalAppendCandidate?,
-        upCandidate: DirectionalAppendCandidate?
-    ) -> DirectionalAppendCandidate? {
-        let preferred = direction == .downward ? downCandidate : upCandidate
-        let opposite = direction == .downward ? upCandidate : downCandidate
-        guard let preferred else { return nil }
-        if let opposite, candidate(opposite, isClearlyBetterThan: preferred) {
-            return nil
-        }
-        return preferred
-    }
-
-    private func unlockedCandidate(
-        downCandidate: DirectionalAppendCandidate?,
-        upCandidate: DirectionalAppendCandidate?
-    ) -> DirectionalAppendCandidate? {
-        switch (downCandidate, upCandidate) {
-        case let (down?, nil):
-            return down
-        case let (nil, up?):
-            return up
-        case let (down?, up?):
-            if candidate(down, isClearlyBetterThan: up) {
-                return down
-            }
-            if candidate(up, isClearlyBetterThan: down) {
-                return up
-            }
-            return down.match.score <= up.match.score ? down : up
-        case (nil, nil):
-            return nil
-        }
-    }
-
-    private func candidate(_ lhs: DirectionalAppendCandidate, isClearlyBetterThan rhs: DirectionalAppendCandidate) -> Bool {
-        let requiredLead = max(3.0, min(12.0, rhs.match.score * (1.0 - directionalConfidenceRatio)))
-        return lhs.match.score + requiredLead < rhs.match.score
-    }
-
-    private func overlapQualityScore(previous: CGImage, current: CGImage, overlapRows: Int) -> Double {
-        guard previous.width == current.width, previous.height == current.height else {
-            return Double.greatestFiniteMagnitude
-        }
-        guard
-            let previousSample = FrameSample(image: previous, width: 72, height: 160),
-            let currentSample = FrameSample(image: current, width: 72, height: 160)
-        else {
-            return Double.greatestFiniteMagnitude
-        }
-
-        let ratio = CGFloat(overlapRows) / CGFloat(current.height)
-        let sampleRows = min(
-            previousSample.height - 2,
-            max(8, Int((CGFloat(previousSample.height) * ratio).rounded()))
-        )
-        return overlapScore(previous: previousSample, current: currentSample, rows: sampleRows)
-    }
-
-    private func overlapScore(previous: FrameSample, current: FrameSample, rows: Int) -> Double {
-        var total = 0
-        var count = 0
-        let previousStart = previous.height - rows
-        for row in 0..<rows {
-            let previousOffset = (previousStart + row) * previous.width
-            let currentOffset = row * current.width
-            for column in 0..<previous.width {
-                total += abs(Int(previous.pixels[previousOffset + column]) - Int(current.pixels[currentOffset + column]))
-                count += 1
-            }
-        }
-        return count > 0 ? Double(total) / Double(count) : Double.greatestFiniteMagnitude
-    }
-
-    private func reverseOverlapScore(previous: FrameSample, current: FrameSample, rows: Int) -> Double {
-        var total = 0
-        var count = 0
-        let currentStart = current.height - rows
-        for row in 0..<rows {
-            let previousOffset = row * previous.width
-            let currentOffset = (currentStart + row) * current.width
-            for column in 0..<previous.width {
-                total += abs(Int(previous.pixels[previousOffset + column]) - Int(current.pixels[currentOffset + column]))
-                count += 1
-            }
-        }
-        return count > 0 ? Double(total) / Double(count) : Double.greatestFiniteMagnitude
-    }
-
     private func cleanup() {
         throttledScrollCaptureWorkItem?.cancel()
         throttledScrollCaptureWorkItem = nil
@@ -943,11 +642,10 @@ final class LongScreenshotSessionController {
         previewWindow?.orderOut(nil)
         previewWindow = nil
         previewView = nil
-        stitchedSegments.removeAll()
-        lastAcceptedFrame = nil
         stitchedImageCache = nil
+        pendingExpectedScrollDeltaPixels = 0
         primaryScrollDirectionSign = nil
-        primaryStitchDirection = nil
+        stitcher.reset()
         isCapturing = false
         needsCaptureAfterCurrent = false
         finishAfterCapture = false
