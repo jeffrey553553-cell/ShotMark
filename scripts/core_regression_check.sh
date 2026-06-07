@@ -76,6 +76,14 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "kVK_Escape" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "primaryScrollDirectionSign" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "pendingExpectedScrollDeltaPixels" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "LongScreenshotFrameSource" Sources/ShotMark/LongScreenshotFrameSource.swift Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "LongScreenshotFrameRing" Sources/ShotMark/LongScreenshotFrameRing.swift Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "SCStreamOutput" Sources/ShotMark/LongScreenshotFrameSource.swift
+  rg -q "latestFrame\\(after: frameRing\\.lastCommittedSequenceNumber\\)" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "frameRing\\.markCommitted" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "SHOTMARK_LONGSHOT_V1" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "startFrameSourceIfNeeded" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "frameSource\\.stop" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "LongScreenshotStitcher" Sources/ShotMark/LongScreenshotStitcher.swift Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "ContentSlice" Sources/ShotMark/LongScreenshotStitcher.swift
   rg -q "detectStaticBand" Sources/ShotMark/LongScreenshotStitcher.swift

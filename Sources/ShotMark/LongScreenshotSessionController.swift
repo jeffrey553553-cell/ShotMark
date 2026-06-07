@@ -144,6 +144,8 @@ final class LongScreenshotSessionController {
 
     private let captureService = CaptureService()
     private let stitcher = LongScreenshotStitcher()
+    private let frameSource = LongScreenshotFrameSource()
+    private let frameRing = LongScreenshotFrameRing()
     private let selection: CaptureSelection
     private var captures: [CaptureResult] = []
     private var stitchedImageCache: CGImage?
@@ -159,6 +161,8 @@ final class LongScreenshotSessionController {
     private var lastScrollCaptureAt = Date.distantPast
     private var pendingExpectedScrollDeltaPixels = 0
     private var primaryScrollDirectionSign: CGFloat?
+    private var isStreamCaptureEnabled = true
+    private var isStreamSourceReady = false
     private var isCapturing = false
     private var needsCaptureAfterCurrent = false
     private var finishAfterCapture = false
@@ -173,6 +177,7 @@ final class LongScreenshotSessionController {
 
     init(selection: CaptureSelection) {
         self.selection = selection
+        isStreamCaptureEnabled = ProcessInfo.processInfo.environment["SHOTMARK_LONGSHOT_V1"] != "1"
     }
 
     func start() {
@@ -182,6 +187,7 @@ final class LongScreenshotSessionController {
         installScrollMonitors()
         installKeyMonitors()
         installHotKeys()
+        startFrameSourceIfNeeded()
         captureFrame()
     }
 
@@ -250,6 +256,34 @@ final class LongScreenshotSessionController {
         }
         service.registerCancelHotKey()
         hotKeyService = service
+    }
+
+    private func startFrameSourceIfNeeded() {
+        guard isStreamCaptureEnabled else {
+            updatePreview(status: "兼容模式采集")
+            return
+        }
+
+        frameSource.onFrame = { [weak self] frame in
+            self?.frameRing.append(frame)
+        }
+        frameSource.onFailure = { [weak self] _ in
+            self?.isStreamSourceReady = false
+            self?.isStreamCaptureEnabled = false
+            self?.updatePreview(status: "帧流异常，已回退")
+        }
+        frameSource.start(selection: selection) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                self.isStreamSourceReady = true
+                self.updatePreview(status: "实时帧流已启动")
+            case .failure:
+                self.isStreamSourceReady = false
+                self.isStreamCaptureEnabled = false
+                self.updatePreview(status: "帧流不可用，兼容采集")
+            }
+        }
     }
 
     private func handleKey(_ event: NSEvent) -> Bool {
@@ -359,6 +393,11 @@ final class LongScreenshotSessionController {
         pendingExpectedScrollDeltaPixels = 0
         updateControlView(status: "正在采集...")
 
+        if commitLatestStreamFrame(expectedDeltaPixels: expectedDeltaPixels) {
+            finishCaptureTurn()
+            return
+        }
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.015) { [weak self] in
             guard let self else { return }
             self.captureService.capture(selection: self.selection) { [weak self] result in
@@ -369,29 +408,51 @@ final class LongScreenshotSessionController {
                     switch result {
                     case .success(let capture):
                         let cleaned = self.cleanedCapture(capture)
-                        let update = self.stitcher.append(cleaned.image, expectedDeltaPixels: expectedDeltaPixels)
-                        self.stitchedImageCache = update?.mergedImage
-                        if update?.isAccepted == true {
-                            self.captures.append(cleaned)
-                            self.updateControlView(status: update?.statusText ?? "滚动页面继续采集")
-                            self.updatePreview(status: update?.previewStatusText ?? "继续滚动采集")
-                        } else {
-                            self.updateControlView(status: update?.statusText ?? "未检测到新内容")
-                            self.updatePreview(status: update?.previewStatusText ?? "未追加")
-                        }
+                        self.commitImage(cleaned.image, createdAt: cleaned.createdAt, expectedDeltaPixels: expectedDeltaPixels, sequenceNumber: nil)
                     case .failure(let error):
                         self.cleanup()
                         self.onFinish?(.failure(error))
                         return
                     }
 
-                    if self.finishAfterCapture {
-                        self.finish(action: self.pendingCommitAction ?? .saveToFile)
-                    } else if self.needsCaptureAfterCurrent {
-                        self.captureFrame()
-                    }
+                    self.finishCaptureTurn()
                 }
             }
+        }
+    }
+
+    private func commitLatestStreamFrame(expectedDeltaPixels: Int?) -> Bool {
+        guard isStreamCaptureEnabled, isStreamSourceReady else { return false }
+        guard let frame = frameRing.latestFrame(after: frameRing.lastCommittedSequenceNumber) else { return false }
+        commitImage(frame.image, createdAt: frame.capturedAt, expectedDeltaPixels: expectedDeltaPixels, sequenceNumber: frame.sequenceNumber)
+        return true
+    }
+
+    private func commitImage(_ image: CGImage, createdAt: Date, expectedDeltaPixels: Int?, sequenceNumber: Int?) {
+        let update = stitcher.append(image, expectedDeltaPixels: expectedDeltaPixels)
+        stitchedImageCache = update?.mergedImage
+        frameRing.markCommitted(sequenceNumber: sequenceNumber)
+        if update?.isAccepted == true {
+            captures.append(CaptureResult(
+                image: image,
+                selectionRectInScreen: selection.rectInScreen,
+                screenScale: selection.screen.backingScaleFactor,
+                createdAt: createdAt
+            ))
+            updateControlView(status: update?.statusText ?? "滚动页面继续采集")
+            updatePreview(status: update?.previewStatusText ?? "继续滚动采集")
+        } else {
+            updateControlView(status: update?.statusText ?? "未检测到新内容")
+            updatePreview(status: update?.previewStatusText ?? "未追加")
+        }
+    }
+
+    private func finishCaptureTurn() {
+        isCapturing = false
+        if finishAfterCapture {
+            finish(action: pendingCommitAction ?? .saveToFile)
+        } else if needsCaptureAfterCurrent {
+            captureFrame()
         }
     }
 
@@ -632,6 +693,10 @@ final class LongScreenshotSessionController {
             NSEvent.removeMonitor(globalKeyMonitor)
             self.globalKeyMonitor = nil
         }
+        frameSource.stop()
+        frameSource.onFrame = nil
+        frameSource.onFailure = nil
+        frameRing.reset()
         hotKeyService?.unregister()
         hotKeyService = nil
         window?.orderOut(nil)
@@ -645,6 +710,7 @@ final class LongScreenshotSessionController {
         stitchedImageCache = nil
         pendingExpectedScrollDeltaPixels = 0
         primaryScrollDirectionSign = nil
+        isStreamSourceReady = false
         stitcher.reset()
         isCapturing = false
         needsCaptureAfterCurrent = false
