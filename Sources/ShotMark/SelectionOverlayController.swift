@@ -2543,7 +2543,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private func annotation(at index: Int, contains point: CGPoint) -> Bool {
         switch annotations[index] {
         case .rectangle(let rect, _, _, _), .mosaic(let rect, _):
-            return rect.insetBy(dx: -6, dy: -6).contains(point)
+            return annotationRectangleBorderContains(point, rect: rect)
         case .arrow(let start, let end, _, _):
             return distanceFromPoint(point, toLineFrom: start, to: end) <= 7
                 || distance(point, start) <= 10
@@ -2554,6 +2554,18 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             let size = AnnotationTextLayout.size(for: value, fontSize: fontSize)
             return CGRect(origin: origin, size: size).insetBy(dx: -6, dy: -6).contains(point)
         }
+    }
+
+    private func annotationRectangleBorderContains(_ point: CGPoint, rect: CGRect) -> Bool {
+        let tolerance: CGFloat = 7
+        let outer = rect.insetBy(dx: -tolerance, dy: -tolerance)
+        guard outer.contains(point) else { return false }
+
+        let inner = rect.insetBy(dx: tolerance, dy: tolerance)
+        if inner.width <= 0 || inner.height <= 0 {
+            return true
+        }
+        return !inner.contains(point)
     }
 
     private func moveAnnotation(at index: Int, by delta: CGPoint) {

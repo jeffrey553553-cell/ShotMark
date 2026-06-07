@@ -109,6 +109,8 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "textContainerInset = NSSize" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "widthTracksTextView = false" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "containerSize = CGSize" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "annotationRectangleBorderContains" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "rectangleBorderContains" Sources/ShotMark/AnnotationCanvasView.swift
 '
 
 SCREEN_INFO="$(system_profiler SPDisplaysDataType 2>/dev/null || true)"
