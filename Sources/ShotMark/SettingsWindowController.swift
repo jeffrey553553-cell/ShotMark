@@ -69,7 +69,7 @@ struct SettingsView: View {
             }
 
             permissionRow(
-                title: "辅助功能权限",
+                title: "辅助功能权限（窗口识别校准）",
                 isGranted: accessibilityAccess,
                 isChecking: false,
                 actionTitle: "请求权限"
@@ -77,6 +77,10 @@ struct SettingsView: View {
                 PermissionService.requestAccessibilityAccess()
                 refresh()
             }
+            Text("未开启时仍可截图；开启后智能选区会用系统窗口位置做二次校准。")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             permissionRow(
                 title: "麦克风权限",

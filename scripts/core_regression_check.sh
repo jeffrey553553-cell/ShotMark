@@ -111,14 +111,20 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "containerSize = CGSize" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "annotationRectangleBorderContains" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "rectangleBorderContains" Sources/ShotMark/AnnotationCanvasView.swift
-  rg -q "WindowCandidate" Sources/ShotMark/SelectionOverlayController.swift
-  rg -q "CGWindowListCopyWindowInfo" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "WindowDetectionService" Sources/ShotMark/WindowDetectionService.swift Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "SCShareableContent" Sources/ShotMark/WindowDetectionService.swift
+  rg -q "CGWindowListCopyWindowInfo" Sources/ShotMark/WindowDetectionService.swift
+  rg -q "AXUIElementCreateApplication" Sources/ShotMark/WindowDetectionService.swift
+  rg -q "CGDisplayBounds" Sources/ShotMark/WindowDetectionService.swift
+  rg -q "SHOTMARK_WINDOW_DEBUG" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "pendingInitialSelection" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "initialSelectionDragThreshold" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "updateHoveredWindowCandidate" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "selectWindowCandidate" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "drawWindowCandidateHover" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "drawWindowCandidateDebugOverlay" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "点击窗口快速选择" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "窗口识别校准" Sources/ShotMark/AppDelegate.swift Sources/ShotMark/SettingsWindowController.swift
 '
 
 SCREEN_INFO="$(system_profiler SPDisplaysDataType 2>/dev/null || true)"
@@ -172,6 +178,8 @@ Mark each item PASS/FAIL after running it.
 | Window pick | Hover a visible app window before dragging | Window is highlighted with a clear click-to-select hint | |
 | Window pick | Click a hovered app window | Selection snaps to that window and remains editable with the normal toolbar | |
 | Window pick | Press down on a window, then drag more than a few pixels | Free-form rectangle selection starts instead of selecting the window | |
+| Window pick | Hover and click windows on each external display | Highlight and final selection align with the window on that display | |
+| Window pick | Launch with \`SHOTMARK_WINDOW_DEBUG=1\` | Candidate window borders and owner/source labels appear for diagnosis | |
 | Immediate drag | Press configured shortcut, then drag without a focus click | Selection starts on the first mouse down after the shortcut | |
 | Frozen frame | Play a video, press configured shortcut, then select/save later | Overlay and final PNG keep the frame from screenshot entry instead of later video frames | |
 | External screen | Configured shortcut with cursor on external screen | Overlay appears on target display; capture area matches selected display | |

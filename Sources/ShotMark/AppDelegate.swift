@@ -47,14 +47,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let screenRecordingStatusItem = NSMenuItem(title: "屏幕录制权限：检查中", action: nil, keyEquivalent: "")
         screenRecordingStatusItem.isEnabled = false
         menu.addItem(screenRecordingStatusItem)
-        let accessibilityStatusItem = NSMenuItem(title: "辅助功能权限：检查中", action: nil, keyEquivalent: "")
+        let accessibilityStatusItem = NSMenuItem(title: "辅助功能权限（窗口识别校准）：检查中", action: nil, keyEquivalent: "")
         accessibilityStatusItem.isEnabled = false
         menu.addItem(accessibilityStatusItem)
         let microphoneStatusItem = NSMenuItem(title: "麦克风权限：检查中", action: nil, keyEquivalent: "")
         microphoneStatusItem.isEnabled = false
         menu.addItem(microphoneStatusItem)
         menu.addItem(NSMenuItem(title: "打开屏幕录制设置...", action: #selector(openScreenRecordingSettings), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "打开辅助功能设置...", action: #selector(openAccessibilitySettings), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "打开辅助功能设置（提升窗口识别）...", action: #selector(openAccessibilitySettings), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "打开麦克风设置...", action: #selector(openMicrophoneSettings), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "权限与设置...", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(.separator())
@@ -243,8 +243,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         accessibilityStatusMenuItem?.title = PermissionService.hasAccessibilityAccess
-            ? "辅助功能权限：已允许"
-            : "辅助功能权限：未允许"
+            ? "辅助功能权限（窗口识别校准）：已允许"
+            : "辅助功能权限（窗口识别校准）：未允许"
         microphoneStatusMenuItem?.title = PermissionService.hasMicrophoneAccess
             ? "麦克风权限：已允许"
             : "麦克风权限：未允许"
