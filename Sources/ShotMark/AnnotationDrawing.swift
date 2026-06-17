@@ -61,41 +61,30 @@ enum AnnotationDrawing {
         let distance = hypot(end.x - start.x, end.y - start.y)
         guard distance > 0.5 else { return }
 
-        color.setStroke()
         color.setFill()
 
         let angle = atan2(end.y - start.y, end.x - start.x)
-        let headLength = min(max(14, lineWidth * 3.2), max(10, distance * 0.45))
-        let headHalfWidth = max(6, lineWidth * 1.45)
-        let baseCenter = CGPoint(
-            x: end.x - headLength * cos(angle),
-            y: end.y - headLength * sin(angle)
-        )
+        let perpendicular = angle + .pi / 2
+        let direction = CGVector(dx: cos(angle), dy: sin(angle))
+        let normal = CGVector(dx: cos(perpendicular), dy: sin(perpendicular))
+        let headLength = min(max(18, lineWidth * 4.8), max(12, distance * 0.48))
+        let headHalfWidth = min(max(8, lineWidth * 2.1), max(7, distance * 0.24))
+        let tailHalfWidth = max(1.2, lineWidth * 0.36)
+        let neckHalfWidth = max(tailHalfWidth + 1.5, lineWidth * 0.82)
+        let neck = CGPoint(x: end.x - headLength * direction.dx, y: end.y - headLength * direction.dy)
+        let tailInset = min(max(1.5, lineWidth * 0.5), distance * 0.16)
+        let tail = CGPoint(x: start.x + tailInset * direction.dx, y: start.y + tailInset * direction.dy)
 
         let path = NSBezierPath()
-        path.lineWidth = lineWidth
-        path.lineCapStyle = .round
-        path.lineJoinStyle = .round
-        path.move(to: start)
-        path.line(to: baseCenter)
-        path.stroke()
-
-        let perpendicular = angle + .pi / 2
-        let left = CGPoint(
-            x: baseCenter.x + headHalfWidth * cos(perpendicular),
-            y: baseCenter.y + headHalfWidth * sin(perpendicular)
-        )
-        let right = CGPoint(
-            x: baseCenter.x - headHalfWidth * cos(perpendicular),
-            y: baseCenter.y - headHalfWidth * sin(perpendicular)
-        )
-
-        let head = NSBezierPath()
-        head.move(to: end)
-        head.line(to: left)
-        head.line(to: right)
-        head.close()
-        head.fill()
+        path.move(to: CGPoint(x: tail.x + tailHalfWidth * normal.dx, y: tail.y + tailHalfWidth * normal.dy))
+        path.line(to: CGPoint(x: neck.x + neckHalfWidth * normal.dx, y: neck.y + neckHalfWidth * normal.dy))
+        path.line(to: CGPoint(x: neck.x + headHalfWidth * normal.dx, y: neck.y + headHalfWidth * normal.dy))
+        path.line(to: end)
+        path.line(to: CGPoint(x: neck.x - headHalfWidth * normal.dx, y: neck.y - headHalfWidth * normal.dy))
+        path.line(to: CGPoint(x: neck.x - neckHalfWidth * normal.dx, y: neck.y - neckHalfWidth * normal.dy))
+        path.line(to: CGPoint(x: tail.x - tailHalfWidth * normal.dx, y: tail.y - tailHalfWidth * normal.dy))
+        path.close()
+        path.fill()
     }
 
     private static func drawNumberMarker(center: CGPoint, number: Int, color: NSColor, markerSize: CGFloat) {

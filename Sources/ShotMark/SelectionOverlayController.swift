@@ -165,7 +165,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private enum OverlayButton: CaseIterable {
-        case rectangle, arrow, number, callout, text, mosaic, ocr, pin, longScreenshot, record, recordQuality, undo, redo, delete, copy, save, cancel
+        case callout, rectangle, arrow, number, text, mosaic, ocr, pin, longScreenshot, record, recordQuality, undo, redo, delete, copy, save, cancel
 
         var title: String {
             switch self {
@@ -723,25 +723,33 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     private func calloutLayout(for targetRect: CGRect, in bounds: CGRect) -> (arrowStart: CGPoint, arrowEnd: CGPoint, textOrigin: CGPoint) {
         let preferredTextSize = CGSize(width: max(120, textInputMinSize.width), height: textInputMinSize.height)
-        let gap: CGFloat = 18
-        let arrowGap: CGFloat = 6
+        let textGap: CGFloat = 34
+        let arrowTextGap: CGFloat = 18
 
-        let placements: [(origin: CGPoint, edgePoint: CGPoint)] = [
+        let placements: [(origin: CGPoint, arrowStart: CGPoint)] = [
             (
-                CGPoint(x: targetRect.maxX + gap + 34, y: targetRect.midY - preferredTextSize.height / 2),
-                CGPoint(x: targetRect.maxX + arrowGap, y: targetRect.midY)
+                CGPoint(x: targetRect.maxX + textGap, y: targetRect.maxY + textGap),
+                CGPoint(x: targetRect.maxX + textGap - arrowTextGap, y: targetRect.maxY + textGap + preferredTextSize.height * 0.36)
             ),
             (
-                CGPoint(x: targetRect.minX - gap - 34 - preferredTextSize.width, y: targetRect.midY - preferredTextSize.height / 2),
-                CGPoint(x: targetRect.minX - arrowGap, y: targetRect.midY)
+                CGPoint(x: targetRect.minX - textGap - preferredTextSize.width, y: targetRect.maxY + textGap),
+                CGPoint(x: targetRect.minX - textGap + arrowTextGap, y: targetRect.maxY + textGap + preferredTextSize.height * 0.36)
             ),
             (
-                CGPoint(x: targetRect.midX - preferredTextSize.width / 2, y: targetRect.minY - gap - 34 - preferredTextSize.height),
-                CGPoint(x: targetRect.midX, y: targetRect.minY - arrowGap)
+                CGPoint(x: targetRect.maxX + textGap, y: targetRect.minY - textGap - preferredTextSize.height),
+                CGPoint(x: targetRect.maxX + textGap - arrowTextGap, y: targetRect.minY - textGap + preferredTextSize.height * 0.64)
             ),
             (
-                CGPoint(x: targetRect.midX - preferredTextSize.width / 2, y: targetRect.maxY + gap + 34),
-                CGPoint(x: targetRect.midX, y: targetRect.maxY + arrowGap)
+                CGPoint(x: targetRect.minX - textGap - preferredTextSize.width, y: targetRect.minY - textGap - preferredTextSize.height),
+                CGPoint(x: targetRect.minX - textGap + arrowTextGap, y: targetRect.minY - textGap + preferredTextSize.height * 0.64)
+            ),
+            (
+                CGPoint(x: targetRect.maxX + textGap + 12, y: targetRect.midY - preferredTextSize.height / 2 + 26),
+                CGPoint(x: targetRect.maxX + textGap - arrowTextGap, y: targetRect.midY + 18)
+            ),
+            (
+                CGPoint(x: targetRect.minX - textGap - 12 - preferredTextSize.width, y: targetRect.midY - preferredTextSize.height / 2 + 26),
+                CGPoint(x: targetRect.minX - textGap + arrowTextGap, y: targetRect.midY + 18)
             )
         ]
 
@@ -753,7 +761,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             x: min(max(chosen.origin.x, bounds.minX + 8), bounds.maxX - preferredTextSize.width - 8),
             y: min(max(chosen.origin.y, bounds.minY + 8), bounds.maxY - preferredTextSize.height - 8)
         )
-        let arrowStart = nearestPoint(on: CGRect(origin: textOrigin, size: preferredTextSize), to: chosen.edgePoint)
+        let arrowDelta = CGPoint(x: chosen.arrowStart.x - chosen.origin.x, y: chosen.arrowStart.y - chosen.origin.y)
+        let arrowStart = CGPoint(x: textOrigin.x + arrowDelta.x, y: textOrigin.y + arrowDelta.y)
         let arrowEnd = nearestPoint(on: targetRect, to: arrowStart)
         return (arrowStart, arrowEnd, textOrigin)
     }
@@ -1983,26 +1992,26 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             return "未设置"
         }
         switch button {
-        case .rectangle:
-            return "1"
-        case .arrow:
-            return "2"
-        case .number:
-            return "3"
         case .callout:
+            return "1"
+        case .rectangle:
+            return "2"
+        case .arrow:
+            return "3"
+        case .number:
             return "4"
         case .text:
             return "T"
         case .mosaic:
-            return "5"
-        case .ocr:
             return "6"
-        case .pin:
+        case .ocr:
             return "7"
-        case .longScreenshot:
+        case .pin:
             return "8"
-        case .record:
+        case .longScreenshot:
             return "9"
+        case .record:
+            return "0"
         case .undo:
             return "Cmd+Z"
         case .redo:
@@ -2120,26 +2129,26 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     private func defaultShortcutKey(for button: OverlayButton) -> String? {
         switch button {
-        case .rectangle:
-            return "1"
-        case .arrow:
-            return "2"
-        case .number:
-            return "3"
         case .callout:
+            return "1"
+        case .rectangle:
+            return "2"
+        case .arrow:
+            return "3"
+        case .number:
             return "4"
         case .text:
             return "T"
         case .mosaic:
-            return "5"
-        case .ocr:
             return "6"
-        case .pin:
+        case .ocr:
             return "7"
-        case .longScreenshot:
+        case .pin:
             return "8"
-        case .record:
+        case .longScreenshot:
             return "9"
+        case .record:
+            return "0"
         case .copy:
             return "RETURN"
         case .save:

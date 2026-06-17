@@ -43,7 +43,7 @@ run_step "DMG verify" hdiutil verify "$ROOT_DIR/dist/ShotMark.dmg"
 run_step "DMG install layout verify" verify_dmg_install_layout
 run_step "P1 editing and recording static checks" bash -c '
   set -euo pipefail
-  rg -q "case rectangle, arrow, number, callout, text, mosaic, ocr, pin, longScreenshot, record, recordQuality, undo, redo, delete" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "case callout, rectangle, arrow, number, text, mosaic, ocr, pin, longScreenshot, record, recordQuality, undo, redo, delete" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "case callout" Sources/ShotMark/Models.swift
   rg -q "drawingCallout" Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
   rg -q "text.bubble" Sources/ShotMark/SelectionOverlayController.swift
@@ -51,17 +51,23 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "addCallout" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "case \\.callout" Sources/ShotMark/AnnotationDrawing.swift Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
   rg -q "AnnotationDrawing.draw\\(state.annotations.filter" Sources/ShotMark/ExportService.swift
-  rg -q "return \"4\"" Sources/ShotMark/SelectionOverlayController.swift
+  rg -Uq "case \\.callout:\\n[[:space:]]*return \"1\"" Sources/ShotMark/SelectionOverlayController.swift
+  rg -Uq "case \\.rectangle:\\n[[:space:]]*return \"2\"" Sources/ShotMark/SelectionOverlayController.swift
+  rg -Uq "case \\.arrow:\\n[[:space:]]*return \"3\"" Sources/ShotMark/SelectionOverlayController.swift
+  rg -Uq "case \\.number:\\n[[:space:]]*return \"4\"" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "tailHalfWidth" Sources/ShotMark/AnnotationDrawing.swift
+  rg -q "neckHalfWidth" Sources/ShotMark/AnnotationDrawing.swift
+  rg -q "arrowTextGap" Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
   rg -q "private func undoEdit\\(" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "private func redoEdit\\(" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "private func deleteSelectedAnnotation\\(" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "case numberMarker\\(center: CGPoint, number: Int, color: NSColor, markerSize: CGFloat\\)" Sources/ShotMark/Models.swift
   rg -q "private var numberMarkerStyle" Sources/ShotMark/SelectionOverlayController.swift
-  rg -q "return \"5\"" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "return \"6\"" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "return \"7\"" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "return \"8\"" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "return \"9\"" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "return \"0\"" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "requestMicrophoneAccess" Sources/ShotMark/PermissionService.swift
   rg -q "openMicrophoneSettings" Sources/ShotMark/PermissionService.swift
   rg -q "captureMicrophone = audioMode.capturesMicrophone" Sources/ShotMark/VideoRecordingService.swift
@@ -213,9 +219,10 @@ Mark each item PASS/FAIL after running it.
 | Edit | Select arrow, increase thickness, then draw | Arrow line and arrowhead remain visible at thick sizes | |
 | Edit | Select arrow and drag endpoint handles | Arrow start/end handles move independently | |
 | Edit | Select number marker and adjust style panel | Marker size/color/opacity update and export correctly | |
-| Edit | Click comment tool or press 4, then drag a target box | A target rectangle, arrow and editable text comment are created as one annotation group | |
+| Edit | Click comment tool or press 1, then drag a target box | A target rectangle, arrow and editable text comment are created as one annotation group | |
 | Edit | Select a comment annotation | Target rectangle corners, arrow endpoints and text origin show editable handles; moving the group keeps all three parts together | |
 | Edit | Export a comment annotation | Saved/copied image contains the rectangle, arrow and comment text without editor handles | |
+| Edit | Draw normal and comment arrows | Arrows render with a thin tail, heavier head and no plain-line arrow regression | |
 | Edit | Type text annotation continuously, press Return to create a new line, then click outside | Text stays anchored while typing, tail newlines do not shift the block, and it does not jump after focus leaves | |
 | Edit | Type a long text annotation without pressing Return | Text input expands horizontally instead of auto-wrapping; committed text matches the input layout | |
 | Edit | Select mosaic and adjust style panel strength | Mosaic blur strength changes; no color controls are shown | |

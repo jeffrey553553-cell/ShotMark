@@ -66,14 +66,18 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             return
         }
         if !command, event.charactersIgnoringModifiers == "1" {
-            onToolShortcut?(.rectangle)
+            onToolShortcut?(.callout)
             return
         }
         if !command, event.charactersIgnoringModifiers == "2" {
-            onToolShortcut?(.arrow)
+            onToolShortcut?(.rectangle)
             return
         }
         if !command, event.charactersIgnoringModifiers == "3" {
+            onToolShortcut?(.arrow)
+            return
+        }
+        if !command, event.charactersIgnoringModifiers == "4" {
             onToolShortcut?(.numberMarker)
             return
         }
@@ -81,7 +85,7 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             onToolShortcut?(.text)
             return
         }
-        if !command, event.charactersIgnoringModifiers == "5" {
+        if !command, event.charactersIgnoringModifiers == "6" {
             onToolShortcut?(.mosaic)
             return
         }
@@ -488,22 +492,43 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
 
     private func calloutLayout(for targetRect: CGRect, in bounds: CGRect) -> (arrowStart: CGPoint, arrowEnd: CGPoint, textOrigin: CGPoint) {
         let textSize = CGSize(width: 150, height: 30)
-        let gap: CGFloat = 18
-        let candidates = [
-            CGPoint(x: targetRect.maxX + gap, y: targetRect.midY - textSize.height / 2),
-            CGPoint(x: targetRect.minX - gap - textSize.width, y: targetRect.midY - textSize.height / 2),
-            CGPoint(x: targetRect.midX - textSize.width / 2, y: targetRect.maxY + gap),
-            CGPoint(x: targetRect.midX - textSize.width / 2, y: targetRect.minY - gap - textSize.height)
+        let textGap: CGFloat = 34
+        let arrowTextGap: CGFloat = 18
+        let placements: [(origin: CGPoint, arrowStart: CGPoint)] = [
+            (
+                CGPoint(x: targetRect.maxX + textGap, y: targetRect.maxY + textGap),
+                CGPoint(x: targetRect.maxX + textGap - arrowTextGap, y: targetRect.maxY + textGap + textSize.height * 0.36)
+            ),
+            (
+                CGPoint(x: targetRect.minX - textGap - textSize.width, y: targetRect.maxY + textGap),
+                CGPoint(x: targetRect.minX - textGap + arrowTextGap, y: targetRect.maxY + textGap + textSize.height * 0.36)
+            ),
+            (
+                CGPoint(x: targetRect.maxX + textGap, y: targetRect.minY - textGap - textSize.height),
+                CGPoint(x: targetRect.maxX + textGap - arrowTextGap, y: targetRect.minY - textGap + textSize.height * 0.64)
+            ),
+            (
+                CGPoint(x: targetRect.minX - textGap - textSize.width, y: targetRect.minY - textGap - textSize.height),
+                CGPoint(x: targetRect.minX - textGap + arrowTextGap, y: targetRect.minY - textGap + textSize.height * 0.64)
+            ),
+            (
+                CGPoint(x: targetRect.maxX + textGap + 12, y: targetRect.midY - textSize.height / 2 + 26),
+                CGPoint(x: targetRect.maxX + textGap - arrowTextGap, y: targetRect.midY + 18)
+            ),
+            (
+                CGPoint(x: targetRect.minX - textGap - 12 - textSize.width, y: targetRect.midY - textSize.height / 2 + 26),
+                CGPoint(x: targetRect.minX - textGap + arrowTextGap, y: targetRect.midY + 18)
+            )
         ]
-        let textOrigin = candidates.first {
-            bounds.contains(CGRect(origin: $0, size: textSize))
-        } ?? CGPoint(
-            x: min(max(bounds.minX + 8, targetRect.maxX + gap), max(bounds.minX + 8, bounds.maxX - textSize.width - 8)),
-            y: min(max(bounds.minY + 8, targetRect.midY - textSize.height / 2), max(bounds.minY + 8, bounds.maxY - textSize.height - 8))
+        let chosen = placements.first {
+            bounds.insetBy(dx: 8, dy: 8).contains(CGRect(origin: $0.origin, size: textSize))
+        } ?? placements[0]
+        let textOrigin = CGPoint(
+            x: min(max(bounds.minX + 8, chosen.origin.x), max(bounds.minX + 8, bounds.maxX - textSize.width - 8)),
+            y: min(max(bounds.minY + 8, chosen.origin.y), max(bounds.minY + 8, bounds.maxY - textSize.height - 8))
         )
-        let textRect = CGRect(origin: textOrigin, size: textSize)
-        let targetPoint = CGPoint(x: targetRect.midX, y: targetRect.midY)
-        let arrowStart = nearestPoint(on: textRect, to: targetPoint)
+        let arrowDelta = CGPoint(x: chosen.arrowStart.x - chosen.origin.x, y: chosen.arrowStart.y - chosen.origin.y)
+        let arrowStart = CGPoint(x: textOrigin.x + arrowDelta.x, y: textOrigin.y + arrowDelta.y)
         return (arrowStart, nearestPoint(on: targetRect, to: arrowStart), textOrigin)
     }
 
