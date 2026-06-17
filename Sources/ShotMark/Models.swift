@@ -119,6 +119,7 @@ enum AnnotationTool: String, CaseIterable {
     case numberMarker
     case text
     case mosaic
+    case callout
 }
 
 enum Annotation {
@@ -127,6 +128,16 @@ enum Annotation {
     case numberMarker(center: CGPoint, number: Int, color: NSColor, markerSize: CGFloat)
     case text(origin: CGPoint, value: String, color: NSColor, fontSize: CGFloat)
     case mosaic(rect: CGRect, blockSize: CGFloat)
+    case callout(
+        targetRect: CGRect,
+        arrowStart: CGPoint,
+        arrowEnd: CGPoint,
+        textOrigin: CGPoint,
+        text: String,
+        color: NSColor,
+        lineWidth: CGFloat,
+        fontSize: CGFloat
+    )
 
     var isMosaic: Bool {
         if case .mosaic = self {

@@ -24,6 +24,7 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
     private enum CanvasDrag {
         case drawingRectangle(start: CGPoint, current: CGPoint)
         case drawingArrow(start: CGPoint, current: CGPoint)
+        case drawingCallout(start: CGPoint, current: CGPoint)
         case drawingMosaic(start: CGPoint, current: CGPoint)
         case movingAnnotation(index: Int, lastPoint: CGPoint)
         case resizingRectangle(index: Int, handle: RectHandle)
@@ -122,6 +123,8 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             activeDrag = .drawingRectangle(start: point, current: point)
         case .arrow:
             activeDrag = .drawingArrow(start: point, current: point)
+        case .callout:
+            activeDrag = .drawingCallout(start: point, current: point)
         case .mosaic:
             activeDrag = .drawingMosaic(start: point, current: point)
         case .numberMarker:
@@ -141,6 +144,8 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             activeDrag = .drawingRectangle(start: start, current: point)
         case .drawingArrow(let start, _):
             activeDrag = .drawingArrow(start: start, current: point)
+        case .drawingCallout(let start, _):
+            activeDrag = .drawingCallout(start: start, current: point)
         case .drawingMosaic(let start, _):
             activeDrag = .drawingMosaic(start: start, current: point)
         case .movingAnnotation(let index, let lastPoint):
@@ -171,6 +176,21 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             if hypot(end.x - start.x, end.y - start.y) > 4 {
                 state.add(.arrow(start: start, end: end, color: .systemRed, lineWidth: 4))
             }
+        case .drawingCallout(let start, _):
+            let rect = normalizedRect(from: start, to: end)
+            if rect.width > 8, rect.height > 8 {
+                let layout = calloutLayout(for: rect, in: bounds)
+                state.add(.callout(
+                    targetRect: rect,
+                    arrowStart: layout.arrowStart,
+                    arrowEnd: layout.arrowEnd,
+                    textOrigin: layout.textOrigin,
+                    text: "",
+                    color: .systemRed,
+                    lineWidth: 4,
+                    fontSize: 18
+                ))
+            }
         case .drawingMosaic(let start, _):
             let rect = normalizedRect(from: start, to: end)
             if rect.width > 4, rect.height > 4 {
@@ -199,6 +219,8 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             AnnotationDrawing.draw([.rectangle(rect: normalizedRect(from: start, to: current), color: .systemRed, lineWidth: 3, filled: false)], in: state.capture.imagePointSize)
         case .drawingArrow(let start, let current):
             AnnotationDrawing.draw([.arrow(start: start, end: current, color: .systemRed, lineWidth: 4)], in: state.capture.imagePointSize)
+        case .drawingCallout(let start, let current):
+            AnnotationDrawing.draw([.rectangle(rect: normalizedRect(from: start, to: current), color: .systemRed, lineWidth: 3, filled: false)], in: state.capture.imagePointSize)
         case .drawingMosaic(let start, let current):
             MosaicRenderer.drawFrostedMosaic(
                 rect: normalizedRect(from: start, to: current),
@@ -237,6 +259,16 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
                 if distance(point, end) <= 10 {
                     return .movingArrowEndpoint(index: selectedIndex, endpoint: .end)
                 }
+            case .callout(let targetRect, let arrowStart, let arrowEnd, _, _, _, _, _):
+                if let handle = rectangleHandleHit(at: point, rect: targetRect) {
+                    return .resizingRectangle(index: selectedIndex, handle: handle)
+                }
+                if distance(point, arrowStart) <= 10 {
+                    return .movingArrowEndpoint(index: selectedIndex, endpoint: .start)
+                }
+                if distance(point, arrowEnd) <= 10 {
+                    return .movingArrowEndpoint(index: selectedIndex, endpoint: .end)
+                }
             case .numberMarker, .text:
                 break
             }
@@ -266,6 +298,11 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         case .text(let origin, let value, _, let fontSize):
             let size = value.size(withAttributes: [.font: NSFont.systemFont(ofSize: fontSize, weight: .semibold)])
             return CGRect(origin: origin, size: size).insetBy(dx: -6, dy: -6).contains(point)
+        case .callout(let targetRect, let arrowStart, let arrowEnd, let textOrigin, let text, _, _, let fontSize):
+            let size = calloutTextSize(text: text, fontSize: fontSize)
+            return rectangleBorderContains(point, rect: targetRect)
+                || distanceFromPoint(point, toLineFrom: arrowStart, to: arrowEnd) <= 7
+                || CGRect(origin: textOrigin, size: size).insetBy(dx: -8, dy: -8).contains(point)
         }
     }
 
@@ -304,6 +341,17 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             state.annotations[index] = .text(origin: CGPoint(x: origin.x + delta.x, y: origin.y + delta.y), value: value, color: color, fontSize: fontSize)
         case .mosaic(let rect, let blockSize):
             state.annotations[index] = .mosaic(rect: rect.offsetBy(dx: delta.x, dy: delta.y), blockSize: blockSize)
+        case .callout(let targetRect, let arrowStart, let arrowEnd, let textOrigin, let text, let color, let lineWidth, let fontSize):
+            state.annotations[index] = .callout(
+                targetRect: targetRect.offsetBy(dx: delta.x, dy: delta.y),
+                arrowStart: CGPoint(x: arrowStart.x + delta.x, y: arrowStart.y + delta.y),
+                arrowEnd: CGPoint(x: arrowEnd.x + delta.x, y: arrowEnd.y + delta.y),
+                textOrigin: CGPoint(x: textOrigin.x + delta.x, y: textOrigin.y + delta.y),
+                text: text,
+                color: color,
+                lineWidth: lineWidth,
+                fontSize: fontSize
+            )
         }
     }
 
@@ -311,7 +359,7 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         guard state.annotations.indices.contains(index) else { return }
         let rect: CGRect
         switch state.annotations[index] {
-        case .rectangle(let value, _, _, _), .mosaic(let value, _):
+        case .rectangle(let value, _, _, _), .mosaic(let value, _), .callout(let value, _, _, _, _, _, _, _):
             rect = value
         default:
             return
@@ -342,6 +390,17 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             state.annotations[index] = .rectangle(rect: nextRect, color: color, lineWidth: lineWidth, filled: filled)
         case .mosaic(_, let blockSize):
             state.annotations[index] = .mosaic(rect: nextRect, blockSize: blockSize)
+        case .callout(_, let arrowStart, _, let textOrigin, let text, let color, let lineWidth, let fontSize):
+            state.annotations[index] = .callout(
+                targetRect: nextRect,
+                arrowStart: arrowStart,
+                arrowEnd: nearestPoint(on: nextRect, to: arrowStart),
+                textOrigin: textOrigin,
+                text: text,
+                color: color,
+                lineWidth: lineWidth,
+                fontSize: fontSize
+            )
         default:
             break
         }
@@ -349,12 +408,23 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
 
     private func moveArrowEndpoint(at index: Int, endpoint: ArrowEndpoint, to point: CGPoint) {
         guard state.annotations.indices.contains(index) else { return }
-        guard case .arrow(let start, let end, let color, let lineWidth) = state.annotations[index] else { return }
-        switch endpoint {
-        case .start:
-            state.annotations[index] = .arrow(start: point, end: end, color: color, lineWidth: lineWidth)
-        case .end:
-            state.annotations[index] = .arrow(start: start, end: point, color: color, lineWidth: lineWidth)
+        switch state.annotations[index] {
+        case .arrow(let start, let end, let color, let lineWidth):
+            switch endpoint {
+            case .start:
+                state.annotations[index] = .arrow(start: point, end: end, color: color, lineWidth: lineWidth)
+            case .end:
+                state.annotations[index] = .arrow(start: start, end: point, color: color, lineWidth: lineWidth)
+            }
+        case .callout(let targetRect, let arrowStart, let arrowEnd, let textOrigin, let text, let color, let lineWidth, let fontSize):
+            switch endpoint {
+            case .start:
+                state.annotations[index] = .callout(targetRect: targetRect, arrowStart: point, arrowEnd: arrowEnd, textOrigin: textOrigin, text: text, color: color, lineWidth: lineWidth, fontSize: fontSize)
+            case .end:
+                state.annotations[index] = .callout(targetRect: targetRect, arrowStart: arrowStart, arrowEnd: nearestPoint(on: targetRect, to: point), textOrigin: textOrigin, text: text, color: color, lineWidth: lineWidth, fontSize: fontSize)
+            }
+        default:
+            break
         }
     }
 
@@ -375,6 +445,13 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             drawHandle(at: center)
         case .text(let origin, _, _, _):
             drawHandle(at: origin)
+        case .callout(let targetRect, let arrowStart, let arrowEnd, let textOrigin, _, _, _, _):
+            for point in rectangleHandlePoints(rect: targetRect) {
+                drawHandle(at: point)
+            }
+            drawHandle(at: arrowStart)
+            drawHandle(at: arrowEnd)
+            drawHandle(at: textOrigin)
         }
     }
 
@@ -407,6 +484,39 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
 
     private func normalizedRect(from start: CGPoint, to end: CGPoint) -> CGRect {
         CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y))
+    }
+
+    private func calloutLayout(for targetRect: CGRect, in bounds: CGRect) -> (arrowStart: CGPoint, arrowEnd: CGPoint, textOrigin: CGPoint) {
+        let textSize = CGSize(width: 150, height: 30)
+        let gap: CGFloat = 18
+        let candidates = [
+            CGPoint(x: targetRect.maxX + gap, y: targetRect.midY - textSize.height / 2),
+            CGPoint(x: targetRect.minX - gap - textSize.width, y: targetRect.midY - textSize.height / 2),
+            CGPoint(x: targetRect.midX - textSize.width / 2, y: targetRect.maxY + gap),
+            CGPoint(x: targetRect.midX - textSize.width / 2, y: targetRect.minY - gap - textSize.height)
+        ]
+        let textOrigin = candidates.first {
+            bounds.contains(CGRect(origin: $0, size: textSize))
+        } ?? CGPoint(
+            x: min(max(bounds.minX + 8, targetRect.maxX + gap), max(bounds.minX + 8, bounds.maxX - textSize.width - 8)),
+            y: min(max(bounds.minY + 8, targetRect.midY - textSize.height / 2), max(bounds.minY + 8, bounds.maxY - textSize.height - 8))
+        )
+        let textRect = CGRect(origin: textOrigin, size: textSize)
+        let targetPoint = CGPoint(x: targetRect.midX, y: targetRect.midY)
+        let arrowStart = nearestPoint(on: textRect, to: targetPoint)
+        return (arrowStart, nearestPoint(on: targetRect, to: arrowStart), textOrigin)
+    }
+
+    private func nearestPoint(on rect: CGRect, to point: CGPoint) -> CGPoint {
+        CGPoint(
+            x: min(max(point.x, rect.minX), rect.maxX),
+            y: min(max(point.y, rect.minY), rect.maxY)
+        )
+    }
+
+    private func calloutTextSize(text: String, fontSize: CGFloat) -> CGSize {
+        guard !text.isEmpty else { return CGSize(width: 150, height: 30) }
+        return text.size(withAttributes: [.font: NSFont.systemFont(ofSize: fontSize, weight: .semibold)])
     }
 
     private func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {

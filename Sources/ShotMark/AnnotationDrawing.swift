@@ -38,6 +38,10 @@ enum AnnotationDrawing {
                 drawText(origin: origin, value: value, color: color, fontSize: fontSize)
             case .mosaic(let rect, let blockSize):
                 MosaicRenderer.drawGlassPlaceholder(rect: rect, blockSize: blockSize)
+            case .callout(let targetRect, let arrowStart, let arrowEnd, let textOrigin, let text, let color, let lineWidth, let fontSize):
+                drawRectangle(rect: targetRect, color: color, lineWidth: lineWidth, filled: false)
+                drawArrow(start: arrowStart, end: arrowEnd, color: color, lineWidth: lineWidth)
+                drawText(origin: textOrigin, value: text, color: color, fontSize: fontSize)
             }
         }
     }
