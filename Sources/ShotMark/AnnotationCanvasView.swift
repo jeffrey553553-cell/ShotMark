@@ -423,7 +423,17 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         case .callout(let targetRect, let arrowStart, let arrowEnd, let textOrigin, let text, let color, let lineWidth, let fontSize):
             switch endpoint {
             case .start:
-                state.annotations[index] = .callout(targetRect: targetRect, arrowStart: point, arrowEnd: arrowEnd, textOrigin: textOrigin, text: text, color: color, lineWidth: lineWidth, fontSize: fontSize)
+                let delta = CGPoint(x: point.x - arrowStart.x, y: point.y - arrowStart.y)
+                state.annotations[index] = .callout(
+                    targetRect: targetRect,
+                    arrowStart: point,
+                    arrowEnd: arrowEnd,
+                    textOrigin: CGPoint(x: textOrigin.x + delta.x, y: textOrigin.y + delta.y),
+                    text: text,
+                    color: color,
+                    lineWidth: lineWidth,
+                    fontSize: fontSize
+                )
             case .end:
                 state.annotations[index] = .callout(targetRect: targetRect, arrowStart: arrowStart, arrowEnd: nearestPoint(on: targetRect, to: point), textOrigin: textOrigin, text: text, color: color, lineWidth: lineWidth, fontSize: fontSize)
             }
@@ -492,8 +502,8 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
 
     private func calloutLayout(for targetRect: CGRect, in bounds: CGRect) -> (arrowStart: CGPoint, arrowEnd: CGPoint, textOrigin: CGPoint) {
         let textSize = CGSize(width: 150, height: 30)
-        let textGap: CGFloat = 34
-        let arrowTextGap: CGFloat = 18
+        let textGap: CGFloat = 56
+        let arrowTextGap: CGFloat = 24
         let placements: [(origin: CGPoint, arrowStart: CGPoint)] = [
             (
                 CGPoint(x: targetRect.maxX + textGap, y: targetRect.maxY + textGap),

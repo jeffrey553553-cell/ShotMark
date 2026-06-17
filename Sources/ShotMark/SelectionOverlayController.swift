@@ -723,8 +723,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     private func calloutLayout(for targetRect: CGRect, in bounds: CGRect) -> (arrowStart: CGPoint, arrowEnd: CGPoint, textOrigin: CGPoint) {
         let preferredTextSize = CGSize(width: max(120, textInputMinSize.width), height: textInputMinSize.height)
-        let textGap: CGFloat = 34
-        let arrowTextGap: CGFloat = 18
+        let textGap: CGFloat = 56
+        let arrowTextGap: CGFloat = 24
 
         let placements: [(origin: CGPoint, arrowStart: CGPoint)] = [
             (
@@ -3058,7 +3058,17 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         case .callout(let targetRect, let arrowStart, let arrowEnd, let textOrigin, let text, let color, let lineWidth, let fontSize):
             switch endpoint {
             case .start:
-                annotations[index] = .callout(targetRect: targetRect, arrowStart: point, arrowEnd: arrowEnd, textOrigin: textOrigin, text: text, color: color, lineWidth: lineWidth, fontSize: fontSize)
+                let delta = CGPoint(x: point.x - arrowStart.x, y: point.y - arrowStart.y)
+                annotations[index] = .callout(
+                    targetRect: targetRect,
+                    arrowStart: point,
+                    arrowEnd: arrowEnd,
+                    textOrigin: CGPoint(x: textOrigin.x + delta.x, y: textOrigin.y + delta.y),
+                    text: text,
+                    color: color,
+                    lineWidth: lineWidth,
+                    fontSize: fontSize
+                )
             case .end:
                 annotations[index] = .callout(targetRect: targetRect, arrowStart: arrowStart, arrowEnd: nearestPoint(on: targetRect, to: point), textOrigin: textOrigin, text: text, color: color, lineWidth: lineWidth, fontSize: fontSize)
             }

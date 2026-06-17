@@ -58,6 +58,8 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "tailHalfWidth" Sources/ShotMark/AnnotationDrawing.swift
   rg -q "neckHalfWidth" Sources/ShotMark/AnnotationDrawing.swift
   rg -q "arrowTextGap" Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
+  rg -q "let textGap: CGFloat = 56" Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
+  rg -q "point\\.x - arrowStart\\.x" Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
   rg -q "private func undoEdit\\(" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "private func redoEdit\\(" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "private func deleteSelectedAnnotation\\(" Sources/ShotMark/SelectionOverlayController.swift
@@ -221,6 +223,7 @@ Mark each item PASS/FAIL after running it.
 | Edit | Select number marker and adjust style panel | Marker size/color/opacity update and export correctly | |
 | Edit | Click comment tool or press 1, then drag a target box | A target rectangle, arrow and editable text comment are created as one annotation group | |
 | Edit | Select a comment annotation | Target rectangle corners, arrow endpoints and text origin show editable handles; moving the group keeps all three parts together | |
+| Edit | Drag the tail handle of a comment arrow | The comment text moves with the arrow tail and keeps its spacing from the arrow | |
 | Edit | Export a comment annotation | Saved/copied image contains the rectangle, arrow and comment text without editor handles | |
 | Edit | Draw normal and comment arrows | Arrows render with a thin tail, heavier head and no plain-line arrow regression | |
 | Edit | Type text annotation continuously, press Return to create a new line, then click outside | Text stays anchored while typing, tail newlines do not shift the block, and it does not jump after focus leaves | |
