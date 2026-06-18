@@ -6,6 +6,8 @@
     <string>zh_CN</string>
     <key>CFBundleExecutable</key>
     <string>ShotMark</string>
+    <key>CFBundleIconFile</key>
+    <string>ShotMark</string>
     <key>CFBundleIdentifier</key>
     <string>com.local.shotmark</string>
     <key>CFBundleInfoDictionaryVersion</key>

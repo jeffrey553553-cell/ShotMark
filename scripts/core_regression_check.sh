@@ -38,6 +38,11 @@ verify_dmg_install_layout() {
 run_step "Swift debug build" swift build --disable-sandbox
 run_step "Release app build" "$ROOT_DIR/scripts/build_app.sh"
 run_step "Code signature verify" codesign --verify --deep --verbose=2 "$ROOT_DIR/dist/ShotMark.app"
+run_step "App icon verify" env ROOT_DIR="$ROOT_DIR" bash -c '
+  set -euo pipefail
+  [[ "$(plutil -extract CFBundleIconFile raw -o - "$ROOT_DIR/dist/ShotMark.app/Contents/Info.plist")" == "ShotMark" ]]
+  [[ -s "$ROOT_DIR/dist/ShotMark.app/Contents/Resources/ShotMark.icns" ]]
+'
 run_step "DMG package" "$ROOT_DIR/scripts/package_dmg.sh"
 run_step "DMG verify" hdiutil verify "$ROOT_DIR/dist/ShotMark.dmg"
 run_step "DMG install layout verify" verify_dmg_install_layout
@@ -158,6 +163,7 @@ Generated: $TIMESTAMP
 - Swift debug build: PASS
 - Release app build: PASS
 - Code signature verify: PASS
+- App icon verify: PASS
 - DMG package: PASS
 - DMG verify: PASS
 - DMG install layout verify: PASS
