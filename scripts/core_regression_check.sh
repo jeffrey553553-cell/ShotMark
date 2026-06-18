@@ -42,6 +42,22 @@ run_step "App icon verify" env ROOT_DIR="$ROOT_DIR" bash -c '
   set -euo pipefail
   [[ "$(plutil -extract CFBundleIconFile raw -o - "$ROOT_DIR/dist/ShotMark.app/Contents/Info.plist")" == "ShotMark" ]]
   [[ -s "$ROOT_DIR/dist/ShotMark.app/Contents/Resources/ShotMark.icns" ]]
+  rg -q "alpha corners 0 0 0 0" <(
+    swift - <<'"'"'SWIFT'"'"'
+import AppKit
+let image = NSImage(contentsOf: URL(fileURLWithPath: "Resources/ShotMarkIcon.png"))!
+let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil)!
+let width = cg.width
+let height = cg.height
+let bytesPerPixel = 4
+let bytesPerRow = width * bytesPerPixel
+var data = [UInt8](repeating: 0, count: height * bytesPerRow)
+let context = CGContext(data: &data, width: width, height: height, bitsPerComponent: 8, bytesPerRow: bytesPerRow, space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+context.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))
+func alpha(_ x: Int, _ y: Int) -> UInt8 { data[y * bytesPerRow + x * bytesPerPixel + 3] }
+print("alpha corners \(alpha(0, 0)) \(alpha(width - 1, 0)) \(alpha(0, height - 1)) \(alpha(width - 1, height - 1))")
+SWIFT
+  )
 '
 run_step "DMG package" "$ROOT_DIR/scripts/package_dmg.sh"
 run_step "DMG verify" hdiutil verify "$ROOT_DIR/dist/ShotMark.dmg"
