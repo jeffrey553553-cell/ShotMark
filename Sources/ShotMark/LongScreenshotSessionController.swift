@@ -27,7 +27,7 @@ private extension LongScreenshotStitchUpdate {
         switch outcome {
         case .initialized, .appended:
             true
-        case .ignoredNoMovement, .ignoredAlignmentFailed:
+        case .ignoredNoMovement, .ignoredCoveredContent, .ignoredAlignmentFailed:
             false
         }
     }
@@ -40,6 +40,8 @@ private extension LongScreenshotStitchUpdate {
             "已追加 \(deltaY)px，继续滚动"
         case .ignoredNoMovement:
             "未检测到新内容"
+        case .ignoredCoveredContent:
+            "经过已采集区域，不重复拼接"
         case .ignoredAlignmentFailed:
             "拼接置信度低，放慢滚动"
         }
@@ -53,6 +55,8 @@ private extension LongScreenshotStitchUpdate {
             "预览已更新"
         case .ignoredNoMovement:
             "无新增内容"
+        case .ignoredCoveredContent:
+            "已采集区域"
         case .ignoredAlignmentFailed:
             "等待更清晰的重叠区域"
         }
@@ -160,7 +164,8 @@ final class LongScreenshotSessionController {
     private var trailingScrollCaptureWorkItem: DispatchWorkItem?
     private var lastScrollCaptureAt = Date.distantPast
     private var pendingExpectedScrollDeltaPixels = 0
-    private var primaryScrollDirectionSign: CGFloat?
+    private var lastScrollDirectionSign: Int?
+    private var stitchDirectionByScrollSign: [Int: LongScreenshotStitchDirection] = [:]
     private var isStreamCaptureEnabled = true
     private var isStreamSourceReady = false
     private var isCapturing = false
@@ -306,16 +311,13 @@ final class LongScreenshotSessionController {
     private func handleScroll(_ event: NSEvent) {
         let verticalDelta = dominantVerticalScrollDelta(event)
         guard abs(verticalDelta) >= scrollDirectionThreshold else { return }
-        let sign: CGFloat = verticalDelta > 0 ? 1 : -1
+        let sign = verticalDelta > 0 ? 1 : -1
 
-        if let primaryScrollDirectionSign, primaryScrollDirectionSign != sign {
-            pauseCaptureForReverseScroll()
-            return
+        if let lastScrollDirectionSign, lastScrollDirectionSign != sign {
+            prepareForScrollDirectionChange()
         }
 
-        if primaryScrollDirectionSign == nil {
-            primaryScrollDirectionSign = sign
-        }
+        lastScrollDirectionSign = sign
         pendingExpectedScrollDeltaPixels += expectedScrollDeltaPixels(from: event, verticalDelta: verticalDelta)
         scheduleCaptureAfterScroll()
     }
@@ -336,15 +338,14 @@ final class LongScreenshotSessionController {
         return max(1, Int((pointDelta * scale).rounded()))
     }
 
-    private func pauseCaptureForReverseScroll() {
+    private func prepareForScrollDirectionChange() {
         throttledScrollCaptureWorkItem?.cancel()
         throttledScrollCaptureWorkItem = nil
         trailingScrollCaptureWorkItem?.cancel()
         trailingScrollCaptureWorkItem = nil
-        needsCaptureAfterCurrent = false
         pendingExpectedScrollDeltaPixels = 0
-        updateControlView(status: "反向滚动，暂停采集")
-        updatePreview(status: "反向滚动暂停")
+        updateControlView(status: "已切换方向，继续采集")
+        updatePreview(status: "切换拼接方向")
     }
 
     private func scheduleCaptureAfterScroll() {
@@ -390,10 +391,16 @@ final class LongScreenshotSessionController {
         isCapturing = true
         needsCaptureAfterCurrent = false
         let expectedDeltaPixels = pendingExpectedScrollDeltaPixels > 0 ? pendingExpectedScrollDeltaPixels : nil
+        let scrollDirectionSign = lastScrollDirectionSign
+        let expectedDirection = scrollDirectionSign.flatMap { stitchDirectionByScrollSign[$0] }
         pendingExpectedScrollDeltaPixels = 0
         updateControlView(status: "正在采集...")
 
-        if commitLatestStreamFrame(expectedDeltaPixels: expectedDeltaPixels) {
+        if commitLatestStreamFrame(
+            expectedDeltaPixels: expectedDeltaPixels,
+            expectedDirection: expectedDirection,
+            scrollDirectionSign: scrollDirectionSign
+        ) {
             finishCaptureTurn()
             return
         }
@@ -408,7 +415,14 @@ final class LongScreenshotSessionController {
                     switch result {
                     case .success(let capture):
                         let cleaned = self.cleanedCapture(capture)
-                        self.commitImage(cleaned.image, createdAt: cleaned.createdAt, expectedDeltaPixels: expectedDeltaPixels, sequenceNumber: nil)
+                        self.commitImage(
+                            cleaned.image,
+                            createdAt: cleaned.createdAt,
+                            expectedDeltaPixels: expectedDeltaPixels,
+                            expectedDirection: expectedDirection,
+                            scrollDirectionSign: scrollDirectionSign,
+                            sequenceNumber: nil
+                        )
                     case .failure(let error):
                         self.cleanup()
                         self.onFinish?(.failure(error))
@@ -421,17 +435,47 @@ final class LongScreenshotSessionController {
         }
     }
 
-    private func commitLatestStreamFrame(expectedDeltaPixels: Int?) -> Bool {
+    private func commitLatestStreamFrame(
+        expectedDeltaPixels: Int?,
+        expectedDirection: LongScreenshotStitchDirection?,
+        scrollDirectionSign: Int?
+    ) -> Bool {
         guard isStreamCaptureEnabled, isStreamSourceReady else { return false }
         guard let frame = frameRing.latestFrame(after: frameRing.lastCommittedSequenceNumber) else { return false }
-        commitImage(frame.image, createdAt: frame.capturedAt, expectedDeltaPixels: expectedDeltaPixels, sequenceNumber: frame.sequenceNumber)
+        commitImage(
+            frame.image,
+            createdAt: frame.capturedAt,
+            expectedDeltaPixels: expectedDeltaPixels,
+            expectedDirection: expectedDirection,
+            scrollDirectionSign: scrollDirectionSign,
+            sequenceNumber: frame.sequenceNumber
+        )
         return true
     }
 
-    private func commitImage(_ image: CGImage, createdAt: Date, expectedDeltaPixels: Int?, sequenceNumber: Int?) {
-        let update = stitcher.append(image, expectedDeltaPixels: expectedDeltaPixels)
+    private func commitImage(
+        _ image: CGImage,
+        createdAt: Date,
+        expectedDeltaPixels: Int?,
+        expectedDirection: LongScreenshotStitchDirection?,
+        scrollDirectionSign: Int?,
+        sequenceNumber: Int?
+    ) {
+        let update = stitcher.append(
+            image,
+            expectedDeltaPixels: expectedDeltaPixels,
+            expectedDirection: expectedDirection
+        )
         stitchedImageCache = update?.mergedImage
         frameRing.markCommitted(sequenceNumber: sequenceNumber)
+        if let update,
+           let scrollDirectionSign,
+           case .appended = update.outcome,
+           update.direction != .unresolved,
+           update.confidence >= 0.72 {
+            stitchDirectionByScrollSign[scrollDirectionSign] = update.direction
+            stitchDirectionByScrollSign[-scrollDirectionSign] = update.direction.opposite
+        }
         if update?.isAccepted == true {
             captures.append(CaptureResult(
                 image: image,
@@ -709,7 +753,8 @@ final class LongScreenshotSessionController {
         previewView = nil
         stitchedImageCache = nil
         pendingExpectedScrollDeltaPixels = 0
-        primaryScrollDirectionSign = nil
+        lastScrollDirectionSign = nil
+        stitchDirectionByScrollSign.removeAll()
         isStreamSourceReady = false
         stitcher.reset()
         isCapturing = false

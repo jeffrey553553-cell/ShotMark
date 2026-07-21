@@ -28,6 +28,11 @@ let package = Package(
                 .linkedFramework("SwiftUI"),
                 .linkedFramework("Vision")
             ]
+        ),
+        .testTarget(
+            name: "ShotMarkTests",
+            dependencies: ["ShotMark"],
+            path: "Tests/ShotMarkTests"
         )
     ]
 )

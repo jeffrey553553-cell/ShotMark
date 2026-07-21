@@ -5,12 +5,21 @@ enum LongScreenshotStitchDirection {
     case unresolved
     case downward
     case upward
+
+    var opposite: LongScreenshotStitchDirection {
+        switch self {
+        case .downward: return .upward
+        case .upward: return .downward
+        case .unresolved: return .unresolved
+        }
+    }
 }
 
 enum LongScreenshotStitchOutcome {
     case initialized
     case appended(deltaY: Int)
     case ignoredNoMovement
+    case ignoredCoveredContent
     case ignoredAlignmentFailed
 }
 
@@ -161,6 +170,9 @@ final class LongScreenshotStitcher {
     private var stitchDirection: LongScreenshotStitchDirection = .unresolved
     private var lastMatch: Match?
     private var cachedMergedImage: CGImage?
+    private var currentViewportStart = 0
+    private var coveredStart = 0
+    private var coveredEnd = 0
 
     private(set) var acceptedFrameCount = 0
 
@@ -179,10 +191,18 @@ final class LongScreenshotStitcher {
         stitchDirection = .unresolved
         lastMatch = nil
         cachedMergedImage = nil
+        currentViewportStart = 0
+        coveredStart = 0
+        coveredEnd = 0
         acceptedFrameCount = 0
     }
 
-    func append(_ image: CGImage, expectedDeltaPixels: Int? = nil, maxOutputHeight: Int = 120_000) -> LongScreenshotStitchUpdate? {
+    func append(
+        _ image: CGImage,
+        expectedDeltaPixels: Int? = nil,
+        expectedDirection: LongScreenshotStitchDirection? = nil,
+        maxOutputHeight: Int = 120_000
+    ) -> LongScreenshotStitchUpdate? {
         guard let raster = RasterImage(cgImage: image) else { return nil }
         guard let lastRaster, let baseRaster else {
             self.baseRaster = raster
@@ -220,7 +240,8 @@ final class LongScreenshotStitcher {
             footerHeight: bottomBand,
             leadingStaticWidth: leftBand,
             trailingStaticWidth: rightBand,
-            expectedDeltaPixels: expectedDeltaPixels
+            expectedDeltaPixels: expectedDeltaPixels,
+            expectedDirection: expectedDirection
         )
 
         if frameDifference < 8.5, isLikelyBoundaryOrDuplicate(match: match, expectedDeltaPixels: expectedDeltaPixels) {
@@ -232,7 +253,6 @@ final class LongScreenshotStitcher {
         }
 
         if stitchDirection == .unresolved {
-            stitchDirection = match.direction
             headerHeight = topBand
             footerHeight = bottomBand
             leadingStaticWidth = leftBand
@@ -240,12 +260,39 @@ final class LongScreenshotStitcher {
             bootstrapBaseContent(from: baseRaster)
         }
 
+        stitchDirection = match.direction
+        let contentHeight = raster.height - headerHeight - footerHeight
+        guard contentHeight > 0 else {
+            return update(outcome: .ignoredAlignmentFailed, confidence: 0)
+        }
+
+        let nextViewportStart: Int
+        let novelRowCount: Int
+        switch match.direction {
+        case .downward:
+            nextViewportStart = currentViewportStart + match.deltaY
+            novelRowCount = max(0, nextViewportStart + contentHeight - coveredEnd)
+        case .upward:
+            nextViewportStart = currentViewportStart - match.deltaY
+            novelRowCount = max(0, coveredStart - nextViewportStart)
+        case .unresolved:
+            return update(outcome: .ignoredAlignmentFailed, confidence: 0)
+        }
+
+        currentViewportStart = nextViewportStart
+        self.lastRaster = raster
+        self.lastMatch = match
+
+        guard novelRowCount > 0 else {
+            return update(outcome: .ignoredCoveredContent, confidence: confidence(for: match))
+        }
+
         let remainingHeight = maxOutputHeight - outputHeight
         guard remainingHeight > 0 else {
             return update(outcome: .ignoredAlignmentFailed, confidence: confidence(for: match))
         }
 
-        let acceptedDelta = min(match.deltaY, remainingHeight)
+        let acceptedDelta = min(novelRowCount, remainingHeight)
         guard let startRow = sliceStartRow(for: match.direction, in: raster, deltaY: acceptedDelta) else {
             return update(outcome: .ignoredAlignmentFailed, confidence: 0)
         }
@@ -254,14 +301,14 @@ final class LongScreenshotStitcher {
         switch match.direction {
         case .downward:
             contentSlices.append(slice)
+            coveredEnd += acceptedDelta
         case .upward:
             contentSlices.insert(slice, at: 0)
+            coveredStart -= acceptedDelta
         case .unresolved:
             return update(outcome: .ignoredAlignmentFailed, confidence: 0)
         }
 
-        self.lastRaster = raster
-        self.lastMatch = match
         cachedMergedImage = nil
         acceptedFrameCount += 1
         return update(outcome: .appended(deltaY: acceptedDelta), confidence: confidence(for: match))
@@ -318,6 +365,9 @@ final class LongScreenshotStitcher {
         let startRow = headerHeight
         let rowCount = max(1, raster.height - headerHeight - footerHeight)
         contentSlices = [ContentSlice(raster: raster, startRow: startRow, rowCount: rowCount)]
+        currentViewportStart = 0
+        coveredStart = 0
+        coveredEnd = rowCount
         cachedMergedImage = nil
     }
 
@@ -437,7 +487,8 @@ final class LongScreenshotStitcher {
         footerHeight: Int,
         leadingStaticWidth: Int,
         trailingStaticWidth: Int,
-        expectedDeltaPixels: Int?
+        expectedDeltaPixels: Int?,
+        expectedDirection: LongScreenshotStitchDirection?
     ) -> Match? {
         let contentHeight = previous.height - headerHeight - footerHeight
         guard contentHeight > 48 else { return nil }
@@ -456,7 +507,8 @@ final class LongScreenshotStitcher {
             leadingStaticWidth: leadingStaticWidth,
             trailingStaticWidth: trailingStaticWidth,
             deltaRange: focusedRange ?? minDelta...maxDelta,
-            expectedDeltaPixels: expectedDeltaPixels
+            expectedDeltaPixels: expectedDeltaPixels,
+            expectedDirection: expectedDirection
         )
 
         if !isAcceptable(search?.best, expectedDeltaPixels: expectedDeltaPixels) || isAmbiguous(search, expectedDeltaPixels: expectedDeltaPixels) {
@@ -469,7 +521,8 @@ final class LongScreenshotStitcher {
                     leadingStaticWidth: leadingStaticWidth,
                     trailingStaticWidth: trailingStaticWidth,
                     deltaRange: minDelta...maxDelta,
-                    expectedDeltaPixels: expectedDeltaPixels
+                    expectedDeltaPixels: expectedDeltaPixels,
+                    expectedDirection: expectedDirection
                 )
                 if broad?.best.totalScore ?? .greatestFiniteMagnitude < search?.best.totalScore ?? .greatestFiniteMagnitude {
                     search = broad
@@ -505,11 +558,17 @@ final class LongScreenshotStitcher {
         leadingStaticWidth: Int,
         trailingStaticWidth: Int,
         deltaRange: ClosedRange<Int>,
-        expectedDeltaPixels: Int?
+        expectedDeltaPixels: Int?,
+        expectedDirection: LongScreenshotStitchDirection?
     ) -> MatchSearchResult? {
         let contentHeight = previous.height - headerHeight - footerHeight
         let step = max(2, min(10, contentHeight / 160))
-        let directions: [LongScreenshotStitchDirection] = stitchDirection == .unresolved ? [.downward, .upward] : [stitchDirection]
+        let directions: [LongScreenshotStitchDirection]
+        if let expectedDirection, expectedDirection != .unresolved {
+            directions = [expectedDirection]
+        } else {
+            directions = [.downward, .upward]
+        }
         var coarseCandidates: [Match] = []
 
         for direction in directions {

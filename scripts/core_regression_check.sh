@@ -36,6 +36,7 @@ verify_dmg_install_layout() {
 }
 
 run_step "Swift debug build" swift build --disable-sandbox
+run_step "Swift tests" swift test --disable-sandbox
 run_step "Release app build" "$ROOT_DIR/scripts/build_app.sh"
 run_step "Code signature verify" codesign --verify --deep --verbose=2 "$ROOT_DIR/dist/ShotMark.app"
 run_step "App icon verify" env ROOT_DIR="$ROOT_DIR" bash -c '
@@ -96,6 +97,9 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "captureMicrophone = audioMode.capturesMicrophone" Sources/ShotMark/VideoRecordingService.swift
   rg -q "window.sharingType = .none" Sources/ShotMark/RecordingRegionOverlayController.swift
   rg -q "acceptsFirstMouse" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "activeSelectionView" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "setInteractionLocked" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "onInteractionStarted" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "windowUnderCurrentMouse" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "convert\\(event\\.locationInWindow, from: nil\\)" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "intersection\\(targetScreen\\.frame\\)" Sources/ShotMark/SelectionOverlayController.swift
@@ -111,7 +115,9 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "captureFrozenScreensAndShowOverlay" Sources/ShotMark/ScreenshotCoordinator.swift
   rg -q "LongScreenshotHotKeyService" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "kVK_Escape" Sources/ShotMark/LongScreenshotSessionController.swift
-  rg -q "primaryScrollDirectionSign" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "lastScrollDirectionSign" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "prepareForScrollDirectionChange" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "stitchDirectionByScrollSign" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "pendingExpectedScrollDeltaPixels" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "LongScreenshotFrameSource" Sources/ShotMark/LongScreenshotFrameSource.swift Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "LongScreenshotFrameRing" Sources/ShotMark/LongScreenshotFrameRing.swift Sources/ShotMark/LongScreenshotSessionController.swift
@@ -130,6 +136,10 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "contentSlices.insert\\(slice, at: 0\\)" Sources/ShotMark/LongScreenshotStitcher.swift
   rg -q "ignoredAlignmentFailed" Sources/ShotMark/LongScreenshotStitcher.swift
   rg -q "isAmbiguous" Sources/ShotMark/LongScreenshotStitcher.swift
+  rg -q "currentViewportStart" Sources/ShotMark/LongScreenshotStitcher.swift
+  rg -q "coveredStart" Sources/ShotMark/LongScreenshotStitcher.swift
+  rg -q "coveredEnd" Sources/ShotMark/LongScreenshotStitcher.swift
+  rg -q "ignoredCoveredContent" Sources/ShotMark/LongScreenshotStitcher.swift Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "static let defaultShortcut" Sources/ShotMark/GlobalShortcut.swift
   rg -q "\\.defaultShortcut" Sources/ShotMark/Models.swift Sources/ShotMark/SettingsWindowController.swift Sources/ShotMark/AppDelegate.swift
   rg -q "shotmark.captureShortcut" Sources/ShotMark/Models.swift
@@ -177,6 +187,7 @@ Generated: $TIMESTAMP
 ## Automated Checks
 
 - Swift debug build: PASS
+- Swift tests: PASS
 - Release app build: PASS
 - Code signature verify: PASS
 - App icon verify: PASS
@@ -221,6 +232,7 @@ Mark each item PASS/FAIL after running it.
 | Immediate drag | Press configured shortcut, then drag without a focus click | Selection starts on the first mouse down after the shortcut | |
 | Frozen frame | Play a video, press configured shortcut, then select/save later | Overlay and final PNG keep the frame from screenshot entry instead of later video frames | |
 | External screen | Configured shortcut with cursor on external screen | Overlay appears on target display; capture area matches selected display | |
+| Multiple screens | Finish a selection on one display, then click or drag on another display | The first selection remains the only active selection; other displays stay dimmed and do not create a second selection | |
 | Retina | Capture text/icons on Retina screen | Output PNG is sharp and selection bounds match pixels | |
 | Full screen | Select nearly entire screen | Toolbar stays visible and final image has no blue selection frame | |
 | Small area | Select small area around text | Toolbar stays usable; output only contains selected area | |
@@ -236,6 +248,7 @@ Mark each item PASS/FAIL after running it.
 | Mosaic | Draw mosaic over text | Text under the drawn area is blurred, no visible border is drawn | |
 | Long screenshot | Start long screenshot and press Esc | Session cancels and returns without saving/copying | |
 | Long screenshot | Scroll down, then scroll upward repeatedly | Preview does not keep appending reversed/duplicate content | |
+| Long screenshot | Reverse direction through already captured content | Preview height stays unchanged while traversing covered content and resumes only after reaching new content | |
 | Long screenshot | Start near page bottom, scroll upward | New upper content is prepended above the starting frame | |
 | Edit | Draw rectangle/arrow/text/mosaic, then Cmd+Z/Cmd+Shift+Z | Undo and redo restore the previous annotation state | |
 | Edit | Select an annotation and press Delete | The selected annotation is removed only after selection | |
