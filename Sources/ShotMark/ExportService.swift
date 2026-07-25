@@ -44,6 +44,10 @@ final class ExportService {
 
     func export(state: EditorState, to destination: ExportDestination) throws {
         let data = try pngData(for: state)
+        try exportPNGData(data, to: destination)
+    }
+
+    func exportPNGData(_ data: Data, to destination: ExportDestination) throws {
         switch destination {
         case .clipboard:
             let pasteboard = NSPasteboard.general

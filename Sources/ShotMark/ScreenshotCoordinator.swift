@@ -11,6 +11,10 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
     private var longScreenshotController: LongScreenshotSessionController?
     private let captureService = CaptureService()
     private let videoRecordingService = VideoRecordingService()
+    private let historyStore = CaptureHistoryStore.shared
+    private let quickAccessController = QuickAccessWindowController.shared
+    private var recordingResultScreen: NSScreen?
+    private var recordingCreatedAt: Date?
     private var recordingState: RecordingUIState = .idle {
         didSet {
             onRecordingStateChanged?(recordingState)
@@ -133,25 +137,40 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
     private func handle(_ capture: CaptureResult, annotations: [Annotation], action: CaptureCommitAction) {
         let state = EditorState(capture: capture)
         state.annotations = annotations
+        let exportService = ExportService()
         switch action {
         case .copyToClipboard:
             do {
-                try ExportService().export(state: state, to: .clipboard)
-                ToastWindowController.show(message: "已复制到剪切板")
+                let data = try exportService.pngData(for: state)
+                try exportService.exportPNGData(data, to: .clipboard)
+                showImageResult(
+                    data: data,
+                    capture: capture,
+                    kind: .screenshot,
+                    externalURL: nil,
+                    message: "已复制到剪切板"
+                )
             } catch {
                 showError(error)
             }
         case .saveToFile:
             do {
                 let url = ExportService.defaultSaveURL(createdAt: capture.createdAt)
-                try ExportService().export(state: state, to: .file(url))
-                ToastWindowController.show(message: "已保存到 Downloads")
+                let data = try exportService.pngData(for: state)
+                try exportService.exportPNGData(data, to: .file(url))
+                showImageResult(
+                    data: data,
+                    capture: capture,
+                    kind: .screenshot,
+                    externalURL: url,
+                    message: "已保存到 Downloads"
+                )
             } catch {
                 showError(error)
             }
         case .pinToScreen:
             do {
-                let data = try ExportService().pngData(for: state)
+                let data = try exportService.pngData(for: state)
                 guard let image = NSImage(data: data) else {
                     throw ExportServiceError.pngEncodingFailed
                 }
@@ -169,6 +188,12 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
                 }
                 pinnedControllers.append(controller)
                 controller.show()
+                recordImage(
+                    data: data,
+                    capture: capture,
+                    kind: .pinnedScreenshot,
+                    externalURL: nil
+                )
             } catch {
                 showError(error)
             }
@@ -190,14 +215,28 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
             case .success(let (capture, action)):
                 let state = EditorState(capture: capture)
                 do {
+                    let exportService = ExportService()
+                    let data = try exportService.pngData(for: state)
                     switch action {
                     case .copyToClipboard:
-                        try ExportService().export(state: state, to: .clipboard)
-                        ToastWindowController.show(message: "长截图已复制")
+                        try exportService.exportPNGData(data, to: .clipboard)
+                        self.showImageResult(
+                            data: data,
+                            capture: capture,
+                            kind: .longScreenshot,
+                            externalURL: nil,
+                            message: "长截图已复制"
+                        )
                     case .saveToFile:
                         let url = ExportService.defaultLongScreenshotURL(createdAt: capture.createdAt)
-                        try ExportService().export(state: state, to: .file(url))
-                        ToastWindowController.show(message: "长截图已保存到 Downloads")
+                        try exportService.exportPNGData(data, to: .file(url))
+                        self.showImageResult(
+                            data: data,
+                            capture: capture,
+                            kind: .longScreenshot,
+                            externalURL: url,
+                            message: "长截图已保存到 Downloads"
+                        )
                     }
                 } catch {
                     self.showError(error, title: "长截图失败")
@@ -239,10 +278,15 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
         guard case .idle = recordingState else { return }
 
         recordingState = .starting
-        let outputURL = ExportService.defaultRecordingURL(createdAt: Date())
+        let createdAt = Date()
+        let outputURL = ExportService.defaultRecordingURL(createdAt: createdAt)
+        recordingResultScreen = selection.screen
+        recordingCreatedAt = createdAt
         videoRecordingService.onUnexpectedFailure = { [weak self] error in
             self?.recordingOverlayController?.close()
             self?.recordingOverlayController = nil
+            self?.recordingResultScreen = nil
+            self?.recordingCreatedAt = nil
             self?.recordingState = .idle
             self?.showError(error, title: "录制失败")
         }
@@ -258,6 +302,8 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
                 overlay.show()
                 self.recordingState = .recording(startedAt: startedAt)
             case .failure(let error):
+                self.recordingResultScreen = nil
+                self.recordingCreatedAt = nil
                 self.recordingOverlayController?.close()
                 self.recordingOverlayController = nil
                 self.recordingState = .idle
@@ -279,13 +325,85 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
             guard let self else { return }
             self.recordingState = .idle
             switch result {
-            case .success:
-                ToastWindowController.show(message: "已保存到 Downloads")
+            case .success(let url):
+                let createdAt = self.recordingCreatedAt ?? Date()
+                let resultScreen = self.recordingResultScreen
+                Task { @MainActor [weak self] in
+                    guard let self else {
+                        completion?()
+                        return
+                    }
+                    let metadata = await CaptureVideoMetadata.load(from: url)
+                    do {
+                        let record = try self.historyStore.addVideo(
+                            url: url,
+                            createdAt: createdAt,
+                            pixelWidth: metadata.pixelWidth,
+                            pixelHeight: metadata.pixelHeight,
+                            duration: metadata.duration
+                        )
+                        self.quickAccessController.show(
+                            record: record,
+                            store: self.historyStore,
+                            message: "录屏已保存到 Downloads",
+                            screen: resultScreen
+                        )
+                    } catch {
+                        ToastWindowController.show(message: "录屏已保存到 Downloads")
+                    }
+                    self.recordingResultScreen = nil
+                    self.recordingCreatedAt = nil
+                    completion?()
+                }
+                return
             case .failure(let error):
                 self.showError(error, title: "录制失败")
             }
+            self.recordingResultScreen = nil
+            self.recordingCreatedAt = nil
             completion?()
         }
+    }
+
+    private func showImageResult(
+        data: Data,
+        capture: CaptureResult,
+        kind: CaptureHistoryKind,
+        externalURL: URL?,
+        message: String
+    ) {
+        guard let record = recordImage(
+            data: data,
+            capture: capture,
+            kind: kind,
+            externalURL: externalURL
+        ) else {
+            ToastWindowController.show(message: message)
+            return
+        }
+        quickAccessController.show(
+            record: record,
+            store: historyStore,
+            message: message,
+            screen: screen(containing: capture.selectionRectInScreen)
+        )
+    }
+
+    @discardableResult
+    private func recordImage(
+        data: Data,
+        capture: CaptureResult,
+        kind: CaptureHistoryKind,
+        externalURL: URL?
+    ) -> CaptureHistoryRecord? {
+        try? historyStore.addImage(
+            data: data,
+            kind: kind,
+            createdAt: capture.createdAt,
+            pixelWidth: capture.image.width,
+            pixelHeight: capture.image.height,
+            externalURL: externalURL
+        )
     }
 
     private func screen(containing rect: CGRect) -> NSScreen? {

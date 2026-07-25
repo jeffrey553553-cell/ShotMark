@@ -8,6 +8,8 @@ final class EditorWindowController: NSWindowController {
     private let defaultSaveURL: (Date) -> URL
     private var ocrPanelController: OCRResultPanelController?
     private let editorBorderWidth: CGFloat = 4
+    private let historyStore = CaptureHistoryStore.shared
+    private let quickAccessController = QuickAccessWindowController.shared
 
     init(capture: CaptureResult, defaultSaveURL: @escaping (Date) -> URL = ExportService.defaultSaveURL) {
         state = EditorState(capture: capture)
@@ -120,8 +122,10 @@ final class EditorWindowController: NSWindowController {
 
     private func copyImage() {
         do {
-            try ExportService().export(state: state, to: .clipboard)
-            toolbarController.showToast("已复制到剪切板")
+            let exportService = ExportService()
+            let data = try exportService.pngData(for: state)
+            try exportService.exportPNGData(data, to: .clipboard)
+            showResult(data: data, externalURL: nil, message: "已复制到剪切板")
         } catch {
             showError(title: "复制失败", message: error.localizedDescription)
         }
@@ -130,11 +134,36 @@ final class EditorWindowController: NSWindowController {
     private func saveImage() {
         do {
             let url = defaultSaveURL(state.capture.createdAt)
-            try ExportService().export(state: state, to: .file(url))
-            toolbarController.showToast("已保存到 Downloads")
+            let exportService = ExportService()
+            let data = try exportService.pngData(for: state)
+            try exportService.exportPNGData(data, to: .file(url))
+            showResult(data: data, externalURL: url, message: "已保存到 Downloads")
         } catch {
             showError(title: "保存失败", message: error.localizedDescription)
         }
+    }
+
+    private func showResult(data: Data, externalURL: URL?, message: String) {
+        guard let record = try? historyStore.addImage(
+            data: data,
+            kind: .screenshot,
+            createdAt: state.capture.createdAt,
+            pixelWidth: state.capture.image.width,
+            pixelHeight: state.capture.image.height,
+            externalURL: externalURL
+        ) else {
+            toolbarController.showToast(message)
+            return
+        }
+        let targetScreen = NSScreen.screens.first {
+            $0.frame.intersects(state.capture.selectionRectInScreen)
+        }
+        quickAccessController.show(
+            record: record,
+            store: historyStore,
+            message: message,
+            screen: targetScreen
+        )
     }
 
     private func showOCRPanel(text: String) {

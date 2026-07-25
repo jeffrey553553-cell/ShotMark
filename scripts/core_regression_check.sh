@@ -182,6 +182,13 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "drawWindowCandidateDebugOverlay" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "点击窗口快速选择" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "窗口识别校准" Sources/ShotMark/AppDelegate.swift Sources/ShotMark/SettingsWindowController.swift
+  rg -q "CaptureHistoryStore" Sources/ShotMark/ScreenshotCoordinator.swift Sources/ShotMark/EditorWindowController.swift Sources/ShotMark/AppDelegate.swift
+  rg -q "QuickAccessWindowController" Sources/ShotMark/ScreenshotCoordinator.swift
+  rg -q "截图历史" Sources/ShotMark/AppDelegate.swift Sources/ShotMark/CaptureHistoryWindowController.swift
+  rg -q "shotMarkHistoryDidChange" Sources/ShotMark/CaptureHistoryStore.swift Sources/ShotMark/CaptureHistoryWindowController.swift
+  rg -q "testDeletingHistoryNeverDeletesExternalExport" Tests/ShotMarkTests/CaptureHistoryStoreTests.swift
+  rg -q "testQuickAccessCardRendersThumbnailAndActions" Tests/ShotMarkTests/CaptureHistoryUITests.swift
+  rg -q "testHistoryWindowRendersStoredRecord" Tests/ShotMarkTests/CaptureHistoryUITests.swift
 '
 
 SCREEN_INFO="$(system_profiler SPDisplaysDataType 2>/dev/null || true)"

@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hotKeyService: HotKeyService?
     private var coordinator: ScreenshotCoordinator?
     private var settingsWindowController: SettingsWindowController?
+    private var historyWindowController: CaptureHistoryWindowController?
     private var shortcutObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -43,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         let primaryItem = NSMenuItem(title: primaryMenuTitle(), action: #selector(primaryActionMenuItem), keyEquivalent: "")
         menu.addItem(primaryItem)
+        menu.addItem(NSMenuItem(title: "截图历史...", action: #selector(openHistory), keyEquivalent: ""))
         menu.addItem(.separator())
         let screenRecordingStatusItem = NSMenuItem(title: "屏幕录制权限：检查中", action: nil, keyEquivalent: "")
         screenRecordingStatusItem.isEnabled = false
@@ -83,6 +85,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openDemo() {
         coordinator?.showDemo()
+    }
+
+    @objc private func openHistory() {
+        if historyWindowController == nil {
+            historyWindowController = CaptureHistoryWindowController()
+        }
+        historyWindowController?.showWindow(nil)
+        historyWindowController?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc private func openSettings() {

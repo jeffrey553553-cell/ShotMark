@@ -41,7 +41,7 @@ adapted because upstream projects can change.
 | Recording | MP4, quality and audio modes | Kap, Snapzy | Pause/resume, GIF export, click highlight and keystroke overlay |
 | Pinning | Implemented | Snapzy | Opacity control, zoom and multi-pin management |
 | Export | PNG clipboard and Downloads save | Snapzy, ShareX | PNG/JPEG/WebP, naming template, configurable destination and drag-out |
-| History | Not implemented | Maccy, Snapzy | Local searchable capture history with retention controls |
+| History | Searchable local image/video history, private media copies, 30-day/200-item retention and quick result card implemented | Maccy, Snapzy | Add configurable retention, favorites and OCR text indexing |
 | Updates | Manual GitHub Release | Snapzy | Signed Developer ID build, notarization and Sparkle update feed |
 
 ## Priority
