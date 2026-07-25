@@ -176,8 +176,8 @@ final class LongScreenshotSessionController {
     private var previewWindow: NSPanel?
     private var previewView: LongScreenshotPreviewView?
 
-    private let scrollCaptureInterval: TimeInterval = 0.075
-    private let trailingCaptureDelay: TimeInterval = 0.09
+    private let scrollCaptureInterval: TimeInterval = 0.095
+    private let trailingCaptureDelay: TimeInterval = 0.14
     private let scrollDirectionThreshold: CGFloat = 0.1
 
     init(selection: CaptureSelection) {

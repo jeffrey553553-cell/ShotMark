@@ -43,6 +43,7 @@ run_step "App icon verify" env ROOT_DIR="$ROOT_DIR" bash -c '
   set -euo pipefail
   [[ "$(plutil -extract CFBundleIconFile raw -o - "$ROOT_DIR/dist/ShotMark.app/Contents/Info.plist")" == "ShotMark" ]]
   [[ -s "$ROOT_DIR/dist/ShotMark.app/Contents/Resources/ShotMark.icns" ]]
+  [[ -s "$ROOT_DIR/dist/ShotMark.app/Contents/Resources/THIRD_PARTY_NOTICES.md" ]]
   rg -q "alpha corners 0 0 0 0" <(
     swift - <<'"'"'SWIFT'"'"'
 import AppKit
@@ -100,6 +101,8 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "activeSelectionView" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "setInteractionLocked" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "onInteractionStarted" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "installInteractionEventMonitor" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "matching: \\[\\.leftMouseDown, \\.leftMouseDragged, \\.leftMouseUp\\]" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "windowUnderCurrentMouse" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "convert\\(event\\.locationInWindow, from: nil\\)" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "intersection\\(targetScreen\\.frame\\)" Sources/ShotMark/SelectionOverlayController.swift
@@ -140,6 +143,9 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "coveredStart" Sources/ShotMark/LongScreenshotStitcher.swift
   rg -q "coveredEnd" Sources/ShotMark/LongScreenshotStitcher.swift
   rg -q "ignoredCoveredContent" Sources/ShotMark/LongScreenshotStitcher.swift Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "VNTranslationalImageRegistrationRequest" Sources/ShotMark/LongScreenshotStitcher.swift
+  rg -q "estimateVisionAlignment" Sources/ShotMark/LongScreenshotStitcher.swift
+  rg -q "testVisionRecoveryHandlesMisleadingScrollDistance" Tests/ShotMarkTests/LongScreenshotStitcherTests.swift
   rg -q "static let defaultShortcut" Sources/ShotMark/GlobalShortcut.swift
   rg -q "\\.defaultShortcut" Sources/ShotMark/Models.swift Sources/ShotMark/SettingsWindowController.swift Sources/ShotMark/AppDelegate.swift
   rg -q "shotmark.captureShortcut" Sources/ShotMark/Models.swift

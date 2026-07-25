@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import Vision
 
 enum LongScreenshotStitchDirection {
     case unresolved
@@ -118,6 +119,43 @@ final class LongScreenshotStitcher {
             }
         }
 
+        func croppedImage(xStart: Int, xEnd: Int, startRow: Int, rowCount: Int) -> CGImage? {
+            let safeXStart = max(0, xStart)
+            let safeXEnd = min(width, xEnd)
+            let safeStartRow = max(0, startRow)
+            let safeRowCount = min(rowCount, height - safeStartRow)
+            guard safeXStart < safeXEnd, safeRowCount > 0 else { return nil }
+
+            let croppedWidth = safeXEnd - safeXStart
+            let croppedBytesPerRow = croppedWidth * 4
+            var croppedPixels = [UInt8](repeating: 0, count: safeRowCount * croppedBytesPerRow)
+            for localRow in 0..<safeRowCount {
+                let sourceIndex = (safeStartRow + localRow) * bytesPerRow + safeXStart * 4
+                let destinationIndex = localRow * croppedBytesPerRow
+                croppedPixels[destinationIndex..<(destinationIndex + croppedBytesPerRow)] =
+                    pixels[sourceIndex..<(sourceIndex + croppedBytesPerRow)]
+            }
+
+            let data = Data(croppedPixels) as CFData
+            guard let provider = CGDataProvider(data: data) else { return nil }
+            let bitmapInfo = CGBitmapInfo(
+                rawValue: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+            )
+            return CGImage(
+                width: croppedWidth,
+                height: safeRowCount,
+                bitsPerComponent: 8,
+                bitsPerPixel: 32,
+                bytesPerRow: croppedBytesPerRow,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: bitmapInfo,
+                provider: provider,
+                decode: nil,
+                shouldInterpolate: false,
+                intent: .defaultIntent
+            )
+        }
+
         private func colorDifference(comparedTo other: RasterImage, lhsIndex: Int, rhsIndex: Int) -> Double {
             let dr = abs(Int(pixels[lhsIndex]) - Int(other.pixels[rhsIndex]))
             let dg = abs(Int(pixels[lhsIndex + 1]) - Int(other.pixels[rhsIndex + 1]))
@@ -158,6 +196,16 @@ final class LongScreenshotStitcher {
     private struct MatchSearchResult {
         let best: Match
         let runnerUp: Match?
+    }
+
+    private struct VisionAlignmentEstimate {
+        let deltaY: Int
+        let agreementCount: Int
+        let spread: Int
+
+        var isStrong: Bool {
+            agreementCount >= 2 && deltaY >= 8
+        }
     }
 
     private var baseRaster: RasterImage?
@@ -232,6 +280,14 @@ final class LongScreenshotStitcher {
             leadingStaticWidth: leftBand,
             trailingStaticWidth: rightBand
         )
+        let visionEstimate = estimateVisionAlignment(
+            previous: lastRaster,
+            current: raster,
+            headerHeight: topBand,
+            footerHeight: bottomBand,
+            leadingStaticWidth: leftBand,
+            trailingStaticWidth: rightBand
+        )
 
         let match = bestMatch(
             previous: lastRaster,
@@ -241,10 +297,13 @@ final class LongScreenshotStitcher {
             leadingStaticWidth: leftBand,
             trailingStaticWidth: rightBand,
             expectedDeltaPixels: expectedDeltaPixels,
-            expectedDirection: expectedDirection
+            expectedDirection: expectedDirection,
+            visionEstimate: visionEstimate
         )
 
-        if frameDifference < 8.5, isLikelyBoundaryOrDuplicate(match: match, expectedDeltaPixels: expectedDeltaPixels) {
+        if frameDifference < 8.5,
+           visionEstimate?.isStrong != true,
+           isLikelyBoundaryOrDuplicate(match: match, expectedDeltaPixels: expectedDeltaPixels) {
             return update(outcome: .ignoredNoMovement, confidence: 1)
         }
 
@@ -488,7 +547,8 @@ final class LongScreenshotStitcher {
         leadingStaticWidth: Int,
         trailingStaticWidth: Int,
         expectedDeltaPixels: Int?,
-        expectedDirection: LongScreenshotStitchDirection?
+        expectedDirection: LongScreenshotStitchDirection?,
+        visionEstimate: VisionAlignmentEstimate?
     ) -> Match? {
         let contentHeight = previous.height - headerHeight - footerHeight
         guard contentHeight > 48 else { return nil }
@@ -498,7 +558,12 @@ final class LongScreenshotStitcher {
         let maxDelta = max(minDelta, contentHeight - minOverlap)
         guard maxDelta > minDelta else { return nil }
 
-        let focusedRange = focusedDeltaRange(minDelta: minDelta, maxDelta: maxDelta, expectedDeltaPixels: expectedDeltaPixels)
+        let focusedRange = focusedDeltaRange(
+            minDelta: minDelta,
+            maxDelta: maxDelta,
+            expectedDeltaPixels: expectedDeltaPixels,
+            visionEstimate: visionEstimate
+        )
         var search = searchBestMatch(
             previous: previous,
             current: current,
@@ -508,11 +573,17 @@ final class LongScreenshotStitcher {
             trailingStaticWidth: trailingStaticWidth,
             deltaRange: focusedRange ?? minDelta...maxDelta,
             expectedDeltaPixels: expectedDeltaPixels,
-            expectedDirection: expectedDirection
+            expectedDirection: expectedDirection,
+            visionEstimate: visionEstimate
         )
 
         if !isAcceptable(search?.best, expectedDeltaPixels: expectedDeltaPixels) || isAmbiguous(search, expectedDeltaPixels: expectedDeltaPixels) {
             if focusedRange != nil {
+                // Scroll-wheel deltas describe input motion, not necessarily the
+                // final viewport displacement. Recovery must be able to ignore
+                // that prior when momentum, animation, or app-specific scrolling
+                // makes it misleading.
+                let recoveryExpectedDelta = visionEstimate?.isStrong == true ? expectedDeltaPixels : nil
                 let broad = searchBestMatch(
                     previous: previous,
                     current: current,
@@ -521,8 +592,9 @@ final class LongScreenshotStitcher {
                     leadingStaticWidth: leadingStaticWidth,
                     trailingStaticWidth: trailingStaticWidth,
                     deltaRange: minDelta...maxDelta,
-                    expectedDeltaPixels: expectedDeltaPixels,
-                    expectedDirection: expectedDirection
+                    expectedDeltaPixels: recoveryExpectedDelta,
+                    expectedDirection: expectedDirection,
+                    visionEstimate: visionEstimate
                 )
                 if broad?.best.totalScore ?? .greatestFiniteMagnitude < search?.best.totalScore ?? .greatestFiniteMagnitude {
                     search = broad
@@ -536,13 +608,23 @@ final class LongScreenshotStitcher {
         return search.best
     }
 
-    private func focusedDeltaRange(minDelta: Int, maxDelta: Int, expectedDeltaPixels: Int?) -> ClosedRange<Int>? {
+    private func focusedDeltaRange(
+        minDelta: Int,
+        maxDelta: Int,
+        expectedDeltaPixels: Int?,
+        visionEstimate: VisionAlignmentEstimate?
+    ) -> ClosedRange<Int>? {
         var centers: [Int] = []
         if let expectedDeltaPixels, expectedDeltaPixels > 0 {
             centers.append(min(maxDelta, max(minDelta, expectedDeltaPixels)))
         }
         if let lastMatch {
             centers.append(min(maxDelta, max(minDelta, lastMatch.deltaY)))
+        }
+        if let visionEstimate, visionEstimate.deltaY > 0 {
+            let visionCenter = min(maxDelta, max(minDelta, visionEstimate.deltaY))
+            let weight = max(2, visionEstimate.agreementCount + 1)
+            centers.append(contentsOf: repeatElement(visionCenter, count: weight))
         }
         guard !centers.isEmpty else { return nil }
         let center = Int(round(Double(centers.reduce(0, +)) / Double(centers.count)))
@@ -559,7 +641,8 @@ final class LongScreenshotStitcher {
         trailingStaticWidth: Int,
         deltaRange: ClosedRange<Int>,
         expectedDeltaPixels: Int?,
-        expectedDirection: LongScreenshotStitchDirection?
+        expectedDirection: LongScreenshotStitchDirection?,
+        visionEstimate: VisionAlignmentEstimate?
     ) -> MatchSearchResult? {
         let contentHeight = previous.height - headerHeight - footerHeight
         let step = max(2, min(10, contentHeight / 160))
@@ -585,7 +668,13 @@ final class LongScreenshotStitcher {
                 ) else {
                     continue
                 }
-                coarseCandidates.append(makeMatch(direction: direction, deltaY: delta, metrics: metrics, expectedDeltaPixels: expectedDeltaPixels))
+                coarseCandidates.append(makeMatch(
+                    direction: direction,
+                    deltaY: delta,
+                    metrics: metrics,
+                    expectedDeltaPixels: expectedDeltaPixels,
+                    visionEstimate: visionEstimate
+                ))
             }
         }
 
@@ -607,7 +696,13 @@ final class LongScreenshotStitcher {
             ) else {
                 continue
             }
-            let match = makeMatch(direction: coarseBest.direction, deltaY: delta, metrics: metrics, expectedDeltaPixels: expectedDeltaPixels)
+            let match = makeMatch(
+                direction: coarseBest.direction,
+                deltaY: delta,
+                metrics: metrics,
+                expectedDeltaPixels: expectedDeltaPixels,
+                visionEstimate: visionEstimate
+            )
             if match.totalScore < refinedBest.totalScore {
                 refinedBest = match
             }
@@ -623,10 +718,20 @@ final class LongScreenshotStitcher {
         return MatchSearchResult(best: refinedBest, runnerUp: runnerUp)
     }
 
-    private func makeMatch(direction: LongScreenshotStitchDirection, deltaY: Int, metrics: OverlapMetrics, expectedDeltaPixels: Int?) -> Match {
+    private func makeMatch(
+        direction: LongScreenshotStitchDirection,
+        deltaY: Int,
+        metrics: OverlapMetrics,
+        expectedDeltaPixels: Int?,
+        visionEstimate: VisionAlignmentEstimate?
+    ) -> Match {
         let totalScore = metrics.averageDifference
             + consistencyPenalty(for: metrics)
-            + priorPenalty(deltaY: deltaY, expectedDeltaPixels: expectedDeltaPixels)
+            + priorPenalty(
+                deltaY: deltaY,
+                expectedDeltaPixels: expectedDeltaPixels,
+                visionEstimate: visionEstimate
+            )
         return Match(
             direction: direction,
             deltaY: deltaY,
@@ -727,21 +832,152 @@ final class LongScreenshotStitcher {
         return penalty
     }
 
-    private func priorPenalty(deltaY: Int, expectedDeltaPixels: Int?) -> Double {
+    private func priorPenalty(
+        deltaY: Int,
+        expectedDeltaPixels: Int?,
+        visionEstimate: VisionAlignmentEstimate?
+    ) -> Double {
         var penalty = 0.0
         if let expectedDeltaPixels, expectedDeltaPixels > 0 {
-            penalty += deviationPenalty(candidate: deltaY, expected: expectedDeltaPixels, weight: 18)
-            if deltaY > max(expectedDeltaPixels * 2, expectedDeltaPixels + 180) {
+            let expectedWeight = visionEstimate?.isStrong == true ? 4.0 : 18.0
+            penalty += deviationPenalty(candidate: deltaY, expected: expectedDeltaPixels, weight: expectedWeight)
+            if visionEstimate?.isStrong != true,
+               deltaY > max(expectedDeltaPixels * 2, expectedDeltaPixels + 180) {
                 penalty += 12
             }
         }
         if let lastMatch {
-            penalty += deviationPenalty(candidate: deltaY, expected: lastMatch.deltaY, weight: 16)
-            if deltaY > max(lastMatch.deltaY * 2, lastMatch.deltaY + 160) {
+            let historyWeight = visionEstimate?.isStrong == true ? 5.0 : 16.0
+            penalty += deviationPenalty(candidate: deltaY, expected: lastMatch.deltaY, weight: historyWeight)
+            if visionEstimate?.isStrong != true,
+               deltaY > max(lastMatch.deltaY * 2, lastMatch.deltaY + 160) {
                 penalty += 10
             }
         }
+        if let visionEstimate, visionEstimate.deltaY > 0 {
+            let agreementWeight = Double(max(0, visionEstimate.agreementCount - 1)) * 5
+            let spreadPenalty = Double(min(visionEstimate.spread, 12)) * 0.35
+            penalty += deviationPenalty(
+                candidate: deltaY,
+                expected: visionEstimate.deltaY,
+                weight: 24 + agreementWeight - spreadPenalty
+            )
+        }
         return penalty
+    }
+
+    private func estimateVisionAlignment(
+        previous: RasterImage,
+        current: RasterImage,
+        headerHeight: Int,
+        footerHeight: Int,
+        leadingStaticWidth: Int,
+        trailingStaticWidth: Int
+    ) -> VisionAlignmentEstimate? {
+        guard let xBounds = matchingColumnBounds(
+            width: previous.width,
+            leadingStaticWidth: leadingStaticWidth,
+            trailingStaticWidth: trailingStaticWidth
+        ) else {
+            return nil
+        }
+
+        let contentHeight = previous.height - headerHeight - footerHeight
+        guard contentHeight > 96 else { return nil }
+        let trim = min(28, max(8, contentHeight / 22))
+        let startRow = headerHeight + trim
+        let rowCount = contentHeight - trim * 2
+        guard rowCount > 72 else { return nil }
+
+        let xStart = xBounds.lowerBound
+        let xEnd = xBounds.upperBound
+        var regions: [(Int, Int, Int, Int)] = [(xStart, xEnd, startRow, rowCount)]
+        let contentWidth = xEnd - xStart
+        if contentWidth > 240 {
+            let horizontalTrim = max(16, min(44, contentWidth / 7))
+            regions.append((xStart + horizontalTrim, xEnd - horizontalTrim, startRow, rowCount))
+        }
+        if rowCount > 190 {
+            let centeredHeight = max(112, Int(Double(rowCount) * 0.68))
+            regions.append((xStart, xEnd, startRow + (rowCount - centeredHeight) / 2, centeredHeight))
+        }
+
+        let samples = regions.compactMap { region in
+            estimateVisionTranslation(
+                previous: previous,
+                current: current,
+                xStart: region.0,
+                xEnd: region.1,
+                startRow: region.2,
+                rowCount: region.3
+            )
+        }.sorted()
+        guard !samples.isEmpty else { return nil }
+
+        var bestCluster: [Int] = []
+        for sample in samples {
+            let tolerance = max(6, sample / 10)
+            let cluster = samples.filter { abs($0 - sample) <= tolerance }
+            if cluster.count > bestCluster.count {
+                bestCluster = cluster
+            }
+        }
+        let accepted = bestCluster.isEmpty ? samples : bestCluster
+        let deltaY = accepted[accepted.count / 2]
+        return VisionAlignmentEstimate(
+            deltaY: deltaY,
+            agreementCount: accepted.count,
+            spread: max(0, (accepted.last ?? deltaY) - (accepted.first ?? deltaY))
+        )
+    }
+
+    private func estimateVisionTranslation(
+        previous: RasterImage,
+        current: RasterImage,
+        xStart: Int,
+        xEnd: Int,
+        startRow: Int,
+        rowCount: Int
+    ) -> Int? {
+        guard let previousImage = previous.croppedImage(
+            xStart: xStart,
+            xEnd: xEnd,
+            startRow: startRow,
+            rowCount: rowCount
+        ), let currentImage = current.croppedImage(
+            xStart: xStart,
+            xEnd: xEnd,
+            startRow: startRow,
+            rowCount: rowCount
+        ) else {
+            return nil
+        }
+
+        let request = VNTranslationalImageRegistrationRequest(
+            targetedCGImage: currentImage,
+            options: [:],
+            completionHandler: nil
+        )
+        let handler = VNSequenceRequestHandler()
+        do {
+            try handler.perform([request], on: previousImage)
+        } catch {
+            return nil
+        }
+
+        guard let observation = request.results?.first as? VNImageTranslationAlignmentObservation else {
+            return nil
+        }
+        let transform = observation.alignmentTransform
+        let horizontalShift = abs(transform.tx)
+        let verticalShift = abs(transform.ty)
+        guard horizontalShift.isFinite, verticalShift.isFinite else { return nil }
+        guard verticalShift >= 6 else { return nil }
+        guard horizontalShift <= max(10, CGFloat(previousImage.width) * 0.03) else { return nil }
+
+        let deltaY = Int(verticalShift.rounded())
+        let maxUsefulDelta = max(18, rowCount - max(80, Int(Double(rowCount) * 0.14)))
+        return deltaY <= maxUsefulDelta ? deltaY : nil
     }
 
     private func deviationPenalty(candidate: Int, expected: Int, weight: Double) -> Double {

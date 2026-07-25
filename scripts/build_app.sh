@@ -25,6 +25,7 @@ cp "$ROOT_DIR/.build/release/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 cp "$ROOT_DIR/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
 cp "$ROOT_DIR/Resources/ShotMark.entitlements" "$RESOURCES_DIR/ShotMark.entitlements"
 cp "$ROOT_DIR/Resources/ShotMark.icns" "$RESOURCES_DIR/ShotMark.icns"
+cp "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$RESOURCES_DIR/THIRD_PARTY_NOTICES.md"
 
 clear_extended_attrs() {
   for _ in 1 2 3; do

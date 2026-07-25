@@ -11,6 +11,7 @@ final class SelectionOverlayController {
     private var windows: [NSWindow] = []
     private let frozenSnapshots: [ScreenSnapshot]
     private weak var activeSelectionView: SelectionOverlayView?
+    private var interactionEventMonitor: Any?
 
     init(frozenSnapshots: [ScreenSnapshot] = []) {
         self.frozenSnapshots = frozenSnapshots
@@ -71,6 +72,7 @@ final class SelectionOverlayController {
             view.prepareForCaptureFocus()
             return window
         }
+        installInteractionEventMonitor()
         bringWindowsToFront()
     }
 
@@ -80,6 +82,10 @@ final class SelectionOverlayController {
     }
 
     private func closeWindows() {
+        if let interactionEventMonitor {
+            NSEvent.removeMonitor(interactionEventMonitor)
+            self.interactionEventMonitor = nil
+        }
         windows.forEach {
             ($0.contentView as? SelectionOverlayView)?.closeTransientPanels()
             $0.orderOut(nil)
@@ -101,6 +107,37 @@ final class SelectionOverlayController {
         }
         view.window?.makeKeyAndOrderFront(nil)
         view.prepareForCaptureFocus()
+    }
+
+    private func installInteractionEventMonitor() {
+        if let interactionEventMonitor {
+            NSEvent.removeMonitor(interactionEventMonitor)
+        }
+        interactionEventMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]
+        ) { [weak self] event in
+            guard let self else { return event }
+            guard let eventWindow = event.window,
+                  let eventView = eventWindow.contentView as? SelectionOverlayView,
+                  self.windows.contains(where: { $0 === eventWindow }) else {
+                return event
+            }
+
+            if let activeSelectionView = self.activeSelectionView {
+                guard activeSelectionView === eventView else {
+                    if event.type == .leftMouseDown {
+                        activeSelectionView.window?.makeKeyAndOrderFront(nil)
+                        activeSelectionView.prepareForCaptureFocus()
+                    }
+                    return nil
+                }
+                return event
+            }
+
+            guard event.type == .leftMouseDown else { return nil }
+            self.activateSelectionView(eventView)
+            return event
+        }
     }
 
     private func bringWindowsToFront(preferred: NSWindow? = nil) {
@@ -671,6 +708,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             drawDimmingOverlay(excluding: selectionRect ?? hoverRect)
         }
 
+        guard !isInteractionLocked else { return }
         guard let selectionRect else {
             drawWindowCandidateDebugOverlay()
             if let hoveredWindowCandidate {

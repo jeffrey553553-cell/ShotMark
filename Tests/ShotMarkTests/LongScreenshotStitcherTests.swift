@@ -3,6 +3,62 @@ import XCTest
 @testable import ShotMark
 
 final class LongScreenshotStitcherTests: XCTestCase {
+    func testContinuousDownwardCaptureAppendsOnlyNewRows() throws {
+        let stitcher = LongScreenshotStitcher()
+        let offsets = [200, 280, 360, 440]
+
+        for (index, offset) in offsets.enumerated() {
+            let update = try XCTUnwrap(stitcher.append(
+                makeFrame(contentOffset: offset),
+                expectedDeltaPixels: index == 0 ? nil : 80,
+                expectedDirection: index == 0 ? nil : .downward
+            ))
+            if index > 0 {
+                guard case .appended(let deltaY) = update.outcome else {
+                    return XCTFail("Expected frame \(index) to append, got \(update.outcome)")
+                }
+                XCTAssertEqual(deltaY, 80)
+            }
+        }
+
+        XCTAssertEqual(stitcher.acceptedFrameCount, 4)
+        XCTAssertEqual(stitcher.outputHeight, 440)
+    }
+
+    func testVisionRecoveryHandlesMisleadingScrollDistance() throws {
+        let stitcher = LongScreenshotStitcher()
+        _ = try XCTUnwrap(stitcher.append(makeFrame(contentOffset: 200)))
+
+        let update = try XCTUnwrap(stitcher.append(
+            makeFrame(contentOffset: 280),
+            expectedDeltaPixels: 18,
+            expectedDirection: .downward
+        ))
+
+        guard case .appended(let deltaY) = update.outcome else {
+            return XCTFail("Expected Vision-assisted recovery, got \(update.outcome)")
+        }
+        XCTAssertEqual(deltaY, 80)
+        XCTAssertEqual(update.outputHeight, 280)
+    }
+
+    func testIdenticalFrameDoesNotGrowOutput() throws {
+        let stitcher = LongScreenshotStitcher()
+        let frame = try makeFrame(contentOffset: 200)
+        _ = try XCTUnwrap(stitcher.append(frame))
+        let duplicate = try XCTUnwrap(stitcher.append(
+            frame,
+            expectedDeltaPixels: 60,
+            expectedDirection: .downward
+        ))
+
+        guard case .ignoredNoMovement = duplicate.outcome else {
+            return XCTFail("Expected duplicate frame to be ignored, got \(duplicate.outcome)")
+        }
+        XCTAssertEqual(duplicate.acceptedFrameCount, 1)
+        XCTAssertEqual(duplicate.outputHeight, 240)
+    }
+
     func testReverseScrollingDoesNotDuplicateCoveredContent() throws {
         let stitcher = LongScreenshotStitcher()
 
