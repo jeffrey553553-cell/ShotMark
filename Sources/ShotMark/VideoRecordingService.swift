@@ -45,7 +45,6 @@ final class VideoRecordingService: NSObject, SCRecordingOutputDelegate {
 
     func start(
         selection: CaptureSelection,
-        quality: VideoQualityPreset,
         audioMode: VideoAudioMode,
         outputURL: URL,
         completion: @escaping (Result<URL, Error>) -> Void
@@ -76,7 +75,7 @@ final class VideoRecordingService: NSObject, SCRecordingOutputDelegate {
             recordingOutputConfiguration.videoCodecType = .h264
 
             let recordingOutput = SCRecordingOutput(configuration: recordingOutputConfiguration, delegate: self)
-            let streamConfiguration = self.streamConfiguration(for: selection, quality: quality, audioMode: audioMode)
+            let streamConfiguration = self.streamConfiguration(for: selection, audioMode: audioMode)
             let filter: SCContentFilter
             if let currentApplication = content?.applications.first(where: { $0.processID == getpid() }) {
                 filter = SCContentFilter(
@@ -189,10 +188,9 @@ final class VideoRecordingService: NSObject, SCRecordingOutputDelegate {
 
     private func streamConfiguration(
         for selection: CaptureSelection,
-        quality: VideoQualityPreset,
         audioMode: VideoAudioMode
     ) -> SCStreamConfiguration {
-        let outputSize = quality.outputPixelSize(for: selection)
+        let outputSize = Self.nativeOutputPixelSize(for: selection)
         let configuration = SCStreamConfiguration()
         configuration.width = Int(outputSize.width)
         configuration.height = Int(outputSize.height)
@@ -210,6 +208,10 @@ final class VideoRecordingService: NSObject, SCRecordingOutputDelegate {
         configuration.captureResolution = .best
         configuration.shouldBeOpaque = true
         return configuration
+    }
+
+    static func nativeOutputPixelSize(for selection: CaptureSelection) -> CGSize {
+        selection.nativePixelSize
     }
 
     private func sourceRect(for selection: CaptureSelection) -> CGRect {

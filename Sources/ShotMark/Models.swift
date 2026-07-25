@@ -5,6 +5,13 @@ import Foundation
 struct CaptureSelection {
     let rectInScreen: CGRect
     let screen: NSScreen
+
+    var nativePixelSize: CGSize {
+        CGSize(
+            width: rectInScreen.width * screen.backingScaleFactor,
+            height: rectInScreen.height * screen.backingScaleFactor
+        ).evenPixelSize
+    }
 }
 
 struct ScreenSnapshot {
@@ -18,7 +25,7 @@ enum CaptureCommitAction {
     case copyToClipboard
     case saveToFile
     case pinToScreen
-    case recordVideo(quality: VideoQualityPreset, audioMode: VideoAudioMode)
+    case recordVideo(audioMode: VideoAudioMode)
     case longScreenshot
 }
 
@@ -47,45 +54,6 @@ enum VideoAudioMode: String, CaseIterable {
 
     var requiresMicrophonePermission: Bool {
         capturesMicrophone
-    }
-}
-
-enum VideoQualityPreset: String, CaseIterable {
-    case native
-    case p720
-    case p1080
-    case p2k
-
-    var title: String {
-        switch self {
-        case .native: "原生"
-        case .p720: "720p"
-        case .p1080: "1080p"
-        case .p2k: "2K"
-        }
-    }
-
-    var maxLongEdge: CGFloat? {
-        switch self {
-        case .native: nil
-        case .p720: 1280
-        case .p1080: 1920
-        case .p2k: 2560
-        }
-    }
-
-    func outputPixelSize(for selection: CaptureSelection) -> CGSize {
-        let nativeSize = CGSize(
-            width: selection.rectInScreen.width * selection.screen.backingScaleFactor,
-            height: selection.rectInScreen.height * selection.screen.backingScaleFactor
-        )
-        guard let maxLongEdge else {
-            return nativeSize.evenPixelSize
-        }
-
-        let longEdge = max(nativeSize.width, nativeSize.height)
-        let scale = longEdge > 0 ? min(1, maxLongEdge / longEdge) : 1
-        return CGSize(width: nativeSize.width * scale, height: nativeSize.height * scale).evenPixelSize
     }
 }
 

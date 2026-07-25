@@ -98,9 +98,9 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
     func selectionOverlayController(_ controller: SelectionOverlayController, didCommit selection: CaptureSelection, frozenCapture: CaptureResult?, annotations: [Annotation], action: CaptureCommitAction) {
         overlayController = nil
         switch action {
-        case .recordVideo(let quality, let audioMode):
+        case .recordVideo(let audioMode):
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
-                self?.startRecording(selection: selection, quality: quality, audioMode: audioMode)
+                self?.startRecording(selection: selection, audioMode: audioMode)
             }
         case .longScreenshot:
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
@@ -254,7 +254,7 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
         controller.start()
     }
 
-    private func startRecording(selection: CaptureSelection, quality: VideoQualityPreset, audioMode: VideoAudioMode) {
+    private func startRecording(selection: CaptureSelection, audioMode: VideoAudioMode) {
         guard case .idle = recordingState else { return }
 
         guard !audioMode.requiresMicrophonePermission else {
@@ -262,7 +262,7 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
                 DispatchQueue.main.async {
                     guard let self else { return }
                     if isGranted {
-                        self.startRecordingAfterPermissionCheck(selection: selection, quality: quality, audioMode: audioMode)
+                        self.startRecordingAfterPermissionCheck(selection: selection, audioMode: audioMode)
                     } else {
                         self.showMicrophonePermissionHelp()
                     }
@@ -271,10 +271,10 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
             return
         }
 
-        startRecordingAfterPermissionCheck(selection: selection, quality: quality, audioMode: audioMode)
+        startRecordingAfterPermissionCheck(selection: selection, audioMode: audioMode)
     }
 
-    private func startRecordingAfterPermissionCheck(selection: CaptureSelection, quality: VideoQualityPreset, audioMode: VideoAudioMode) {
+    private func startRecordingAfterPermissionCheck(selection: CaptureSelection, audioMode: VideoAudioMode) {
         guard case .idle = recordingState else { return }
 
         recordingState = .starting
@@ -290,7 +290,7 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
             self?.recordingState = .idle
             self?.showError(error, title: "录制失败")
         }
-        videoRecordingService.start(selection: selection, quality: quality, audioMode: audioMode, outputURL: outputURL) { [weak self] result in
+        videoRecordingService.start(selection: selection, audioMode: audioMode, outputURL: outputURL) { [weak self] result in
             guard let self else { return }
             switch result {
             case .success:

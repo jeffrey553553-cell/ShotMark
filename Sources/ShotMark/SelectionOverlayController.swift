@@ -235,7 +235,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private enum OverlayButton: CaseIterable {
-        case callout, rectangle, arrow, number, text, mosaic, ocr, pin, longScreenshot, record, recordQuality, undo, redo, delete, copy, save, cancel
+        case callout, rectangle, arrow, number, text, mosaic, ocr, pin, longScreenshot, record, undo, redo, delete, copy, save, cancel
 
         var title: String {
             switch self {
@@ -249,7 +249,6 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             case .pin: "P"
             case .longScreenshot: "长"
             case .record: "录制"
-            case .recordQuality: "▾"
             case .undo: "↶"
             case .redo: "↷"
             case .delete: "⌫"
@@ -271,7 +270,6 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             case .pin: "pin"
             case .longScreenshot: nil
             case .record: "record.circle"
-            case .recordQuality: "chevron.down"
             case .undo: "arrow.uturn.backward"
             case .redo: "arrow.uturn.forward"
             case .delete: "trash"
@@ -306,7 +304,6 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private var ocrPanelController: OCRResultPanelController?
     private var ocrDismissEventMonitor: Any?
     private var isOCRBusy = false
-    private var selectedVideoQuality: VideoQualityPreset = .p1080
     private var selectedAudioMode: VideoAudioMode = .none
     private var mosaicBlockSize: CGFloat = 12
     private var undoStack: [EditSnapshot] = []
@@ -316,8 +313,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private var pendingTextEditIndex: Int?
     private var pendingTextEditStart: CGPoint?
     private var pendingTextEditDidMove = false
-    private var isVideoQualityMenuOpen = false
-    private var hoveredVideoQuality: VideoQualityPreset?
+    private var isRecordingMenuOpen = false
     private var hoveredAudioMode: VideoAudioMode?
     private var hoveredButton: OverlayButton?
     private var shortcutMenuButton: OverlayButton?
@@ -520,11 +516,11 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                 return
             }
 
-            if handleVideoQualityMenuClick(at: point, selectionRect: selectionRect) {
+            if handleRecordingMenuClick(at: point, selectionRect: selectionRect) {
                 return
             }
-            if isVideoQualityMenuOpen {
-                isVideoQualityMenuOpen = false
+            if isRecordingMenuOpen {
+                isRecordingMenuOpen = false
                 needsDisplay = true
             }
 
@@ -764,7 +760,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         drawDimensionBadge(for: selectionRect)
         drawToolbar(for: selectionRect)
         drawStylePanel(for: selectionRect)
-        drawVideoQualityMenu(for: selectionRect)
+        drawRecordingMenu(for: selectionRect)
         drawToolbarTooltip(for: selectionRect)
         drawShortcutLetterMenu(for: selectionRect)
         drawSelectionMagnifierIfNeeded()
@@ -1218,9 +1214,6 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                 drawRecordButtonGroup(for: rect)
                 continue
             }
-            if button == .recordQuality {
-                continue
-            }
 
             let highlighted = tool(for: button).map { $0 == selectedTool } ?? false
             drawButton(
@@ -1254,9 +1247,6 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         if button == .ocr, isOCRBusy {
             return "OCR..."
         }
-        if button == .record {
-            return "录制 \(selectedVideoQuality.title)"
-        }
         return button.title
     }
 
@@ -1268,8 +1258,6 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             return !redoStack.isEmpty
         case .delete:
             return selectedAnnotationIndex.map { annotations.indices.contains($0) } ?? false
-        case .recordQuality:
-            return false
         default:
             return true
         }
@@ -1360,37 +1348,11 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         NSBezierPath(ovalIn: knob).fill()
     }
 
-    private func drawVideoQualityMenu(for rect: CGRect) {
-        guard isVideoQualityMenuOpen, let panel = videoQualityMenuFrame(for: rect) else { return }
+    private func drawRecordingMenu(for rect: CGRect) {
+        guard isRecordingMenuOpen, let panel = recordingMenuFrame(for: rect) else { return }
 
         drawFloatingPanelBackground(in: panel, radius: 12, alpha: 0.86)
-
-        drawMenuSectionTitle("清晰度", at: CGPoint(x: panel.minX + 14, y: panel.maxY - 25))
-        for (index, quality) in VideoQualityPreset.allCases.enumerated() {
-            let row = videoQualityOptionFrame(index: index, in: panel)
-            if quality == hoveredVideoQuality {
-                NSColor.white.withAlphaComponent(0.12).setFill()
-                NSBezierPath(roundedRect: row.insetBy(dx: 6, dy: 4), xRadius: 7, yRadius: 7).fill()
-            }
-
-            let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
-                .foregroundColor: NSColor.white
-            ]
-            let title = videoQualityTitle(quality, for: rect)
-            let size = title.size(withAttributes: attributes)
-            title.draw(at: CGPoint(x: row.minX + 14, y: row.midY - size.height / 2), withAttributes: attributes)
-        }
-
-        let dividerY = panel.maxY - 34 - CGFloat(VideoQualityPreset.allCases.count) * 30 - 8
-        NSColor.white.withAlphaComponent(0.10).setStroke()
-        let divider = NSBezierPath()
-        divider.move(to: CGPoint(x: panel.minX + 12, y: dividerY))
-        divider.line(to: CGPoint(x: panel.maxX - 12, y: dividerY))
-        divider.lineWidth = 1
-        divider.stroke()
-
-        drawMenuSectionTitle("音频", at: CGPoint(x: panel.minX + 14, y: dividerY - 24))
+        drawMenuSectionTitle("选择音频并开始录制", at: CGPoint(x: panel.minX + 14, y: panel.maxY - 25))
         for (index, audioMode) in VideoAudioMode.allCases.enumerated() {
             let row = audioModeOptionFrame(index: index, in: panel)
             if audioMode == selectedAudioMode {
@@ -1423,7 +1385,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     private func drawRecordButtonGroup(for rect: CGRect) {
         let mainFrame = buttonFrame(.record, for: rect)
-        if isVideoQualityMenuOpen {
+        if isRecordingMenuOpen {
             NSColor.white.withAlphaComponent(0.12).setFill()
             NSBezierPath(roundedRect: mainFrame, xRadius: 10, yRadius: 10).fill()
         }
@@ -1486,24 +1448,17 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         return true
     }
 
-    private func handleVideoQualityMenuClick(at point: CGPoint, selectionRect: CGRect) -> Bool {
-        guard isVideoQualityMenuOpen, let panel = videoQualityMenuFrame(for: selectionRect), panel.contains(point) else {
+    private func handleRecordingMenuClick(at point: CGPoint, selectionRect: CGRect) -> Bool {
+        guard isRecordingMenuOpen, let panel = recordingMenuFrame(for: selectionRect), panel.contains(point) else {
             return false
         }
 
         for (index, audioMode) in VideoAudioMode.allCases.enumerated()
             where audioModeOptionFrame(index: index, in: panel).contains(point) {
             selectedAudioMode = audioMode
-            needsDisplay = true
-            return true
-        }
-
-        for (index, quality) in VideoQualityPreset.allCases.enumerated()
-            where videoQualityOptionFrame(index: index, in: panel).contains(point) {
-            selectedVideoQuality = quality
-            isVideoQualityMenuOpen = false
+            isRecordingMenuOpen = false
             shortcutMenuButton = nil
-            commitSelection(.recordVideo(quality: quality, audioMode: selectedAudioMode))
+            commitSelection(.recordVideo(audioMode: audioMode))
             return true
         }
 
@@ -1559,13 +1514,13 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         CGRect(x: panel.minX + 74, y: panel.maxY - 82, width: 38, height: 18)
     }
 
-    private func videoQualityMenuFrame(for rect: CGRect) -> CGRect? {
+    private func recordingMenuFrame(for rect: CGRect) -> CGRect? {
         let bar = toolbarFrame(for: rect)
-        let qualityButton = buttonFrame(.record, for: rect)
-        let size = CGSize(width: 174, height: 326)
+        let recordButton = buttonFrame(.record, for: rect)
+        let size = CGSize(width: 196, height: 166)
         let spacing: CGFloat = 8
         let toolbarIsAboveSelection = bar.minY >= rect.maxY
-        var origin = CGPoint(x: qualityButton.maxX - size.width, y: 0)
+        var origin = CGPoint(x: recordButton.maxX - size.width, y: 0)
 
         if toolbarIsAboveSelection {
             origin.y = bar.maxY + spacing
@@ -1583,31 +1538,13 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         return CGRect(origin: origin, size: size)
     }
 
-    private func videoQualityOptionFrame(index: Int, in panel: CGRect) -> CGRect {
-        CGRect(
+    private func audioModeOptionFrame(index: Int, in panel: CGRect) -> CGRect {
+        return CGRect(
             x: panel.minX,
             y: panel.maxY - 34 - CGFloat(index + 1) * 30,
             width: panel.width,
             height: 30
         )
-    }
-
-    private func audioModeOptionFrame(index: Int, in panel: CGRect) -> CGRect {
-        let top = panel.maxY - 34 - CGFloat(VideoQualityPreset.allCases.count) * 30 - 42
-        return CGRect(
-            x: panel.minX,
-            y: top - CGFloat(index + 1) * 30,
-            width: panel.width,
-            height: 30
-        )
-    }
-
-    private func videoQualityTitle(_ quality: VideoQualityPreset, for selectionRect: CGRect) -> String {
-        guard quality == .native, let selection = captureSelection(for: selectionRect) else {
-            return quality.title
-        }
-        let size = quality.outputPixelSize(for: selection)
-        return "\(quality.title) (\(Int(size.width)) x \(Int(size.height)))"
     }
 
     private func captureSelection(for selectionRect: CGRect) -> CaptureSelection? {
@@ -2058,23 +1995,21 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             case .mosaic:
                 selectTool(.mosaic)
             case .ocr:
-                isVideoQualityMenuOpen = false
+                isRecordingMenuOpen = false
                 runOCR()
             case .pin:
-                isVideoQualityMenuOpen = false
+                isRecordingMenuOpen = false
                 commitSelection(.pinToScreen)
             case .longScreenshot:
-                isVideoQualityMenuOpen = false
+                isRecordingMenuOpen = false
                 commitSelection(.longScreenshot)
             case .record:
                 closeTransientPanels()
                 selectedTool = nil
                 selectedAnnotationIndex = nil
                 shortcutMenuButton = nil
-                isVideoQualityMenuOpen.toggle()
+                isRecordingMenuOpen.toggle()
                 needsDisplay = true
-            case .recordQuality:
-                break
             case .undo:
                 undoEdit()
             case .redo:
@@ -2082,10 +2017,10 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             case .delete:
                 deleteSelectedAnnotation()
             case .copy:
-                isVideoQualityMenuOpen = false
+                isRecordingMenuOpen = false
                 commitSelection(.copyToClipboard)
             case .save:
-                isVideoQualityMenuOpen = false
+                isRecordingMenuOpen = false
                 commitSelection(.saveToFile)
             case .cancel:
                 closeTransientPanels()
@@ -2097,7 +2032,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private func selectTool(_ tool: AnnotationTool, toggles: Bool = true) {
-        isVideoQualityMenuOpen = false
+        isRecordingMenuOpen = false
         shortcutMenuButton = nil
         if toggles, selectedTool == tool {
             selectedTool = nil
@@ -2135,24 +2070,19 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private func updateRecordingMenuHover(at point: CGPoint, selectionRect: CGRect) {
-        guard isVideoQualityMenuOpen, let panel = videoQualityMenuFrame(for: selectionRect), panel.contains(point) else {
-            if hoveredVideoQuality != nil || hoveredAudioMode != nil {
-                hoveredVideoQuality = nil
+        guard isRecordingMenuOpen, let panel = recordingMenuFrame(for: selectionRect), panel.contains(point) else {
+            if hoveredAudioMode != nil {
                 hoveredAudioMode = nil
                 needsDisplay = true
             }
             return
         }
 
-        let nextQuality = VideoQualityPreset.allCases.enumerated().first {
-            videoQualityOptionFrame(index: $0.offset, in: panel).contains(point)
-        }?.element
         let nextAudioMode = VideoAudioMode.allCases.enumerated().first {
             audioModeOptionFrame(index: $0.offset, in: panel).contains(point)
         }?.element
 
-        if hoveredVideoQuality != nextQuality || hoveredAudioMode != nextAudioMode {
-            hoveredVideoQuality = nextQuality
+        if hoveredAudioMode != nextAudioMode {
             hoveredAudioMode = nextAudioMode
             needsDisplay = true
         }
@@ -2190,8 +2120,6 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             return "长截图"
         case .record:
             return "录制视频"
-        case .recordQuality:
-            return "选择清晰度"
         case .undo:
             return "撤销"
         case .redo:
@@ -2241,8 +2169,6 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             return "Cmd+Shift+Z / Cmd+Y"
         case .delete:
             return "Delete"
-        case .recordQuality:
-            return "未设置"
         case .copy:
             return "Enter / Cmd+C"
         case .save:
@@ -2378,7 +2304,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             return "SPACE"
         case .cancel:
             return "ESCAPE"
-        case .recordQuality, .undo, .redo, .delete:
+        case .undo, .redo, .delete:
             return nil
         }
     }
@@ -2411,13 +2337,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             closeTransientPanels()
             selectedTool = nil
             selectedAnnotationIndex = nil
-            isVideoQualityMenuOpen.toggle()
-            needsDisplay = true
-        case .recordQuality:
-            closeTransientPanels()
-            selectedTool = nil
-            selectedAnnotationIndex = nil
-            isVideoQualityMenuOpen.toggle()
+            isRecordingMenuOpen.toggle()
             needsDisplay = true
         case .undo:
             undoEdit()
@@ -2442,7 +2362,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         else { return false }
 
         shortcutMenuButton = hoveredButton
-        isVideoQualityMenuOpen = false
+        isRecordingMenuOpen = false
         needsDisplay = true
         return true
     }
@@ -2504,9 +2424,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private func toolbarSize() -> CGSize {
-        let visibleButtons = OverlayButton.allCases.filter { $0 != .recordQuality }
-        let contentWidth = visibleButtons.reduce(CGFloat.zero) { $0 + buttonWidth($1) }
-        let spacing = CGFloat(max(0, visibleButtons.count - 1)) * toolbarButtonSpacing()
+        let contentWidth = OverlayButton.allCases.reduce(CGFloat.zero) { $0 + buttonWidth($1) }
+        let spacing = CGFloat(max(0, OverlayButton.allCases.count - 1)) * toolbarButtonSpacing()
         return CGSize(width: ceil(toolbarHorizontalPadding() * 2 + contentWidth + spacing), height: 40)
     }
 
@@ -2529,13 +2448,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                 if button == .record {
                     return CGRect(x: x, y: y, width: buttonWidth(.record), height: 30)
                 }
-                if button == .recordQuality {
-                    return .zero
-                }
                 x += buttonWidth(.record) + toolbarButtonSpacing()
-                continue
-            }
-            if current == .recordQuality {
                 continue
             }
 
@@ -2553,8 +2466,6 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         switch button {
         case .rectangle, .arrow, .number, .callout, .text, .mosaic, .ocr, .pin, .longScreenshot, .record, .undo, .redo, .delete, .copy, .save, .cancel:
             return 32
-        case .recordQuality:
-            return 0
         }
     }
 
@@ -2574,7 +2485,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         case .callout: .callout
         case .mosaic: .mosaic
         case .text: .text
-        case .ocr, .pin, .longScreenshot, .record, .recordQuality, .undo, .redo, .delete, .copy, .save, .cancel: nil
+        case .ocr, .pin, .longScreenshot, .record, .undo, .redo, .delete, .copy, .save, .cancel: nil
         }
     }
 
@@ -2954,7 +2865,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     func closeTransientPanels() {
-        isVideoQualityMenuOpen = false
+        isRecordingMenuOpen = false
         removeOCRDismissEventMonitor()
         ocrPanelController?.close()
         ocrPanelController = nil
