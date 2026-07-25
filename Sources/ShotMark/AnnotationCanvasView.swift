@@ -23,7 +23,10 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
 
     private enum CanvasDrag {
         case drawingRectangle(start: CGPoint, current: CGPoint)
+        case drawingEllipse(start: CGPoint, current: CGPoint)
         case drawingArrow(start: CGPoint, current: CGPoint)
+        case drawingFreehand(points: [CGPoint])
+        case drawingHighlighter(points: [CGPoint])
         case drawingCallout(start: CGPoint, current: CGPoint)
         case drawingMosaic(start: CGPoint, current: CGPoint)
         case movingAnnotation(index: Int, lastPoint: CGPoint)
@@ -73,8 +76,20 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             onToolShortcut?(.rectangle)
             return
         }
+        if !command, event.charactersIgnoringModifiers?.lowercased() == "e" {
+            onToolShortcut?(.ellipse)
+            return
+        }
         if !command, event.charactersIgnoringModifiers == "3" {
             onToolShortcut?(.arrow)
+            return
+        }
+        if !command, event.charactersIgnoringModifiers?.lowercased() == "p" {
+            onToolShortcut?(.pen)
+            return
+        }
+        if !command, event.charactersIgnoringModifiers?.lowercased() == "h" {
+            onToolShortcut?(.highlighter)
             return
         }
         if !command, event.charactersIgnoringModifiers == "4" {
@@ -125,8 +140,14 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         switch selectedTool {
         case .rectangle:
             activeDrag = .drawingRectangle(start: point, current: point)
+        case .ellipse:
+            activeDrag = .drawingEllipse(start: point, current: point)
         case .arrow:
             activeDrag = .drawingArrow(start: point, current: point)
+        case .pen:
+            activeDrag = .drawingFreehand(points: [point])
+        case .highlighter:
+            activeDrag = .drawingHighlighter(points: [point])
         case .callout:
             activeDrag = .drawingCallout(start: point, current: point)
         case .mosaic:
@@ -145,9 +166,26 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         let point = convert(event.locationInWindow, from: nil)
         switch activeDrag {
         case .drawingRectangle(let start, _):
-            activeDrag = .drawingRectangle(start: start, current: point)
+            let current = event.modifierFlags.contains(.shift)
+                ? AnnotationConstraintGeometry.squareEndpoint(from: start, to: point)
+                : point
+            activeDrag = .drawingRectangle(start: start, current: current)
+        case .drawingEllipse(let start, _):
+            let current = event.modifierFlags.contains(.shift)
+                ? AnnotationConstraintGeometry.squareEndpoint(from: start, to: point)
+                : point
+            activeDrag = .drawingEllipse(start: start, current: current)
         case .drawingArrow(let start, _):
-            activeDrag = .drawingArrow(start: start, current: point)
+            let current = event.modifierFlags.contains(.shift)
+                ? AnnotationConstraintGeometry.snappedLineEndpoint(from: start, to: point)
+                : point
+            activeDrag = .drawingArrow(start: start, current: current)
+        case .drawingFreehand(var points):
+            appendPathPoint(point, to: &points)
+            activeDrag = .drawingFreehand(points: points)
+        case .drawingHighlighter(var points):
+            appendPathPoint(point, to: &points)
+            activeDrag = .drawingHighlighter(points: points)
         case .drawingCallout(let start, _):
             activeDrag = .drawingCallout(start: start, current: point)
         case .drawingMosaic(let start, _):
@@ -171,14 +209,29 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
     override func mouseUp(with event: NSEvent) {
         let end = convert(event.locationInWindow, from: nil)
         switch activeDrag {
-        case .drawingRectangle(let start, _):
-            let rect = normalizedRect(from: start, to: end)
+        case .drawingRectangle(let start, let current):
+            let rect = normalizedRect(from: start, to: current)
             if rect.width > 4, rect.height > 4 {
                 state.add(.rectangle(rect: rect, color: .systemRed, lineWidth: 3, filled: false))
             }
-        case .drawingArrow(let start, _):
-            if hypot(end.x - start.x, end.y - start.y) > 4 {
-                state.add(.arrow(start: start, end: end, color: .systemRed, lineWidth: 4))
+        case .drawingEllipse(let start, let current):
+            let rect = normalizedRect(from: start, to: current)
+            if rect.width > 4, rect.height > 4 {
+                state.add(.ellipse(rect: rect, color: .systemRed, lineWidth: 3, filled: false))
+            }
+        case .drawingArrow(let start, let current):
+            if hypot(current.x - start.x, current.y - start.y) > 4 {
+                state.add(.arrow(start: start, end: current, color: .systemRed, lineWidth: 4))
+            }
+        case .drawingFreehand(var points):
+            appendPathPoint(end, to: &points, minimumDistance: 0.01)
+            if points.count > 1 {
+                state.add(.freehand(points: points, color: .systemRed, lineWidth: 3))
+            }
+        case .drawingHighlighter(var points):
+            appendPathPoint(end, to: &points, minimumDistance: 0.01)
+            if points.count > 1 {
+                state.add(.highlighter(points: points, color: .systemYellow.withAlphaComponent(0.35), lineWidth: 16))
             }
         case .drawingCallout(let start, _):
             let rect = normalizedRect(from: start, to: end)
@@ -221,8 +274,14 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         switch activeDrag {
         case .drawingRectangle(let start, let current):
             AnnotationDrawing.draw([.rectangle(rect: normalizedRect(from: start, to: current), color: .systemRed, lineWidth: 3, filled: false)], in: state.capture.imagePointSize)
+        case .drawingEllipse(let start, let current):
+            AnnotationDrawing.draw([.ellipse(rect: normalizedRect(from: start, to: current), color: .systemRed, lineWidth: 3, filled: false)], in: state.capture.imagePointSize)
         case .drawingArrow(let start, let current):
             AnnotationDrawing.draw([.arrow(start: start, end: current, color: .systemRed, lineWidth: 4)], in: state.capture.imagePointSize)
+        case .drawingFreehand(let points):
+            AnnotationDrawing.draw([.freehand(points: points, color: .systemRed, lineWidth: 3)], in: state.capture.imagePointSize)
+        case .drawingHighlighter(let points):
+            AnnotationDrawing.draw([.highlighter(points: points, color: .systemYellow.withAlphaComponent(0.35), lineWidth: 16)], in: state.capture.imagePointSize)
         case .drawingCallout(let start, let current):
             AnnotationDrawing.draw([.rectangle(rect: normalizedRect(from: start, to: current), color: .systemRed, lineWidth: 3, filled: false)], in: state.capture.imagePointSize)
         case .drawingMosaic(let start, let current):
@@ -252,7 +311,7 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
     private func hitTestExistingAnnotation(at point: CGPoint) -> CanvasDrag? {
         if let selectedIndex = state.selectedAnnotationIndex, state.annotations.indices.contains(selectedIndex) {
             switch state.annotations[selectedIndex] {
-            case .rectangle(let rect, _, _, _), .mosaic(let rect, _):
+            case .rectangle(let rect, _, _, _), .ellipse(let rect, _, _, _), .mosaic(let rect, _):
                 if let handle = rectangleHandleHit(at: point, rect: rect) {
                     return .resizingRectangle(index: selectedIndex, handle: handle)
                 }
@@ -273,7 +332,7 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
                 if distance(point, arrowEnd) <= 10 {
                     return .movingArrowEndpoint(index: selectedIndex, endpoint: .end)
                 }
-            case .numberMarker, .text:
+            case .freehand, .highlighter, .numberMarker, .text:
                 break
             }
         }
@@ -293,10 +352,14 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         switch state.annotations[index] {
         case .rectangle(let rect, _, _, _), .mosaic(let rect, _):
             return rectangleBorderContains(point, rect: rect)
+        case .ellipse(let rect, _, let lineWidth, let filled):
+            return ellipseContains(point, rect: rect, lineWidth: lineWidth, filled: filled)
         case .arrow(let start, let end, _, _):
             return distanceFromPoint(point, toLineFrom: start, to: end) <= 7
                 || distance(point, start) <= 10
                 || distance(point, end) <= 10
+        case .freehand(let points, _, let lineWidth), .highlighter(let points, _, let lineWidth):
+            return AnnotationPathGeometry.contains(point, points: points, lineWidth: lineWidth)
         case .numberMarker(let center, _, _, let markerSize):
             return distance(point, center) <= max(16, markerSize + 4)
         case .text(let origin, let value, _, let fontSize):
@@ -322,15 +385,46 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         return !inner.contains(point)
     }
 
+    private func ellipseContains(
+        _ point: CGPoint,
+        rect: CGRect,
+        lineWidth: CGFloat,
+        filled: Bool
+    ) -> Bool {
+        let radiusX = rect.width / 2
+        let radiusY = rect.height / 2
+        guard radiusX > 0, radiusY > 0 else { return false }
+        let normalizedX = (point.x - rect.midX) / radiusX
+        let normalizedY = (point.y - rect.midY) / radiusY
+        let normalizedDistance = normalizedX * normalizedX + normalizedY * normalizedY
+        let tolerance = (7 + lineWidth / 2) / max(1, min(radiusX, radiusY))
+        _ = filled
+        return abs(normalizedDistance - 1) <= tolerance
+    }
+
     private func moveAnnotation(at index: Int, by delta: CGPoint) {
         guard state.annotations.indices.contains(index) else { return }
         switch state.annotations[index] {
         case .rectangle(let rect, let color, let lineWidth, let filled):
             state.annotations[index] = .rectangle(rect: rect.offsetBy(dx: delta.x, dy: delta.y), color: color, lineWidth: lineWidth, filled: filled)
+        case .ellipse(let rect, let color, let lineWidth, let filled):
+            state.annotations[index] = .ellipse(rect: rect.offsetBy(dx: delta.x, dy: delta.y), color: color, lineWidth: lineWidth, filled: filled)
         case .arrow(let start, let end, let color, let lineWidth):
             state.annotations[index] = .arrow(
                 start: CGPoint(x: start.x + delta.x, y: start.y + delta.y),
                 end: CGPoint(x: end.x + delta.x, y: end.y + delta.y),
+                color: color,
+                lineWidth: lineWidth
+            )
+        case .freehand(let points, let color, let lineWidth):
+            state.annotations[index] = .freehand(
+                points: AnnotationPathGeometry.translated(points, by: delta),
+                color: color,
+                lineWidth: lineWidth
+            )
+        case .highlighter(let points, let color, let lineWidth):
+            state.annotations[index] = .highlighter(
+                points: AnnotationPathGeometry.translated(points, by: delta),
                 color: color,
                 lineWidth: lineWidth
             )
@@ -363,7 +457,7 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         guard state.annotations.indices.contains(index) else { return }
         let rect: CGRect
         switch state.annotations[index] {
-        case .rectangle(let value, _, _, _), .mosaic(let value, _), .callout(let value, _, _, _, _, _, _, _):
+        case .rectangle(let value, _, _, _), .ellipse(let value, _, _, _), .mosaic(let value, _), .callout(let value, _, _, _, _, _, _, _):
             rect = value
         default:
             return
@@ -392,6 +486,8 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         switch state.annotations[index] {
         case .rectangle(_, let color, let lineWidth, let filled):
             state.annotations[index] = .rectangle(rect: nextRect, color: color, lineWidth: lineWidth, filled: filled)
+        case .ellipse(_, let color, let lineWidth, let filled):
+            state.annotations[index] = .ellipse(rect: nextRect, color: color, lineWidth: lineWidth, filled: filled)
         case .mosaic(_, let blockSize):
             state.annotations[index] = .mosaic(rect: nextRect, blockSize: blockSize)
         case .callout(_, let arrowStart, _, let textOrigin, let text, let color, let lineWidth, let fontSize):
@@ -448,7 +544,7 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         NSColor.controlAccentColor.setStroke()
 
         switch state.annotations[index] {
-        case .rectangle(let rect, _, _, _), .mosaic(let rect, _):
+        case .rectangle(let rect, _, _, _), .ellipse(let rect, _, _, _), .mosaic(let rect, _):
             for point in rectangleHandlePoints(rect: rect) {
                 drawHandle(at: point)
             }
@@ -459,6 +555,8 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             drawHandle(at: center)
         case .text(let origin, _, _, _):
             drawHandle(at: origin)
+        case .freehand(let points, _, let lineWidth), .highlighter(let points, _, let lineWidth):
+            drawPathSelectionBounds(points: points, lineWidth: lineWidth)
         case .callout(let targetRect, let arrowStart, let arrowEnd, let textOrigin, _, _, _, _):
             for point in rectangleHandlePoints(rect: targetRect) {
                 drawHandle(at: point)
@@ -493,6 +591,15 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         let path = NSBezierPath(ovalIn: rect)
         path.fill()
         path.lineWidth = 1.5
+        path.stroke()
+    }
+
+    private func drawPathSelectionBounds(points: [CGPoint], lineWidth: CGFloat) {
+        guard points.count > 1 else { return }
+        let rect = AnnotationPathGeometry.bounds(points: points, lineWidth: lineWidth).insetBy(dx: -4, dy: -4)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4)
+        path.lineWidth = 1
+        path.setLineDash([4, 3], count: 2, phase: 0)
         path.stroke()
     }
 
@@ -556,6 +663,20 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
 
     private func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
         hypot(a.x - b.x, a.y - b.y)
+    }
+
+    private func appendPathPoint(
+        _ point: CGPoint,
+        to points: inout [CGPoint],
+        minimumDistance: CGFloat = 1.25
+    ) {
+        guard let last = points.last else {
+            points.append(point)
+            return
+        }
+        if distance(last, point) >= minimumDistance {
+            points.append(point)
+        }
     }
 
     private func distanceFromPoint(_ point: CGPoint, toLineFrom start: CGPoint, to end: CGPoint) -> CGFloat {

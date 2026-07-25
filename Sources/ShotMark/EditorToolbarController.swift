@@ -16,7 +16,7 @@ final class EditorToolbarController: NSWindowController {
     private var buttons: [AnnotationTool: NSButton] = [:]
 
     init() {
-        let content = NSVisualEffectView(frame: CGRect(x: 0, y: 0, width: 430, height: 44))
+        let content = NSVisualEffectView(frame: CGRect(x: 0, y: 0, width: 560, height: 44))
         content.material = .hudWindow
         content.blendingMode = .behindWindow
         content.state = .active
@@ -81,7 +81,10 @@ final class EditorToolbarController: NSWindowController {
         content.addSubview(stackView)
 
         addToolButton(title: "□", tool: .rectangle, help: "框选，快捷键 1")
+        addToolButton(title: "○", tool: .ellipse, help: "椭圆，快捷键 E")
         addToolButton(title: "↗", tool: .arrow, help: "箭头，快捷键 2")
+        addToolButton(title: "✎", tool: .pen, help: "画笔，快捷键 P")
+        addToolButton(title: "▰", tool: .highlighter, help: "荧光笔，快捷键 H")
         addToolButton(title: "③", tool: .numberMarker, help: "标记序号，快捷键 3")
         addToolButton(title: "T", tool: .text, help: "文字评论，快捷键 T")
         addToolButton(title: "▦", tool: .mosaic, help: "马赛克，快捷键 5")

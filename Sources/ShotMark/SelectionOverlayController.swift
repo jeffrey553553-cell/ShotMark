@@ -225,8 +225,11 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         case movingSelection(startPoint: CGPoint, originalRect: CGRect)
         case resizingSelection(handle: RectHandle, originalRect: CGRect)
         case drawingRectangle(start: CGPoint, current: CGPoint)
+        case drawingEllipse(start: CGPoint, current: CGPoint)
         case drawingMosaic(start: CGPoint, current: CGPoint)
         case drawingArrow(start: CGPoint, current: CGPoint)
+        case drawingFreehand(points: [CGPoint])
+        case drawingHighlighter(points: [CGPoint])
         case drawingCallout(start: CGPoint, current: CGPoint)
         case movingAnnotation(index: Int, lastPoint: CGPoint)
         case resizingAnnotation(index: Int, handle: AnnotationRectHandle)
@@ -235,12 +238,15 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private enum OverlayButton: CaseIterable {
-        case callout, rectangle, arrow, number, text, mosaic, ocr, pin, longScreenshot, record, undo, redo, delete, copy, save, cancel
+        case callout, rectangle, ellipse, arrow, pen, highlighter, number, text, mosaic, ocr, pin, longScreenshot, record, undo, redo, delete, copy, save, cancel
 
         var title: String {
             switch self {
             case .rectangle: "R"
+            case .ellipse: "E"
             case .arrow: "A"
+            case .pen: "P"
+            case .highlighter: "H"
             case .number: "3"
             case .callout: "评"
             case .text: "T"
@@ -261,7 +267,10 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         var symbolName: String? {
             switch self {
             case .rectangle: "rectangle"
+            case .ellipse: "circle"
             case .arrow: "arrow.up.right"
+            case .pen: "pencil.tip"
+            case .highlighter: "highlighter"
             case .number: "3.circle"
             case .callout: "text.bubble"
             case .text: nil
@@ -362,7 +371,10 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         return letters + digits + symbols + special + functionKeys
     }()
     private var rectangleStyle = ToolStyle(color: .systemRed, size: 3, opacity: 1)
+    private var ellipseStyle = ToolStyle(color: .systemRed, size: 3, opacity: 1)
     private var arrowStyle = ToolStyle(color: .systemRed, size: 4, opacity: 1)
+    private var penStyle = ToolStyle(color: .systemRed, size: 3, opacity: 1)
+    private var highlighterStyle = ToolStyle(color: .systemYellow, size: 16, opacity: 0.35)
     private var numberMarkerStyle = ToolStyle(color: .systemRed, size: 13, opacity: 1)
     private var textStyle = ToolStyle(color: .systemRed, size: 18, opacity: 1)
     private let textInputMinSize = CGSize(width: 80, height: 28)
@@ -648,12 +660,29 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         case .resizingSelection(let handle, let originalRect):
             setSelectionRect(clamped(resized(originalRect, handle: handle, to: point)), keepingAnnotationsStationary: true)
         case .drawingRectangle(let start, _):
-            dragMode = .drawingRectangle(start: start, current: relative)
+            let current = event.modifierFlags.contains(.shift)
+                ? AnnotationConstraintGeometry.squareEndpoint(from: start, to: relative)
+                : relative
+            dragMode = .drawingRectangle(start: start, current: current)
+        case .drawingEllipse(let start, _):
+            let current = event.modifierFlags.contains(.shift)
+                ? AnnotationConstraintGeometry.squareEndpoint(from: start, to: relative)
+                : relative
+            dragMode = .drawingEllipse(start: start, current: current)
         case .drawingMosaic(let start, _):
             dragMode = .drawingMosaic(start: start, current: relative)
             requestMosaicPreviewCaptureIfNeeded()
         case .drawingArrow(let start, _):
-            dragMode = .drawingArrow(start: start, current: relative)
+            let current = event.modifierFlags.contains(.shift)
+                ? AnnotationConstraintGeometry.snappedLineEndpoint(from: start, to: relative)
+                : relative
+            dragMode = .drawingArrow(start: start, current: current)
+        case .drawingFreehand(var points):
+            appendPathPoint(relative, to: &points)
+            dragMode = .drawingFreehand(points: points)
+        case .drawingHighlighter(var points):
+            appendPathPoint(relative, to: &points)
+            dragMode = .drawingHighlighter(points: points)
         case .drawingCallout(let start, _):
             dragMode = .drawingCallout(start: start, current: relative)
         case .movingAnnotation(let index, let lastPoint):
@@ -689,10 +718,15 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             if let candidate {
                 selectWindowCandidate(candidate)
             }
-        case .drawingRectangle(let start, _):
-            let rect = normalizedRect(from: start, to: point)
+        case .drawingRectangle(let start, let current):
+            let rect = normalizedRect(from: start, to: current)
             if rect.width > 4, rect.height > 4 {
                 add(.rectangle(rect: rect, color: effectiveColor(rectangleStyle), lineWidth: rectangleStyle.size, filled: rectangleStyle.filled))
+            }
+        case .drawingEllipse(let start, let current):
+            let rect = normalizedRect(from: start, to: current)
+            if rect.width > 4, rect.height > 4 {
+                add(.ellipse(rect: rect, color: effectiveColor(ellipseStyle), lineWidth: ellipseStyle.size, filled: ellipseStyle.filled))
             }
         case .drawingMosaic(let start, _):
             let rect = normalizedRect(from: start, to: point)
@@ -700,9 +734,19 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                 add(.mosaic(rect: rect, blockSize: mosaicBlockSize))
                 requestMosaicPreviewCaptureIfNeeded()
             }
-        case .drawingArrow(let start, _):
-            if hypot(point.x - start.x, point.y - start.y) > 4 {
-                add(.arrow(start: start, end: point, color: effectiveColor(arrowStyle), lineWidth: arrowStyle.size))
+        case .drawingArrow(let start, let current):
+            if hypot(current.x - start.x, current.y - start.y) > 4 {
+                add(.arrow(start: start, end: current, color: effectiveColor(arrowStyle), lineWidth: arrowStyle.size))
+            }
+        case .drawingFreehand(var points):
+            appendPathPoint(point, to: &points, minimumDistance: 0.01)
+            if points.count > 1 {
+                add(.freehand(points: points, color: effectiveColor(penStyle), lineWidth: penStyle.size))
+            }
+        case .drawingHighlighter(var points):
+            appendPathPoint(point, to: &points, minimumDistance: 0.01)
+            if points.count > 1 {
+                add(.highlighter(points: points, color: effectiveColor(highlighterStyle), lineWidth: highlighterStyle.size))
             }
         case .drawingCallout(let start, _):
             let rect = normalizedRect(from: start, to: point)
@@ -819,8 +863,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         switch dragMode {
         case .pendingInitialSelection, .drawingSelection, .resizingSelection:
             return true
-        case .movingSelection, .drawingRectangle, .drawingMosaic, .drawingArrow,
-             .drawingCallout, .movingAnnotation, .resizingAnnotation,
+        case .movingSelection, .drawingRectangle, .drawingEllipse, .drawingMosaic, .drawingArrow,
+             .drawingFreehand, .drawingHighlighter, .drawingCallout, .movingAnnotation, .resizingAnnotation,
              .movingArrowEndpoint, .adjustingStyle, nil:
             return false
         }
@@ -905,8 +949,14 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         switch tool {
         case .rectangle:
             dragMode = .drawingRectangle(start: point, current: point)
+        case .ellipse:
+            dragMode = .drawingEllipse(start: point, current: point)
         case .arrow:
             dragMode = .drawingArrow(start: point, current: point)
+        case .pen:
+            dragMode = .drawingFreehand(points: [point])
+        case .highlighter:
+            dragMode = .drawingHighlighter(points: [point])
         case .mosaic:
             dragMode = .drawingMosaic(start: point, current: point)
             requestMosaicPreviewCaptureIfNeeded()
@@ -1155,10 +1205,16 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             break
         case .drawingRectangle(let start, let current):
             AnnotationDrawing.draw([.rectangle(rect: normalizedRect(from: start, to: current), color: effectiveColor(rectangleStyle), lineWidth: rectangleStyle.size, filled: rectangleStyle.filled)], in: selectionRect.size)
+        case .drawingEllipse(let start, let current):
+            AnnotationDrawing.draw([.ellipse(rect: normalizedRect(from: start, to: current), color: effectiveColor(ellipseStyle), lineWidth: ellipseStyle.size, filled: ellipseStyle.filled)], in: selectionRect.size)
         case .drawingMosaic(let start, let current):
             drawMosaic(rect: normalizedRect(from: start, to: current), blockSize: mosaicBlockSize, pointSize: selectionRect.size)
         case .drawingArrow(let start, let current):
             AnnotationDrawing.draw([.arrow(start: start, end: current, color: effectiveColor(arrowStyle), lineWidth: arrowStyle.size)], in: selectionRect.size)
+        case .drawingFreehand(let points):
+            AnnotationDrawing.draw([.freehand(points: points, color: effectiveColor(penStyle), lineWidth: penStyle.size)], in: selectionRect.size)
+        case .drawingHighlighter(let points):
+            AnnotationDrawing.draw([.highlighter(points: points, color: effectiveColor(highlighterStyle), lineWidth: highlighterStyle.size)], in: selectionRect.size)
         case .drawingCallout(let start, let current):
             AnnotationDrawing.draw([.rectangle(rect: normalizedRect(from: start, to: current), color: effectiveColor(rectangleStyle), lineWidth: rectangleStyle.size, filled: false)], in: selectionRect.size)
         case .drawingSelection, .movingSelection, .resizingSelection, .movingAnnotation, .resizingAnnotation, .movingArrowEndpoint, .adjustingStyle, nil:
@@ -1295,7 +1351,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         "\(Int(round(style.opacity * 100)))".draw(at: CGPoint(x: panel.maxX - 42, y: panel.maxY - 54), withAttributes: valueAttributes)
         drawSlider(in: sliderFrame(.opacity, in: panel), value: style.opacity, range: 0.1...1)
 
-        if tool == .rectangle {
+        if tool == .rectangle || tool == .ellipse {
             "填充".draw(at: CGPoint(x: panel.minX + 14, y: panel.maxY - 84), withAttributes: labelAttributes)
             drawFillToggle(in: fillToggleFrame(in: panel), isOn: style.filled)
         }
@@ -1423,7 +1479,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             return true
         }
 
-        if tool == .rectangle, fillToggleFrame(in: panel).insetBy(dx: -8, dy: -8).contains(point) {
+        if (tool == .rectangle || tool == .ellipse), fillToggleFrame(in: panel).insetBy(dx: -8, dy: -8).contains(point) {
             if selectedAnnotationIndex != nil {
                 registerUndo()
             }
@@ -1471,7 +1527,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         let height: CGFloat
         if tool == .mosaic {
             height = 58
-        } else if tool == .rectangle {
+        } else if tool == .rectangle || tool == .ellipse {
             height = 130
         } else {
             height = 104
@@ -1984,8 +2040,14 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             switch button {
             case .rectangle:
                 selectTool(.rectangle)
+            case .ellipse:
+                selectTool(.ellipse)
             case .arrow:
                 selectTool(.arrow)
+            case .pen:
+                selectTool(.pen)
+            case .highlighter:
+                selectTool(.highlighter)
             case .number:
                 selectTool(.numberMarker)
             case .callout:
@@ -2102,8 +2164,14 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         switch button {
         case .rectangle:
             return "框选"
+        case .ellipse:
+            return "椭圆"
         case .arrow:
             return "箭头"
+        case .pen:
+            return "画笔"
+        case .highlighter:
+            return "荧光笔"
         case .number:
             return "序号"
         case .callout:
@@ -2147,8 +2215,14 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             return "1"
         case .rectangle:
             return "2"
+        case .ellipse:
+            return "E"
         case .arrow:
             return "3"
+        case .pen:
+            return "P"
+        case .highlighter:
+            return "H"
         case .number:
             return "4"
         case .text:
@@ -2282,8 +2356,14 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             return "1"
         case .rectangle:
             return "2"
+        case .ellipse:
+            return "E"
         case .arrow:
             return "3"
+        case .pen:
+            return "P"
+        case .highlighter:
+            return "H"
         case .number:
             return "4"
         case .text:
@@ -2317,8 +2397,14 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         switch button {
         case .rectangle:
             selectTool(.rectangle, toggles: false)
+        case .ellipse:
+            selectTool(.ellipse, toggles: false)
         case .arrow:
             selectTool(.arrow, toggles: false)
+        case .pen:
+            selectTool(.pen, toggles: false)
+        case .highlighter:
+            selectTool(.highlighter, toggles: false)
         case .number:
             selectTool(.numberMarker, toggles: false)
         case .callout:
@@ -2464,7 +2550,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     private func buttonWidth(_ button: OverlayButton) -> CGFloat {
         switch button {
-        case .rectangle, .arrow, .number, .callout, .text, .mosaic, .ocr, .pin, .longScreenshot, .record, .undo, .redo, .delete, .copy, .save, .cancel:
+        case .rectangle, .ellipse, .arrow, .pen, .highlighter, .number, .callout, .text, .mosaic, .ocr, .pin, .longScreenshot, .record, .undo, .redo, .delete, .copy, .save, .cancel:
             return 32
         }
     }
@@ -2480,7 +2566,10 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private func tool(for button: OverlayButton) -> AnnotationTool? {
         switch button {
         case .rectangle: .rectangle
+        case .ellipse: .ellipse
         case .arrow: .arrow
+        case .pen: .pen
+        case .highlighter: .highlighter
         case .number: .numberMarker
         case .callout: .callout
         case .mosaic: .mosaic
@@ -2491,7 +2580,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     private func supportsStylePanel(_ tool: AnnotationTool) -> Bool {
         switch tool {
-        case .rectangle, .arrow, .numberMarker, .callout, .text, .mosaic:
+        case .rectangle, .ellipse, .arrow, .pen, .highlighter, .numberMarker, .callout, .text, .mosaic:
             return true
         }
     }
@@ -2500,8 +2589,14 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         switch tool {
         case .rectangle:
             return rectangleStyle
+        case .ellipse:
+            return ellipseStyle
         case .arrow:
             return arrowStyle
+        case .pen:
+            return penStyle
+        case .highlighter:
+            return highlighterStyle
         case .text:
             return textStyle
         case .numberMarker:
@@ -2517,8 +2612,14 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         switch tool {
         case .rectangle:
             rectangleStyle = style
+        case .ellipse:
+            ellipseStyle = style
         case .arrow:
             arrowStyle = style
+        case .pen:
+            penStyle = style
+        case .highlighter:
+            highlighterStyle = style
         case .text:
             textStyle = style
         case .numberMarker:
@@ -2534,10 +2635,14 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     private func styleSizeRange(for tool: AnnotationTool) -> ClosedRange<CGFloat> {
         switch tool {
-        case .rectangle:
+        case .rectangle, .ellipse:
             return 1...12
         case .arrow:
             return 1...18
+        case .pen:
+            return 1...16
+        case .highlighter:
+            return 8...36
         case .text:
             return 12...48
         case .numberMarker:
@@ -2962,7 +3067,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         adoptToolAndStyle(from: annotations[index])
         let relative = relativePoint(point)
         switch annotations[index] {
-        case .rectangle(let rect, _, _, _), .mosaic(let rect, _):
+        case .rectangle(let rect, _, _, _), .ellipse(let rect, _, _, _), .mosaic(let rect, _):
             if let handle = annotationRectangleHandleHit(at: relative, rect: rect) {
                 return .resizingAnnotation(index: index, handle: handle)
             }
@@ -2983,7 +3088,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             if distance(relative, arrowEnd) <= 10 {
                 return .movingArrowEndpoint(index: index, endpoint: .end)
             }
-        case .numberMarker, .text:
+        case .freehand, .highlighter, .numberMarker, .text:
             break
         }
         return nil
@@ -2996,9 +3101,20 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             var style = style(from: color, size: lineWidth)
             style.filled = filled
             rectangleStyle = style
+        case .ellipse(_, let color, let lineWidth, let filled):
+            selectedTool = .ellipse
+            var style = style(from: color, size: lineWidth)
+            style.filled = filled
+            ellipseStyle = style
         case .arrow(_, _, let color, let lineWidth):
             selectedTool = .arrow
             arrowStyle = style(from: color, size: lineWidth)
+        case .freehand(_, let color, let lineWidth):
+            selectedTool = .pen
+            penStyle = style(from: color, size: lineWidth)
+        case .highlighter(_, let color, let lineWidth):
+            selectedTool = .highlighter
+            highlighterStyle = style(from: color, size: lineWidth)
         case .numberMarker(_, _, let color, let markerSize):
             selectedTool = .numberMarker
             numberMarkerStyle = style(from: color, size: markerSize)
@@ -3020,10 +3136,14 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         switch annotations[index] {
         case .rectangle(let rect, _, _, _), .mosaic(let rect, _):
             return annotationRectangleBorderContains(point, rect: rect)
+        case .ellipse(let rect, _, let lineWidth, let filled):
+            return annotationEllipseContains(point, rect: rect, lineWidth: lineWidth, filled: filled)
         case .arrow(let start, let end, _, _):
             return distanceFromPoint(point, toLineFrom: start, to: end) <= 7
                 || distance(point, start) <= 10
                 || distance(point, end) <= 10
+        case .freehand(let points, _, let lineWidth), .highlighter(let points, _, let lineWidth):
+            return AnnotationPathGeometry.contains(point, points: points, lineWidth: lineWidth)
         case .numberMarker(let center, _, _, let markerSize):
             return distance(point, center) <= max(16, markerSize + 4)
         case .text(let origin, let value, _, let fontSize):
@@ -3051,15 +3171,46 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         return !inner.contains(point)
     }
 
+    private func annotationEllipseContains(
+        _ point: CGPoint,
+        rect: CGRect,
+        lineWidth: CGFloat,
+        filled: Bool
+    ) -> Bool {
+        let radiusX = rect.width / 2
+        let radiusY = rect.height / 2
+        guard radiusX > 0, radiusY > 0 else { return false }
+        let normalizedX = (point.x - rect.midX) / radiusX
+        let normalizedY = (point.y - rect.midY) / radiusY
+        let normalizedDistance = normalizedX * normalizedX + normalizedY * normalizedY
+        let tolerance = (7 + lineWidth / 2) / max(1, min(radiusX, radiusY))
+        _ = filled
+        return abs(normalizedDistance - 1) <= tolerance
+    }
+
     private func moveAnnotation(at index: Int, by delta: CGPoint) {
         guard annotations.indices.contains(index) else { return }
         switch annotations[index] {
         case .rectangle(let rect, let color, let lineWidth, let filled):
             annotations[index] = .rectangle(rect: rect.offsetBy(dx: delta.x, dy: delta.y), color: color, lineWidth: lineWidth, filled: filled)
+        case .ellipse(let rect, let color, let lineWidth, let filled):
+            annotations[index] = .ellipse(rect: rect.offsetBy(dx: delta.x, dy: delta.y), color: color, lineWidth: lineWidth, filled: filled)
         case .arrow(let start, let end, let color, let lineWidth):
             annotations[index] = .arrow(
                 start: CGPoint(x: start.x + delta.x, y: start.y + delta.y),
                 end: CGPoint(x: end.x + delta.x, y: end.y + delta.y),
+                color: color,
+                lineWidth: lineWidth
+            )
+        case .freehand(let points, let color, let lineWidth):
+            annotations[index] = .freehand(
+                points: AnnotationPathGeometry.translated(points, by: delta),
+                color: color,
+                lineWidth: lineWidth
+            )
+        case .highlighter(let points, let color, let lineWidth):
+            annotations[index] = .highlighter(
+                points: AnnotationPathGeometry.translated(points, by: delta),
                 color: color,
                 lineWidth: lineWidth
             )
@@ -3105,8 +3256,14 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         switch (tool, annotations[index]) {
         case (.rectangle, .rectangle(let rect, _, _, _)):
             annotations[index] = .rectangle(rect: rect, color: effectiveColor(rectangleStyle), lineWidth: rectangleStyle.size, filled: rectangleStyle.filled)
+        case (.ellipse, .ellipse(let rect, _, _, _)):
+            annotations[index] = .ellipse(rect: rect, color: effectiveColor(ellipseStyle), lineWidth: ellipseStyle.size, filled: ellipseStyle.filled)
         case (.arrow, .arrow(let start, let end, _, _)):
             annotations[index] = .arrow(start: start, end: end, color: effectiveColor(arrowStyle), lineWidth: arrowStyle.size)
+        case (.pen, .freehand(let points, _, _)):
+            annotations[index] = .freehand(points: points, color: effectiveColor(penStyle), lineWidth: penStyle.size)
+        case (.highlighter, .highlighter(let points, _, _)):
+            annotations[index] = .highlighter(points: points, color: effectiveColor(highlighterStyle), lineWidth: highlighterStyle.size)
         case (.numberMarker, .numberMarker(let center, let number, _, _)):
             annotations[index] = .numberMarker(center: center, number: number, color: effectiveColor(numberMarkerStyle), markerSize: numberMarkerStyle.size)
         case (.text, .text(let origin, let value, _, _)):
@@ -3134,7 +3291,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         guard annotations.indices.contains(index) else { return }
         let rect: CGRect
         switch annotations[index] {
-        case .rectangle(let value, _, _, _), .mosaic(let value, _), .callout(let value, _, _, _, _, _, _, _):
+        case .rectangle(let value, _, _, _), .ellipse(let value, _, _, _), .mosaic(let value, _), .callout(let value, _, _, _, _, _, _, _):
             rect = value
         default:
             return
@@ -3161,6 +3318,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         switch annotations[index] {
         case .rectangle(_, let color, let lineWidth, let filled):
             annotations[index] = .rectangle(rect: nextRect, color: color, lineWidth: lineWidth, filled: filled)
+        case .ellipse(_, let color, let lineWidth, let filled):
+            annotations[index] = .ellipse(rect: nextRect, color: color, lineWidth: lineWidth, filled: filled)
         case .mosaic(_, let blockSize):
             annotations[index] = .mosaic(rect: nextRect, blockSize: blockSize)
         case .callout(_, let arrowStart, _, let textOrigin, let text, let color, let lineWidth, let fontSize):
@@ -3216,7 +3375,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         NSColor.white.setFill()
         NSColor.controlAccentColor.setStroke()
         switch annotations[index] {
-        case .rectangle(let rect, _, _, _), .mosaic(let rect, _):
+        case .rectangle(let rect, _, _, _), .ellipse(let rect, _, _, _), .mosaic(let rect, _):
             for point in annotationRectangleHandlePoints(rect: rect) {
                 drawSmallHandle(at: point)
             }
@@ -3227,6 +3386,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             drawSmallHandle(at: center)
         case .text(let origin, _, _, _):
             drawSmallHandle(at: origin)
+        case .freehand(let points, _, let lineWidth), .highlighter(let points, _, let lineWidth):
+            drawPathSelectionBounds(points: points, lineWidth: lineWidth)
         case .callout(let targetRect, let arrowStart, let arrowEnd, let textOrigin, _, _, _, _):
             for point in annotationRectangleHandlePoints(rect: targetRect) {
                 drawSmallHandle(at: point)
@@ -3235,6 +3396,15 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             drawSmallHandle(at: arrowEnd)
             drawSmallHandle(at: textOrigin)
         }
+    }
+
+    private func drawPathSelectionBounds(points: [CGPoint], lineWidth: CGFloat) {
+        guard points.count > 1 else { return }
+        let rect = AnnotationPathGeometry.bounds(points: points, lineWidth: lineWidth).insetBy(dx: -4, dy: -4)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4)
+        path.lineWidth = 1
+        path.setLineDash([4, 3], count: 2, phase: 0)
+        path.stroke()
     }
 
     private func annotationRectangleHandleHit(at point: CGPoint, rect: CGRect) -> AnnotationRectHandle? {
@@ -3356,6 +3526,20 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     private func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
         hypot(a.x - b.x, a.y - b.y)
+    }
+
+    private func appendPathPoint(
+        _ point: CGPoint,
+        to points: inout [CGPoint],
+        minimumDistance: CGFloat = 1.25
+    ) {
+        guard let last = points.last else {
+            points.append(point)
+            return
+        }
+        if distance(last, point) >= minimumDistance {
+            points.append(point)
+        }
     }
 
     private func distanceFromPoint(_ point: CGPoint, toLineFrom start: CGPoint, to end: CGPoint) -> CGFloat {

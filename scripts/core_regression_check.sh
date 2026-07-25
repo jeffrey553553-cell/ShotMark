@@ -66,10 +66,15 @@ run_step "DMG verify" hdiutil verify "$ROOT_DIR/dist/ShotMark.dmg"
 run_step "DMG install layout verify" verify_dmg_install_layout
 run_step "P1 editing and recording static checks" bash -c '
   set -euo pipefail
-  rg -q "case callout, rectangle, arrow, number, text, mosaic, ocr, pin, longScreenshot, record, undo, redo, delete" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "case callout, rectangle, ellipse, arrow, pen, highlighter, number, text, mosaic, ocr, pin, longScreenshot, record, undo, redo, delete" Sources/ShotMark/SelectionOverlayController.swift
   ! rg -q "VideoQualityPreset|720p|1080p|2K|recordQuality" Sources/ShotMark
   rg -q "nativeOutputPixelSize" Sources/ShotMark/VideoRecordingService.swift
   rg -q "case callout" Sources/ShotMark/Models.swift
+  rg -q "case ellipse" Sources/ShotMark/Models.swift
+  rg -q "case freehand" Sources/ShotMark/Models.swift
+  rg -q "case highlighter" Sources/ShotMark/Models.swift
+  rg -q "AnnotationPathGeometry" Sources/ShotMark/AnnotationDrawing.swift Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
+  rg -q "beginTransparencyLayer" Sources/ShotMark/AnnotationDrawing.swift
   rg -q "drawingCallout" Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
   rg -q "text.bubble" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "beginCalloutTextEdit" Sources/ShotMark/SelectionOverlayController.swift

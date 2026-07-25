@@ -30,8 +30,14 @@ enum AnnotationDrawing {
             switch annotation {
             case .rectangle(let rect, let color, let lineWidth, let filled):
                 drawRectangle(rect: rect, color: color, lineWidth: lineWidth, filled: filled)
+            case .ellipse(let rect, let color, let lineWidth, let filled):
+                drawEllipse(rect: rect, color: color, lineWidth: lineWidth, filled: filled)
             case .arrow(let start, let end, let color, let lineWidth):
                 drawArrow(start: start, end: end, color: color, lineWidth: lineWidth)
+            case .freehand(let points, let color, let lineWidth):
+                drawFreehand(points: points, color: color, lineWidth: lineWidth)
+            case .highlighter(let points, let color, let lineWidth):
+                drawHighlighter(points: points, color: color, lineWidth: lineWidth)
             case .numberMarker(let center, let number, let color, let markerSize):
                 drawNumberMarker(center: center, number: number, color: color, markerSize: markerSize)
             case .text(let origin, let value, let color, let fontSize):
@@ -55,6 +61,47 @@ enum AnnotationDrawing {
         let path = NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2)
         path.lineWidth = lineWidth
         path.stroke()
+    }
+
+    private static func drawEllipse(rect: CGRect, color: NSColor, lineWidth: CGFloat, filled: Bool) {
+        if filled {
+            color.setFill()
+            NSBezierPath(ovalIn: rect).fill()
+        }
+        color.setStroke()
+        let inset = min(max(0, lineWidth / 2), max(0, min(rect.width, rect.height) / 2 - 0.5))
+        let path = NSBezierPath(ovalIn: rect.insetBy(dx: inset, dy: inset))
+        path.lineWidth = lineWidth
+        path.stroke()
+    }
+
+    private static func drawFreehand(points: [CGPoint], color: NSColor, lineWidth: CGFloat) {
+        guard points.count > 1 else { return }
+        color.setStroke()
+        let path = NSBezierPath(cgPath: AnnotationPathGeometry.smoothPath(points: points))
+        path.lineWidth = lineWidth
+        path.lineCapStyle = .round
+        path.lineJoinStyle = .round
+        path.stroke()
+    }
+
+    private static func drawHighlighter(points: [CGPoint], color: NSColor, lineWidth: CGFloat) {
+        guard points.count > 1 else { return }
+        let rgb = color.usingColorSpace(.deviceRGB) ?? color
+        let opacity = min(max(rgb.alphaComponent, 0), 1)
+        let opaqueColor = rgb.withAlphaComponent(1)
+
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current?.cgContext.setAlpha(opacity)
+        NSGraphicsContext.current?.cgContext.beginTransparencyLayer(auxiliaryInfo: nil)
+        opaqueColor.setStroke()
+        let path = NSBezierPath(cgPath: AnnotationPathGeometry.smoothPath(points: points))
+        path.lineWidth = lineWidth
+        path.lineCapStyle = .round
+        path.lineJoinStyle = .round
+        path.stroke()
+        NSGraphicsContext.current?.cgContext.endTransparencyLayer()
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     private static func drawArrow(start: CGPoint, end: CGPoint, color: NSColor, lineWidth: CGFloat) {
