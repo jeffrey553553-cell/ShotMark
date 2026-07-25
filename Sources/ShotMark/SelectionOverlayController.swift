@@ -322,6 +322,9 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private var windowCandidates: [WindowCandidate] = []
     private var hoveredWindowCandidate: WindowCandidate?
     private var windowCandidateRefreshGeneration = 0
+    private let selectionMagnifier = SelectionMagnifier()
+    private var magnifierPoint: CGPoint?
+    private var isMagnifierVisible = false
     private let initialSelectionDragThreshold: CGFloat = 5
     private var isWindowDebugEnabled: Bool {
         ProcessInfo.processInfo.environment["SHOTMARK_WINDOW_DEBUG"] == "1"
@@ -456,6 +459,9 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         {
             return
         }
+        if handlePrecisionArrowKey(event) {
+            return
+        }
 
         if command, event.charactersIgnoringModifiers?.lowercased() == "c" {
             commitSelection(.copyToClipboard)
@@ -469,6 +475,10 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         if isInteractionLocked {
             onInteractionStarted?()
             return
+        }
+        if !event.modifierFlags.contains(.command) {
+            isMagnifierVisible = false
+            magnifierPoint = nil
         }
         onInteractionStarted?()
         window?.makeFirstResponder(self)
@@ -577,25 +587,36 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     override func mouseMoved(with event: NSEvent) {
         guard !isInteractionLocked else { return }
+        let mousePoint = convert(event.locationInWindow, from: nil)
+        if event.modifierFlags.contains(.command), frozenSnapshot != nil {
+            magnifierPoint = mousePoint
+            isMagnifierVisible = true
+        } else if dragMode == nil {
+            isMagnifierVisible = false
+        }
         guard let selectionRect else {
             setHoveredButton(nil)
-            updateHoveredWindowCandidate(at: convert(event.locationInWindow, from: nil))
+            updateHoveredWindowCandidate(at: mousePoint)
+            needsDisplay = true
             return
         }
 
         hoveredWindowCandidate = nil
-        let point = convert(event.locationInWindow, from: nil)
-        updateRecordingMenuHover(at: point, selectionRect: selectionRect)
+        updateRecordingMenuHover(at: mousePoint, selectionRect: selectionRect)
 
-        if let button = hoveredToolbarButton(at: point, selectionRect: selectionRect) {
+        if let button = hoveredToolbarButton(at: mousePoint, selectionRect: selectionRect) {
             setHoveredButton(button)
         } else {
             scheduleHoveredButtonClear()
         }
+        needsDisplay = true
     }
 
     override func mouseExited(with event: NSEvent) {
         hoveredWindowCandidate = nil
+        if dragMode == nil {
+            isMagnifierVisible = false
+        }
         scheduleHoveredButtonClear()
         needsDisplay = true
     }
@@ -646,6 +667,10 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         case nil:
             break
         }
+        if shouldShowMagnifier(for: dragMode) {
+            magnifierPoint = point
+            isMagnifierVisible = frozenSnapshot != nil
+        }
         needsDisplay = true
     }
 
@@ -685,6 +710,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         }
 
         dragMode = nil
+        isMagnifierVisible = false
+        magnifierPoint = nil
         pendingTextEditIndex = nil
         pendingTextEditStart = nil
         pendingTextEditDidMove = false
@@ -715,6 +742,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                 drawWindowCandidateHover(hoveredWindowCandidate)
             }
             drawInitialHint()
+            drawSelectionMagnifierIfNeeded()
             return
         }
 
@@ -731,6 +759,25 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         drawVideoQualityMenu(for: selectionRect)
         drawToolbarTooltip(for: selectionRect)
         drawShortcutLetterMenu(for: selectionRect)
+        drawSelectionMagnifierIfNeeded()
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        guard !isInteractionLocked,
+              event.modifierFlags.contains(.command),
+              frozenSnapshot != nil else {
+            super.scrollWheel(with: event)
+            return
+        }
+        let delta = abs(event.scrollingDeltaY) >= abs(event.deltaY) ? event.scrollingDeltaY : event.deltaY
+        guard abs(delta) > 0.01 else { return }
+        _ = selectionMagnifier.adjustZoom(
+            scrollDelta: delta,
+            hasPreciseDeltas: event.hasPreciseScrollingDeltas
+        )
+        magnifierPoint = convert(event.locationInWindow, from: nil)
+        isMagnifierVisible = true
+        needsDisplay = true
     }
 
     private func drawFrozenSnapshot() {
@@ -745,6 +792,90 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             respectFlipped: true,
             hints: nil
         )
+    }
+
+    private func drawSelectionMagnifierIfNeeded() {
+        guard isMagnifierVisible, let magnifierPoint, let frozenSnapshot else { return }
+        var avoidedRects: [CGRect] = []
+        if let selectionRect {
+            avoidedRects.append(toolbarFrame(for: selectionRect))
+            if let stylePanel = stylePanelFrame(for: selectionRect) {
+                avoidedRects.append(stylePanel)
+            }
+        }
+        selectionMagnifier.draw(
+            at: magnifierPoint,
+            in: bounds,
+            snapshot: frozenSnapshot,
+            avoiding: avoidedRects
+        )
+    }
+
+    private func shouldShowMagnifier(for dragMode: DragMode?) -> Bool {
+        switch dragMode {
+        case .pendingInitialSelection, .drawingSelection, .resizingSelection:
+            return true
+        case .movingSelection, .drawingRectangle, .drawingMosaic, .drawingArrow,
+             .drawingCallout, .movingAnnotation, .resizingAnnotation,
+             .movingArrowEndpoint, .adjustingStyle, nil:
+            return false
+        }
+    }
+
+    private func handlePrecisionArrowKey(_ event: NSEvent) -> Bool {
+        guard !event.modifierFlags.contains(.command),
+              !event.modifierFlags.contains(.control),
+              let direction = arrowDirection(for: event.keyCode),
+              let selectionRect else {
+            return false
+        }
+
+        let pixelStep = SelectionPrecisionGeometry.pixelStep(
+            for: frozenSnapshot?.screenScale ?? targetScreen.backingScaleFactor
+        )
+        if let selectedAnnotationIndex, annotations.indices.contains(selectedAnnotationIndex) {
+            registerUndo()
+            let distance = event.modifierFlags.contains(.shift) ? pixelStep * 10 : pixelStep
+            let delta: CGPoint
+            switch direction {
+            case .left: delta = CGPoint(x: -distance, y: 0)
+            case .right: delta = CGPoint(x: distance, y: 0)
+            case .down: delta = CGPoint(x: 0, y: -distance)
+            case .up: delta = CGPoint(x: 0, y: distance)
+            }
+            moveAnnotation(at: selectedAnnotationIndex, by: delta)
+        } else if event.modifierFlags.contains(.shift) {
+            registerUndo()
+            let next = SelectionPrecisionGeometry.resized(
+                selectionRect,
+                direction: direction,
+                distance: pixelStep,
+                minimumSize: 8,
+                inside: bounds
+            )
+            setSelectionRect(next, keepingAnnotationsStationary: true)
+        } else {
+            registerUndo()
+            let next = SelectionPrecisionGeometry.moved(
+                selectionRect,
+                direction: direction,
+                distance: pixelStep,
+                inside: bounds
+            )
+            setSelectionRect(next, keepingAnnotationsStationary: true)
+        }
+        needsDisplay = true
+        return true
+    }
+
+    private func arrowDirection(for keyCode: UInt16) -> SelectionArrowDirection? {
+        switch keyCode {
+        case 123: .left
+        case 124: .right
+        case 125: .down
+        case 126: .up
+        default: nil
+        }
     }
 
     private func drawDimmingOverlay(excluding rect: CGRect?) {

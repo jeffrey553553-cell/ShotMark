@@ -1,7 +1,7 @@
 # Third-Party Notices
 
-ShotMark's scrolling-capture alignment implementation is informed by and
-adapted from techniques used by Snapzy:
+ShotMark's selection magnifier and scrolling-capture alignment implementations
+are informed by and adapted from techniques used by Snapzy:
 
 https://github.com/duongductrong/Snapzy
 

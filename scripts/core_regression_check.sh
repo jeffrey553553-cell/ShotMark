@@ -103,6 +103,10 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "onInteractionStarted" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "installInteractionEventMonitor" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "matching: \\[\\.leftMouseDown, \\.leftMouseDragged, \\.leftMouseUp\\]" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "SelectionMagnifier" Sources/ShotMark/SelectionPrecisionSupport.swift Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "pixelColorHex" Sources/ShotMark/SelectionPrecisionSupport.swift
+  rg -q "handlePrecisionArrowKey" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "SelectionPrecisionGeometry" Sources/ShotMark/SelectionPrecisionSupport.swift Tests/ShotMarkTests/SelectionPrecisionSupportTests.swift
   rg -q "windowUnderCurrentMouse" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "convert\\(event\\.locationInWindow, from: nil\\)" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "intersection\\(targetScreen\\.frame\\)" Sources/ShotMark/SelectionOverlayController.swift
@@ -240,6 +244,10 @@ Mark each item PASS/FAIL after running it.
 | External screen | Configured shortcut with cursor on external screen | Overlay appears on target display; capture area matches selected display | |
 | Multiple screens | Finish a selection on one display, then click or drag on another display | The first selection remains the only active selection; other displays stay dimmed and do not create a second selection | |
 | Retina | Capture text/icons on Retina screen | Output PNG is sharp and selection bounds match pixels | |
+| Precision | Drag or resize a selection | Pixel magnifier follows the active edge and stays within the current display | |
+| Precision | Hold Command and move/scroll | Magnifier shows pixel coordinates/color; scrolling changes zoom without moving the selection | |
+| Precision | Press arrow keys, then Shift+arrow keys | Selection moves by one physical pixel; Shift resizes by one physical pixel | |
+| Precision | Select an annotation and press arrow keys | Annotation moves by one physical pixel; Shift moves it by ten physical pixels | |
 | Full screen | Select nearly entire screen | Toolbar stays visible and final image has no blue selection frame | |
 | Small area | Select small area around text | Toolbar stays usable; output only contains selected area | |
 | Save | Press Space after annotations | PNG saved to Downloads with annotations applied | |
