@@ -3,6 +3,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var primaryMenuItem: NSMenuItem?
+    private var recordingPauseMenuItem: NSMenuItem?
     private var screenRecordingStatusMenuItem: NSMenuItem?
     private var accessibilityStatusMenuItem: NSMenuItem?
     private var microphoneStatusMenuItem: NSMenuItem?
@@ -10,7 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var showPinnedMenuItem: NSMenuItem?
     private var closePinnedMenuItem: NSMenuItem?
     private var recordingTimer: Timer?
-    private var recordingStartedAt: Date?
+    private var currentRecordingUIState: RecordingUIState = .idle
     private var hotKeyService: HotKeyService?
     private var coordinator: ScreenshotCoordinator?
     private var settingsWindowController: SettingsWindowController?
@@ -50,6 +51,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         let primaryItem = NSMenuItem(title: primaryMenuTitle(), action: #selector(primaryActionMenuItem), keyEquivalent: "")
         menu.addItem(primaryItem)
+        let recordingPauseItem = NSMenuItem(
+            title: "暂停录制",
+            action: #selector(toggleRecordingPause),
+            keyEquivalent: ""
+        )
+        recordingPauseItem.isHidden = true
+        menu.addItem(recordingPauseItem)
         menu.addItem(NSMenuItem(title: "截图历史...", action: #selector(openHistory), keyEquivalent: ""))
         let pinnedItem = NSMenuItem(title: "钉图（0）", action: nil, keyEquivalent: "")
         let pinnedMenu = NSMenu()
@@ -81,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(NSMenuItem(title: "退出 ShotMark（权限变更后重启）", action: #selector(quit), keyEquivalent: "q"))
         item.menu = menu
         primaryMenuItem = primaryItem
+        recordingPauseMenuItem = recordingPauseItem
         screenRecordingStatusMenuItem = screenRecordingStatusItem
         accessibilityStatusMenuItem = accessibilityStatusItem
         microphoneStatusMenuItem = microphoneStatusItem
@@ -90,12 +99,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem = item
     }
 
+
     func menuWillOpen(_ menu: NSMenu) {
         updatePermissionMenuItems()
     }
 
     @objc private func primaryActionMenuItem() {
         performPrimaryAction()
+    }
+
+    @objc private func toggleRecordingPause() {
+        coordinator?.toggleRecordingPause()
     }
 
     private func performPrimaryAction() {
@@ -165,42 +179,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateRecordingState(_ state: RecordingUIState) {
         recordingTimer?.invalidate()
         recordingTimer = nil
+        currentRecordingUIState = state
 
         switch state {
         case .idle:
-            recordingStartedAt = nil
             statusItem?.button?.title = "ShotMark"
             primaryMenuItem?.title = primaryMenuTitle()
             primaryMenuItem?.isEnabled = true
+            recordingPauseMenuItem?.isHidden = true
         case .starting:
-            recordingStartedAt = nil
             statusItem?.button?.title = "■"
             primaryMenuItem?.title = "正在开始录制..."
             primaryMenuItem?.isEnabled = false
-        case .recording(let startedAt):
-            recordingStartedAt = startedAt
+            recordingPauseMenuItem?.isHidden = true
+        case .recording:
             primaryMenuItem?.title = recordingMenuTitle()
             primaryMenuItem?.isEnabled = true
+            recordingPauseMenuItem?.title = "暂停录制"
+            recordingPauseMenuItem?.isHidden = false
+            recordingPauseMenuItem?.isEnabled = true
             updateRecordingTimerTitle()
             let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
                 self?.updateRecordingTimerTitle()
             }
             recordingTimer = timer
             RunLoop.main.add(timer, forMode: .common)
+        case .paused:
+            primaryMenuItem?.title = recordingMenuTitle()
+            primaryMenuItem?.isEnabled = true
+            recordingPauseMenuItem?.title = "继续录制"
+            recordingPauseMenuItem?.isHidden = false
+            recordingPauseMenuItem?.isEnabled = true
+            updateRecordingTimerTitle()
+        case .pausing:
+            primaryMenuItem?.title = recordingMenuTitle()
+            primaryMenuItem?.isEnabled = false
+            recordingPauseMenuItem?.title = "正在暂停..."
+            recordingPauseMenuItem?.isHidden = false
+            recordingPauseMenuItem?.isEnabled = false
+            updateRecordingTimerTitle()
+        case .resuming:
+            primaryMenuItem?.title = recordingMenuTitle()
+            primaryMenuItem?.isEnabled = false
+            recordingPauseMenuItem?.title = "正在继续..."
+            recordingPauseMenuItem?.isHidden = false
+            recordingPauseMenuItem?.isEnabled = false
+            updateRecordingTimerTitle()
         case .stopping:
-            recordingStartedAt = nil
             statusItem?.button?.title = "■"
             primaryMenuItem?.title = "正在保存录制..."
             primaryMenuItem?.isEnabled = false
+            recordingPauseMenuItem?.isHidden = true
         }
     }
 
     private func updateRecordingTimerTitle() {
-        guard let recordingStartedAt else { return }
-        let elapsed = max(0, Int(Date().timeIntervalSince(recordingStartedAt)))
+        let elapsed = max(0, Int(currentRecordingUIState.elapsed()))
         let minutes = elapsed / 60
         let seconds = elapsed % 60
-        statusItem?.button?.title = String(format: "■%02d:%02d", minutes, seconds)
+        let symbol = currentRecordingUIState.isPaused ? "Ⅱ" : "■"
+        statusItem?.button?.title = String(format: "%@%02d:%02d", symbol, minutes, seconds)
     }
 
     private func configureHotKey() {
@@ -256,7 +294,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switch coordinator?.currentRecordingState ?? .idle {
         case .idle:
             primaryMenuItem.title = primaryMenuTitle()
-        case .recording:
+        case .recording, .paused, .pausing, .resuming:
             primaryMenuItem.title = recordingMenuTitle()
         case .starting, .stopping:
             break

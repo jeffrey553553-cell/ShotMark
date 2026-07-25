@@ -30,4 +30,26 @@ final class VideoRecordingServiceTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(result.width, 2_400)
         XCTAssertGreaterThanOrEqual(result.height, 1_400)
     }
+
+    func testStreamConfigurationAppliesMouseClickAndAudioOptions() throws {
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        let selection = CaptureSelection(
+            rectInScreen: CGRect(x: 0, y: 0, width: 640, height: 360),
+            screen: screen
+        )
+        let configuration = VideoRecordingService.streamConfiguration(
+            for: selection,
+            options: VideoRecordingOptions(
+                audioMode: .systemAndMicrophone,
+                showsMouseClicks: true
+            )
+        )
+
+        XCTAssertTrue(configuration.showMouseClicks)
+        XCTAssertTrue(configuration.showsCursor)
+        XCTAssertTrue(configuration.capturesAudio)
+        XCTAssertTrue(configuration.captureMicrophone)
+        XCTAssertEqual(configuration.width, Int(selection.nativePixelSize.width))
+        XCTAssertEqual(configuration.height, Int(selection.nativePixelSize.height))
+    }
 }

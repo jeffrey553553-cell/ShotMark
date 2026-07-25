@@ -46,7 +46,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 shortcutSection
                 Text("保存快捷键：Space")
-                Text("录制停止：\(shortcut.displayName)、状态栏菜单或顶部停止条")
+                Text("录制控制：顶部控制条或状态栏可暂停、继续和停止；\(shortcut.displayName) 停止")
                 Text("默认保存目录：Downloads")
             }
             .font(.system(size: 13))

@@ -18,6 +18,7 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
     private var recordingCreatedAt: Date?
     private var recordingState: RecordingUIState = .idle {
         didSet {
+            recordingOverlayController?.update(state: recordingState)
             onRecordingStateChanged?(recordingState)
         }
     }
@@ -26,7 +27,7 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
         switch recordingState {
         case .idle:
             return false
-        case .starting, .recording, .stopping:
+        case .starting, .recording, .pausing, .paused, .resuming, .stopping:
             return true
         }
     }
@@ -52,9 +53,9 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
         switch recordingState {
         case .idle:
             beginCapture()
-        case .recording:
+        case .recording, .paused:
             stopRecording()
-        case .starting, .stopping:
+        case .starting, .pausing, .resuming, .stopping:
             break
         }
     }
@@ -112,9 +113,9 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
     func selectionOverlayController(_ controller: SelectionOverlayController, didCommit selection: CaptureSelection, frozenCapture: CaptureResult?, annotations: [Annotation], action: CaptureCommitAction) {
         overlayController = nil
         switch action {
-        case .recordVideo(let audioMode):
+        case .recordVideo(let options):
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
-                self?.startRecording(selection: selection, audioMode: audioMode)
+                self?.startRecording(selection: selection, options: options)
             }
         case .longScreenshot:
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
@@ -272,15 +273,15 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
         controller.start()
     }
 
-    private func startRecording(selection: CaptureSelection, audioMode: VideoAudioMode) {
+    private func startRecording(selection: CaptureSelection, options: VideoRecordingOptions) {
         guard case .idle = recordingState else { return }
 
-        guard !audioMode.requiresMicrophonePermission else {
+        guard !options.audioMode.requiresMicrophonePermission else {
             PermissionService.requestMicrophoneAccess { [weak self] isGranted in
                 DispatchQueue.main.async {
                     guard let self else { return }
                     if isGranted {
-                        self.startRecordingAfterPermissionCheck(selection: selection, audioMode: audioMode)
+                        self.startRecordingAfterPermissionCheck(selection: selection, options: options)
                     } else {
                         self.showMicrophonePermissionHelp()
                     }
@@ -289,10 +290,13 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
             return
         }
 
-        startRecordingAfterPermissionCheck(selection: selection, audioMode: audioMode)
+        startRecordingAfterPermissionCheck(selection: selection, options: options)
     }
 
-    private func startRecordingAfterPermissionCheck(selection: CaptureSelection, audioMode: VideoAudioMode) {
+    private func startRecordingAfterPermissionCheck(
+        selection: CaptureSelection,
+        options: VideoRecordingOptions
+    ) {
         guard case .idle = recordingState else { return }
 
         recordingState = .starting
@@ -308,17 +312,20 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
             self?.recordingState = .idle
             self?.showError(error, title: "录制失败")
         }
-        videoRecordingService.start(selection: selection, audioMode: audioMode, outputURL: outputURL) { [weak self] result in
+        videoRecordingService.start(selection: selection, options: options, outputURL: outputURL) { [weak self] result in
             guard let self else { return }
             switch result {
             case .success:
                 let startedAt = Date()
-                let overlay = RecordingRegionOverlayController(selection: selection, startedAt: startedAt) { [weak self] in
-                    self?.stopRecording()
-                }
+                let overlay = RecordingRegionOverlayController(
+                    selection: selection,
+                    initialState: .recording(startedAt: startedAt, elapsedBeforeStart: 0),
+                    onStop: { [weak self] in self?.stopRecording() },
+                    onTogglePause: { [weak self] in self?.toggleRecordingPause() }
+                )
                 self.recordingOverlayController = overlay
                 overlay.show()
-                self.recordingState = .recording(startedAt: startedAt)
+                self.recordingState = .recording(startedAt: startedAt, elapsedBeforeStart: 0)
             case .failure(let error):
                 self.recordingResultScreen = nil
                 self.recordingCreatedAt = nil
@@ -330,8 +337,64 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
         }
     }
 
+    func toggleRecordingPause() {
+        switch recordingState {
+        case .recording:
+            pauseRecording()
+        case .paused:
+            resumeRecording()
+        case .idle, .starting, .pausing, .resuming, .stopping:
+            break
+        }
+    }
+
+    private func pauseRecording() {
+        guard case .recording = recordingState else { return }
+        let elapsed = recordingState.elapsed()
+        recordingState = .pausing(elapsed: elapsed)
+        videoRecordingService.pause { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                self.recordingState = .paused(elapsed: elapsed)
+            case .failure(let error):
+                self.recordingState = .recording(
+                    startedAt: Date(),
+                    elapsedBeforeStart: elapsed
+                )
+                self.showError(error, title: "暂停录制失败")
+            }
+        }
+    }
+
+    private func resumeRecording() {
+        guard case .paused(let elapsed) = recordingState else { return }
+        recordingState = .resuming(elapsed: elapsed)
+        videoRecordingService.resume { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                self.recordingState = .recording(
+                    startedAt: Date(),
+                    elapsedBeforeStart: elapsed
+                )
+            case .failure(let error):
+                self.recordingState = .paused(elapsed: elapsed)
+                self.showError(error, title: "继续录制失败")
+            }
+        }
+    }
+
     func stopRecording(completion: (() -> Void)? = nil) {
-        guard case .recording = recordingState else {
+        switch recordingState {
+        case .recording, .paused:
+            break
+        case .pausing, .resuming:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                self?.stopRecording(completion: completion)
+            }
+            return
+        case .idle, .starting, .stopping:
             completion?()
             return
         }

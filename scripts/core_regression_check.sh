@@ -69,6 +69,10 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "case callout, rectangle, ellipse, arrow, pen, highlighter, number, text, mosaic, ocr, pin, longScreenshot, record, undo, redo, delete" Sources/ShotMark/SelectionOverlayController.swift
   ! rg -q "VideoQualityPreset|720p|1080p|2K|recordQuality" Sources/ShotMark
   rg -q "nativeOutputPixelSize" Sources/ShotMark/VideoRecordingService.swift
+  rg -q "showMouseClicks = options.showsMouseClicks" Sources/ShotMark/VideoRecordingService.swift
+  rg -q "VideoSegmentMerger.merge" Sources/ShotMark/VideoRecordingService.swift
+  rg -q "removeRecordingOutput" Sources/ShotMark/VideoRecordingService.swift
+  rg -q "case paused" Sources/ShotMark/Models.swift
   rg -q "PinnedScreenshotGeometry" Sources/ShotMark/PinnedScreenshotWindowController.swift
   rg -q "onPinnedCountChanged" Sources/ShotMark/ScreenshotCoordinator.swift Sources/ShotMark/AppDelegate.swift
   rg -q "passThroughTimer" Sources/ShotMark/PinnedScreenshotWindowController.swift
@@ -105,7 +109,7 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "return \"0\"" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "requestMicrophoneAccess" Sources/ShotMark/PermissionService.swift
   rg -q "openMicrophoneSettings" Sources/ShotMark/PermissionService.swift
-  rg -q "captureMicrophone = audioMode.capturesMicrophone" Sources/ShotMark/VideoRecordingService.swift
+  rg -q "captureMicrophone = options.audioMode.capturesMicrophone" Sources/ShotMark/VideoRecordingService.swift
   rg -q "window.sharingType = .none" Sources/ShotMark/RecordingRegionOverlayController.swift
   rg -q "acceptsFirstMouse" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "activeSelectionView" Sources/ShotMark/SelectionOverlayController.swift
@@ -277,6 +281,8 @@ Mark each item PASS/FAIL after running it.
 | Toast | Save or copy in light mode | Success toast remains readable with dark pill, check icon and white text | |
 | Recording | Select area -> record -> choose audio mode | Recording uses the selection's native pixel size; overlay/timer appears; Stop saves MP4 to Downloads without red frame/overlay in the video | |
 | Recording audio | Record with Silent/System/Microphone/System+Microphone | Selected audio mode is captured; microphone modes prompt clearly when permission is missing | |
+| Recording click highlight | Enable Show Mouse Clicks, then click inside the region | System cursor click circles appear in the saved MP4 | |
+| Recording pause | Pause, wait, resume, then stop | Timer freezes while paused; paused time is absent; all recorded segments merge into one playable MP4 | |
 | Recording stop | Press configured screenshot shortcut while recording | Recording stops and saved file plays | |
 | Mosaic | Draw mosaic over text | Text under the drawn area is blurred, no visible border is drawn | |
 | Long screenshot | Start long screenshot and press Esc | Session cancels and returns without saving/copying | |

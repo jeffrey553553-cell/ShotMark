@@ -314,6 +314,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private var ocrDismissEventMonitor: Any?
     private var isOCRBusy = false
     private var selectedAudioMode: VideoAudioMode = .none
+    private var recordingShowsMouseClicks = AppSettings.shared.recordingShowsMouseClicks
     private var mosaicBlockSize: CGFloat = 12
     private var undoStack: [EditSnapshot] = []
     private var redoStack: [EditSnapshot] = []
@@ -324,6 +325,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private var pendingTextEditDidMove = false
     private var isRecordingMenuOpen = false
     private var hoveredAudioMode: VideoAudioMode?
+    private var isRecordingMouseClicksOptionHovered = false
     private var hoveredButton: OverlayButton?
     private var shortcutMenuButton: OverlayButton?
     private var customShortcuts: [OverlayButton: String] = [:]
@@ -1408,7 +1410,28 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         guard isRecordingMenuOpen, let panel = recordingMenuFrame(for: rect) else { return }
 
         drawFloatingPanelBackground(in: panel, radius: 12, alpha: 0.86)
-        drawMenuSectionTitle("选择音频 · 按原尺寸录制", at: CGPoint(x: panel.minX + 14, y: panel.maxY - 25))
+        drawMenuSectionTitle("录制设置", at: CGPoint(x: panel.minX + 14, y: panel.maxY - 25))
+
+        let clickRow = recordingMouseClicksOptionFrame(in: panel)
+        if isRecordingMouseClicksOptionHovered {
+            NSColor.white.withAlphaComponent(0.12).setFill()
+            NSBezierPath(roundedRect: clickRow.insetBy(dx: 6, dy: 3), xRadius: 7, yRadius: 7).fill()
+        }
+        drawRecordingCheckbox(
+            in: CGRect(x: clickRow.minX + 14, y: clickRow.midY - 8, width: 16, height: 16),
+            isOn: recordingShowsMouseClicks
+        )
+        "显示鼠标点击".draw(
+            at: CGPoint(x: clickRow.minX + 40, y: clickRow.midY - 8),
+            withAttributes: [
+                .font: NSFont.systemFont(ofSize: 12.5, weight: .medium),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.9)
+            ]
+        )
+
+        NSColor.white.withAlphaComponent(0.1).setFill()
+        CGRect(x: panel.minX + 12, y: clickRow.minY - 5, width: panel.width - 24, height: 1).fill()
+
         for (index, audioMode) in VideoAudioMode.allCases.enumerated() {
             let row = audioModeOptionFrame(index: index, in: panel)
             if audioMode == selectedAudioMode {
@@ -1427,6 +1450,26 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             let size = title.size(withAttributes: attributes)
             title.draw(at: CGPoint(x: row.minX + 14, y: row.midY - size.height / 2), withAttributes: attributes)
         }
+    }
+
+    private func drawRecordingCheckbox(in rect: CGRect, isOn: Bool) {
+        (isOn ? NSColor.controlAccentColor : NSColor.white.withAlphaComponent(0.08)).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
+        NSColor.white.withAlphaComponent(isOn ? 0.9 : 0.28).setStroke()
+        let border = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 3.5, yRadius: 3.5)
+        border.lineWidth = 1
+        border.stroke()
+        guard isOn else { return }
+
+        let check = NSBezierPath()
+        check.lineWidth = 1.7
+        check.lineCapStyle = .round
+        check.lineJoinStyle = .round
+        check.move(to: CGPoint(x: rect.minX + 4, y: rect.midY))
+        check.line(to: CGPoint(x: rect.minX + 7, y: rect.minY + 4.5))
+        check.line(to: CGPoint(x: rect.maxX - 3.5, y: rect.maxY - 4))
+        NSColor.white.setStroke()
+        check.stroke()
     }
 
     private func drawMenuSectionTitle(_ title: String, at point: CGPoint) {
@@ -1509,12 +1552,22 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             return false
         }
 
+        if recordingMouseClicksOptionFrame(in: panel).contains(point) {
+            recordingShowsMouseClicks.toggle()
+            AppSettings.shared.recordingShowsMouseClicks = recordingShowsMouseClicks
+            needsDisplay = true
+            return true
+        }
+
         for (index, audioMode) in VideoAudioMode.allCases.enumerated()
             where audioModeOptionFrame(index: index, in: panel).contains(point) {
             selectedAudioMode = audioMode
             isRecordingMenuOpen = false
             shortcutMenuButton = nil
-            commitSelection(.recordVideo(audioMode: audioMode))
+            commitSelection(.recordVideo(options: VideoRecordingOptions(
+                audioMode: audioMode,
+                showsMouseClicks: recordingShowsMouseClicks
+            )))
             return true
         }
 
@@ -1573,7 +1626,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private func recordingMenuFrame(for rect: CGRect) -> CGRect? {
         let bar = toolbarFrame(for: rect)
         let recordButton = buttonFrame(.record, for: rect)
-        let size = CGSize(width: 196, height: 166)
+        let size = CGSize(width: 196, height: 210)
         let spacing: CGFloat = 8
         let toolbarIsAboveSelection = bar.minY >= rect.maxY
         var origin = CGPoint(x: recordButton.maxX - size.width, y: 0)
@@ -1597,10 +1650,14 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private func audioModeOptionFrame(index: Int, in panel: CGRect) -> CGRect {
         return CGRect(
             x: panel.minX,
-            y: panel.maxY - 34 - CGFloat(index + 1) * 30,
+            y: panel.maxY - 84 - CGFloat(index + 1) * 28,
             width: panel.width,
-            height: 30
+            height: 28
         )
+    }
+
+    private func recordingMouseClicksOptionFrame(in panel: CGRect) -> CGRect {
+        CGRect(x: panel.minX, y: panel.maxY - 67, width: panel.width, height: 30)
     }
 
     private func captureSelection(for selectionRect: CGRect) -> CaptureSelection? {
@@ -2133,19 +2190,23 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     private func updateRecordingMenuHover(at point: CGPoint, selectionRect: CGRect) {
         guard isRecordingMenuOpen, let panel = recordingMenuFrame(for: selectionRect), panel.contains(point) else {
-            if hoveredAudioMode != nil {
+            if hoveredAudioMode != nil || isRecordingMouseClicksOptionHovered {
                 hoveredAudioMode = nil
+                isRecordingMouseClicksOptionHovered = false
                 needsDisplay = true
             }
             return
         }
 
+        let nextMouseClicksHovered = recordingMouseClicksOptionFrame(in: panel).contains(point)
         let nextAudioMode = VideoAudioMode.allCases.enumerated().first {
             audioModeOptionFrame(index: $0.offset, in: panel).contains(point)
         }?.element
 
-        if hoveredAudioMode != nextAudioMode {
+        if hoveredAudioMode != nextAudioMode
+            || isRecordingMouseClicksOptionHovered != nextMouseClicksHovered {
             hoveredAudioMode = nextAudioMode
+            isRecordingMouseClicksOptionHovered = nextMouseClicksHovered
             needsDisplay = true
         }
     }

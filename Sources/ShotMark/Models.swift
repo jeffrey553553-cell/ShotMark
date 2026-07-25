@@ -25,8 +25,13 @@ enum CaptureCommitAction {
     case copyToClipboard
     case saveToFile
     case pinToScreen
-    case recordVideo(audioMode: VideoAudioMode)
+    case recordVideo(options: VideoRecordingOptions)
     case longScreenshot
+}
+
+struct VideoRecordingOptions: Equatable {
+    let audioMode: VideoAudioMode
+    let showsMouseClicks: Bool
 }
 
 enum VideoAudioMode: String, CaseIterable {
@@ -60,8 +65,29 @@ enum VideoAudioMode: String, CaseIterable {
 enum RecordingUIState {
     case idle
     case starting
-    case recording(startedAt: Date)
+    case recording(startedAt: Date, elapsedBeforeStart: TimeInterval)
+    case pausing(elapsed: TimeInterval)
+    case paused(elapsed: TimeInterval)
+    case resuming(elapsed: TimeInterval)
     case stopping
+
+    func elapsed(at date: Date = Date()) -> TimeInterval {
+        switch self {
+        case .recording(let startedAt, let elapsedBeforeStart):
+            return max(0, elapsedBeforeStart + date.timeIntervalSince(startedAt))
+        case .pausing(let elapsed), .paused(let elapsed), .resuming(let elapsed):
+            return max(0, elapsed)
+        case .idle, .starting, .stopping:
+            return 0
+        }
+    }
+
+    var isPaused: Bool {
+        if case .paused = self {
+            return true
+        }
+        return false
+    }
 }
 
 struct CaptureResult {
@@ -175,6 +201,7 @@ final class AppSettings {
     let hidesDockIcon: Bool
     private let defaults = UserDefaults.standard
     private let shortcutKey = "shotmark.captureShortcut"
+    private let recordingShowsMouseClicksKey = "shotmark.recordingShowsMouseClicks"
 
     private init() {
         saveDirectory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
@@ -196,6 +223,11 @@ final class AppSettings {
 
     var shortcutDescription: String {
         shortcut.displayName
+    }
+
+    var recordingShowsMouseClicks: Bool {
+        get { defaults.bool(forKey: recordingShowsMouseClicksKey) }
+        set { defaults.set(newValue, forKey: recordingShowsMouseClicksKey) }
     }
 
     func setShortcut(_ shortcut: GlobalShortcut) {
