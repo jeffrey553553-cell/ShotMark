@@ -162,6 +162,7 @@ final class LongScreenshotSessionController {
     private var hotKeyService: LongScreenshotHotKeyService?
     private var throttledScrollCaptureWorkItem: DispatchWorkItem?
     private var trailingScrollCaptureWorkItem: DispatchWorkItem?
+    private var alignmentRetryWorkItem: DispatchWorkItem?
     private var lastScrollCaptureAt = Date.distantPast
     private var pendingExpectedScrollDeltaPixels = 0
     private var lastScrollDirectionSign: Int?
@@ -175,9 +176,12 @@ final class LongScreenshotSessionController {
     private var frameWindow: NSPanel?
     private var previewWindow: NSPanel?
     private var previewView: LongScreenshotPreviewView?
+    private var alignmentRetryCount = 0
 
     private let scrollCaptureInterval: TimeInterval = 0.095
     private let trailingCaptureDelay: TimeInterval = 0.14
+    private let alignmentRetryDelay: TimeInterval = 0.09
+    private let maximumAlignmentRetryCount = 2
     private let scrollDirectionThreshold: CGFloat = 0.1
 
     init(selection: CaptureSelection) {
@@ -318,6 +322,9 @@ final class LongScreenshotSessionController {
         }
 
         lastScrollDirectionSign = sign
+        alignmentRetryWorkItem?.cancel()
+        alignmentRetryWorkItem = nil
+        alignmentRetryCount = 0
         pendingExpectedScrollDeltaPixels += expectedScrollDeltaPixels(from: event, verticalDelta: verticalDelta)
         scheduleCaptureAfterScroll()
     }
@@ -468,6 +475,16 @@ final class LongScreenshotSessionController {
         )
         stitchedImageCache = update?.mergedImage
         frameRing.markCommitted(sequenceNumber: sequenceNumber)
+        if let update {
+            switch update.outcome {
+            case .ignoredAlignmentFailed:
+                scheduleAlignmentRetry()
+            case .initialized, .appended, .ignoredNoMovement, .ignoredCoveredContent:
+                alignmentRetryWorkItem?.cancel()
+                alignmentRetryWorkItem = nil
+                alignmentRetryCount = 0
+            }
+        }
         if let update,
            let scrollDirectionSign,
            case .appended = update.outcome,
@@ -489,6 +506,21 @@ final class LongScreenshotSessionController {
             updateControlView(status: update?.statusText ?? "未检测到新内容")
             updatePreview(status: update?.previewStatusText ?? "未追加")
         }
+    }
+
+    private func scheduleAlignmentRetry() {
+        guard !finishAfterCapture, alignmentRetryCount < maximumAlignmentRetryCount else { return }
+        alignmentRetryWorkItem?.cancel()
+        alignmentRetryCount += 1
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, !self.finishAfterCapture else { return }
+            self.alignmentRetryWorkItem = nil
+            self.updateControlView(status: "正在稳定画面并重试...")
+            self.updatePreview(status: "自动修复拼接")
+            self.captureFrame()
+        }
+        alignmentRetryWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + alignmentRetryDelay, execute: workItem)
     }
 
     private func finishCaptureTurn() {
@@ -721,6 +753,8 @@ final class LongScreenshotSessionController {
         throttledScrollCaptureWorkItem = nil
         trailingScrollCaptureWorkItem?.cancel()
         trailingScrollCaptureWorkItem = nil
+        alignmentRetryWorkItem?.cancel()
+        alignmentRetryWorkItem = nil
         if let localScrollMonitor {
             NSEvent.removeMonitor(localScrollMonitor)
             self.localScrollMonitor = nil
@@ -753,6 +787,7 @@ final class LongScreenshotSessionController {
         previewView = nil
         stitchedImageCache = nil
         pendingExpectedScrollDeltaPixels = 0
+        alignmentRetryCount = 0
         lastScrollDirectionSign = nil
         stitchDirectionByScrollSign.removeAll()
         isStreamSourceReady = false

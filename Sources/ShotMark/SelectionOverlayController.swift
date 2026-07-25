@@ -10,8 +10,9 @@ final class SelectionOverlayController {
     weak var delegate: SelectionOverlayControllerDelegate?
     private var windows: [NSWindow] = []
     private let frozenSnapshots: [ScreenSnapshot]
-    private weak var activeSelectionView: SelectionOverlayView?
+    private var activeSelectionView: SelectionOverlayView?
     private var interactionEventMonitor: Any?
+    private let interactionGate = SelectionInteractionGate()
 
     init(frozenSnapshots: [ScreenSnapshot] = []) {
         self.frozenSnapshots = frozenSnapshots
@@ -23,8 +24,8 @@ final class SelectionOverlayController {
             let view = SelectionOverlayView(screen: screen, frozenSnapshot: frozenSnapshot(for: screen))
             view.onCancel = { [weak self] in self?.cancel() }
             view.onInteractionStarted = { [weak self, weak view] in
-                guard let self, let view else { return }
-                self.activateSelectionView(view)
+                guard let self, let view else { return false }
+                return self.activateSelectionView(view)
             }
             view.onCommit = { [weak self] selection, frozenCapture, annotations, action in
                 guard let self else { return }
@@ -92,13 +93,23 @@ final class SelectionOverlayController {
         }
         windows.removeAll()
         activeSelectionView = nil
+        interactionGate.reset()
     }
 
-    private func activateSelectionView(_ view: SelectionOverlayView) {
+    @discardableResult
+    private func activateSelectionView(_ view: SelectionOverlayView) -> Bool {
+        guard interactionGate.claim(view) else {
+            view.setInteractionLocked(true)
+            if let activeSelectionView {
+                activeSelectionView.window?.makeKeyAndOrderFront(nil)
+                activeSelectionView.prepareForCaptureFocus()
+            }
+            return false
+        }
         if let activeSelectionView, activeSelectionView !== view {
             activeSelectionView.window?.makeKeyAndOrderFront(nil)
             activeSelectionView.prepareForCaptureFocus()
-            return
+            return false
         }
         activeSelectionView = view
         windows.forEach { window in
@@ -107,6 +118,7 @@ final class SelectionOverlayController {
         }
         view.window?.makeKeyAndOrderFront(nil)
         view.prepareForCaptureFocus()
+        return true
     }
 
     private func installInteractionEventMonitor() {
@@ -135,8 +147,7 @@ final class SelectionOverlayController {
             }
 
             guard event.type == .leftMouseDown else { return nil }
-            self.activateSelectionView(eventView)
-            return event
+            return self.activateSelectionView(eventView) ? event : nil
         }
     }
 
@@ -176,7 +187,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     var onCommit: ((CaptureSelection, CaptureResult?, [Annotation], CaptureCommitAction) -> Void)?
     var onOCRCapture: ((CaptureSelection, @escaping (Result<CaptureResult, Error>) -> Void) -> Void)?
     var onCancel: (() -> Void)?
-    var onInteractionStarted: (() -> Void)?
+    var onInteractionStarted: (() -> Bool)?
 
     private enum RectHandle {
         case topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left
@@ -472,15 +483,12 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     override func mouseDown(with event: NSEvent) {
-        if isInteractionLocked {
-            onInteractionStarted?()
-            return
-        }
+        guard !isInteractionLocked else { return }
+        guard onInteractionStarted?() != false else { return }
         if !event.modifierFlags.contains(.command) {
             isMagnifierVisible = false
             magnifierPoint = nil
         }
-        onInteractionStarted?()
         window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
         if ocrPanelController != nil {

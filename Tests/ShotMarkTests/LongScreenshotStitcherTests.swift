@@ -102,7 +102,55 @@ final class LongScreenshotStitcherTests: XCTestCase {
         XCTAssertEqual(prepended.acceptedFrameCount, 3)
     }
 
-    private func makeFrame(contentOffset: Int) throws -> CGImage {
+    func testHistoricalViewportRecoversAfterLargeReverseJump() throws {
+        let stitcher = LongScreenshotStitcher()
+        for (index, offset) in [200, 280, 360, 440].enumerated() {
+            _ = try XCTUnwrap(stitcher.append(
+                makeFrame(contentOffset: offset),
+                expectedDeltaPixels: index == 0 ? nil : 80,
+                expectedDirection: index == 0 ? nil : .downward
+            ))
+        }
+
+        let recovered = try XCTUnwrap(stitcher.append(
+            makeFrame(contentOffset: 200),
+            expectedDeltaPixels: 240,
+            expectedDirection: .upward
+        ))
+        guard case .ignoredCoveredContent = recovered.outcome else {
+            return XCTFail("Expected a historical viewport recovery, got \(recovered.outcome)")
+        }
+
+        let prepended = try XCTUnwrap(stitcher.append(
+            makeFrame(contentOffset: 120),
+            expectedDeltaPixels: 80,
+            expectedDirection: .upward
+        ))
+        guard case .appended(let deltaY) = prepended.outcome else {
+            return XCTFail("Expected new content above to be prepended, got \(prepended.outcome)")
+        }
+        XCTAssertEqual(deltaY, 80)
+        XCTAssertEqual(prepended.outputHeight, 520)
+    }
+
+    func testLocalizedAnimatedBandDoesNotDiscardOtherwiseAlignedFrame() throws {
+        let stitcher = LongScreenshotStitcher()
+        _ = try XCTUnwrap(stitcher.append(makeFrame(contentOffset: 200)))
+
+        let animated = try makeFrame(contentOffset: 280, animatedBand: 92..<124)
+        let update = try XCTUnwrap(stitcher.append(
+            animated,
+            expectedDeltaPixels: 80,
+            expectedDirection: .downward
+        ))
+
+        guard case .appended(let deltaY) = update.outcome else {
+            return XCTFail("Expected robust matching around animated content, got \(update.outcome)")
+        }
+        XCTAssertEqual(deltaY, 80)
+    }
+
+    private func makeFrame(contentOffset: Int, animatedBand: Range<Int>? = nil) throws -> CGImage {
         let width = 180
         let headerHeight = 20
         let contentHeight = 200
@@ -121,11 +169,19 @@ final class LongScreenshotStitcherTests: XCTestCase {
                     color = (38, 44, 52)
                 } else {
                     let globalY = contentOffset + y - headerHeight
-                    color = (
-                        UInt8((globalY * 17 + x * 3) % 220 + 20),
-                        UInt8((globalY * 7 + x * 11) % 210 + 25),
-                        UInt8((globalY * 13 + x * 5) % 200 + 30)
-                    )
+                    if animatedBand?.contains(y) == true {
+                        color = (
+                            UInt8((x * 29 + y * 3) % 240),
+                            UInt8((x * 5 + y * 31) % 240),
+                            UInt8((x * 17 + y * 13) % 240)
+                        )
+                    } else {
+                        color = (
+                            UInt8((globalY * 17 + x * 3) % 220 + 20),
+                            UInt8((globalY * 7 + x * 11) % 210 + 25),
+                            UInt8((globalY * 13 + x * 5) % 200 + 30)
+                        )
+                    }
                 }
                 pixels[offset] = color.0
                 pixels[offset + 1] = color.1

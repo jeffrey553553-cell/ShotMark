@@ -174,6 +174,11 @@ final class LongScreenshotStitcher {
         let rowCount: Int
     }
 
+    private struct ViewportAnchor {
+        let raster: RasterImage
+        let start: Int
+    }
+
     private struct OverlapMetrics {
         let averageDifference: Double
         let strongBandCount: Int
@@ -221,6 +226,7 @@ final class LongScreenshotStitcher {
     private var currentViewportStart = 0
     private var coveredStart = 0
     private var coveredEnd = 0
+    private var viewportAnchors: [ViewportAnchor] = []
 
     private(set) var acceptedFrameCount = 0
 
@@ -242,6 +248,7 @@ final class LongScreenshotStitcher {
         currentViewportStart = 0
         coveredStart = 0
         coveredEnd = 0
+        viewportAnchors.removeAll()
         acceptedFrameCount = 0
     }
 
@@ -259,6 +266,7 @@ final class LongScreenshotStitcher {
             stitchDirection = .unresolved
             lastMatch = nil
             cachedMergedImage = image
+            viewportAnchors = [ViewportAnchor(raster: raster, start: 0)]
             acceptedFrameCount = 1
             return update(outcome: .initialized, mergedImage: image, confidence: 1)
         }
@@ -289,7 +297,7 @@ final class LongScreenshotStitcher {
             trailingStaticWidth: rightBand
         )
 
-        let match = bestMatch(
+        let adjacentMatch = bestMatch(
             previous: lastRaster,
             current: raster,
             headerHeight: topBand,
@@ -300,16 +308,28 @@ final class LongScreenshotStitcher {
             expectedDirection: expectedDirection,
             visionEstimate: visionEstimate
         )
+        let resolved = resolvedMatch(
+            adjacentMatch: adjacentMatch,
+            adjacentStart: currentViewportStart,
+            current: raster,
+            headerHeight: topBand,
+            footerHeight: bottomBand,
+            leadingStaticWidth: leftBand,
+            trailingStaticWidth: rightBand,
+            expectedDirection: expectedDirection
+        )
+        let candidateMatch = resolved?.match
 
         if frameDifference < 8.5,
            visionEstimate?.isStrong != true,
-           isLikelyBoundaryOrDuplicate(match: match, expectedDeltaPixels: expectedDeltaPixels) {
+           isLikelyBoundaryOrDuplicate(match: candidateMatch, expectedDeltaPixels: expectedDeltaPixels) {
             return update(outcome: .ignoredNoMovement, confidence: 1)
         }
 
-        guard let match, isAcceptable(match, expectedDeltaPixels: expectedDeltaPixels) else {
+        guard let resolved, isAcceptable(candidateMatch, expectedDeltaPixels: resolved.usedHistoricalAnchor ? nil : expectedDeltaPixels) else {
             return update(outcome: .ignoredAlignmentFailed, confidence: 0)
         }
+        let match = resolved.match
 
         if stitchDirection == .unresolved {
             headerHeight = topBand
@@ -329,10 +349,10 @@ final class LongScreenshotStitcher {
         let novelRowCount: Int
         switch match.direction {
         case .downward:
-            nextViewportStart = currentViewportStart + match.deltaY
+            nextViewportStart = resolved.anchorStart + match.deltaY
             novelRowCount = max(0, nextViewportStart + contentHeight - coveredEnd)
         case .upward:
-            nextViewportStart = currentViewportStart - match.deltaY
+            nextViewportStart = resolved.anchorStart - match.deltaY
             novelRowCount = max(0, coveredStart - nextViewportStart)
         case .unresolved:
             return update(outcome: .ignoredAlignmentFailed, confidence: 0)
@@ -341,6 +361,7 @@ final class LongScreenshotStitcher {
         currentViewportStart = nextViewportStart
         self.lastRaster = raster
         self.lastMatch = match
+        rememberViewport(raster, start: nextViewportStart)
 
         guard novelRowCount > 0 else {
             return update(outcome: .ignoredCoveredContent, confidence: confidence(for: match))
@@ -428,6 +449,86 @@ final class LongScreenshotStitcher {
         coveredStart = 0
         coveredEnd = rowCount
         cachedMergedImage = nil
+    }
+
+    private struct ResolvedMatch {
+        let match: Match
+        let anchorStart: Int
+        let usedHistoricalAnchor: Bool
+    }
+
+    private func resolvedMatch(
+        adjacentMatch: Match?,
+        adjacentStart: Int,
+        current: RasterImage,
+        headerHeight: Int,
+        footerHeight: Int,
+        leadingStaticWidth: Int,
+        trailingStaticWidth: Int,
+        expectedDirection: LongScreenshotStitchDirection?
+    ) -> ResolvedMatch? {
+        if let adjacentMatch {
+            return ResolvedMatch(
+                match: adjacentMatch,
+                anchorStart: adjacentStart,
+                usedHistoricalAnchor: false
+            )
+        }
+
+        var candidates: [ResolvedMatch] = []
+        for anchor in viewportAnchors.reversed() {
+            let visionEstimate = estimateVisionAlignment(
+                previous: anchor.raster,
+                current: current,
+                headerHeight: headerHeight,
+                footerHeight: footerHeight,
+                leadingStaticWidth: leadingStaticWidth,
+                trailingStaticWidth: trailingStaticWidth
+            )
+            guard let match = bestMatch(
+                previous: anchor.raster,
+                current: current,
+                headerHeight: headerHeight,
+                footerHeight: footerHeight,
+                leadingStaticWidth: leadingStaticWidth,
+                trailingStaticWidth: trailingStaticWidth,
+                expectedDeltaPixels: nil,
+                expectedDirection: expectedDirection,
+                visionEstimate: visionEstimate
+            ) else {
+                continue
+            }
+            candidates.append(ResolvedMatch(
+                match: match,
+                anchorStart: anchor.start,
+                usedHistoricalAnchor: true
+            ))
+        }
+
+        return candidates.min { lhs, rhs in
+            if abs(lhs.match.totalScore - rhs.match.totalScore) > 0.4 {
+                return lhs.match.totalScore < rhs.match.totalScore
+            }
+            return abs(lhs.anchorStart - currentViewportStart) < abs(rhs.anchorStart - currentViewportStart)
+        }
+    }
+
+    private func rememberViewport(_ raster: RasterImage, start: Int) {
+        let replacementTolerance = max(4, raster.height / 80)
+        if let index = viewportAnchors.lastIndex(where: { abs($0.start - start) <= replacementTolerance }) {
+            viewportAnchors[index] = ViewportAnchor(raster: raster, start: start)
+        } else {
+            viewportAnchors.append(ViewportAnchor(raster: raster, start: start))
+        }
+
+        let maximumAnchorCount = 24
+        guard viewportAnchors.count > maximumAnchorCount else { return }
+        let firstIndex = viewportAnchors.indices.min(by: { viewportAnchors[$0].start < viewportAnchors[$1].start })
+        let lastIndex = viewportAnchors.indices.max(by: { viewportAnchors[$0].start < viewportAnchors[$1].start })
+        let protected = Set([firstIndex, lastIndex].compactMap { $0 })
+        if let removable = viewportAnchors.indices.first(where: { !protected.contains($0) }) {
+            viewportAnchors.remove(at: removable)
+        }
     }
 
     private func sliceStartRow(for direction: LongScreenshotStitchDirection, in raster: RasterImage, deltaY: Int) -> Int? {
@@ -793,8 +894,12 @@ final class LongScreenshotStitcher {
         }
 
         guard !differences.isEmpty else { return nil }
-        let average = differences.reduce(0, +) / Double(differences.count)
-        let strongThreshold = max(8.2, min(10.5, average * 0.92))
+        let sortedDifferences = differences.sorted()
+        let retainedCount = max(3, Int(ceil(Double(sortedDifferences.count) * 0.75)))
+        let retainedDifferences = sortedDifferences.prefix(retainedCount)
+        let average = retainedDifferences.reduce(0, +) / Double(retainedDifferences.count)
+        let median = sortedDifferences[sortedDifferences.count / 2]
+        let strongThreshold = max(9.0, min(13.5, median * 1.35))
         let strongBandCount = differences.filter { $0 <= strongThreshold }.count
         let worst = differences.max() ?? average
         let variance = differences.reduce(0.0) { partial, value in
@@ -989,10 +1094,11 @@ final class LongScreenshotStitcher {
         guard let match else { return false }
         guard match.pixelScore < 18, match.totalScore < 30 else { return false }
         let requiredStrongBands = max(3, match.bandCount / 2)
+        let strongBandRatio = Double(match.strongBandCount) / Double(max(1, match.bandCount))
         if match.strongBandCount < requiredStrongBands, match.pixelScore > 8.8 {
             return false
         }
-        if match.worstBandScore > 28, match.bandVariance > 18 {
+        if match.worstBandScore > 42, match.bandVariance > 36, strongBandRatio < 0.65 {
             return false
         }
         if let expectedDeltaPixels, expectedDeltaPixels > 0 {
