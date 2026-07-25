@@ -270,7 +270,7 @@ Mark each item PASS/FAIL after running it.
 | OCR | Click OCR on Chinese+English text | OCR panel shows recognized text; copy all works | |
 | OCR | Open OCR panel and press Esc | OCR panel closes and screenshot/editor focus returns | |
 | Toast | Save or copy in light mode | Success toast remains readable with dark pill, check icon and white text | |
-| Recording | Select area -> record -> choose quality | Recording overlay/timer appears; Stop saves MP4 to Downloads without red frame/overlay in the video | |
+| Recording | Select area -> record -> choose audio mode | Recording uses the selection's native pixel size; overlay/timer appears; Stop saves MP4 to Downloads without red frame/overlay in the video | |
 | Recording audio | Record with Silent/System/Microphone/System+Microphone | Selected audio mode is captured; microphone modes prompt clearly when permission is missing | |
 | Recording stop | Press configured screenshot shortcut while recording | Recording stops and saved file plays | |
 | Mosaic | Draw mosaic over text | Text under the drawn area is blurred, no visible border is drawn | |

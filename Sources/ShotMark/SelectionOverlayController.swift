@@ -1408,7 +1408,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         guard isRecordingMenuOpen, let panel = recordingMenuFrame(for: rect) else { return }
 
         drawFloatingPanelBackground(in: panel, radius: 12, alpha: 0.86)
-        drawMenuSectionTitle("选择音频并开始录制", at: CGPoint(x: panel.minX + 14, y: panel.maxY - 25))
+        drawMenuSectionTitle("选择音频 · 按原尺寸录制", at: CGPoint(x: panel.minX + 14, y: panel.maxY - 25))
         for (index, audioMode) in VideoAudioMode.allCases.enumerated() {
             let row = audioModeOptionFrame(index: index, in: panel)
             if audioMode == selectedAudioMode {
