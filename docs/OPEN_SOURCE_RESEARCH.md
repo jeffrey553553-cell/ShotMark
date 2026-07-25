@@ -25,6 +25,7 @@ adapted because upstream projects can change.
 | [ScrollSnap](https://github.com/Brkgng/ScrollSnap) | MIT | Scrolling capture, Vision translation registration, live preview | Secondary long-screenshot reference |
 | [Kap](https://github.com/wulkano/Kap) | MIT | Recording lifecycle, export workflows, plugin-style post-processing | Candidate reference for recording pause/resume and export |
 | [Maccy](https://github.com/p0deje/Maccy) | MIT | Local history storage, retention, search, keyboard navigation | Candidate reference for capture history |
+| [Shotnix](https://github.com/Rishabh-Bansal/Shotnix) | MIT | Pinned-window copy, save, close and contextual actions | Pin interaction reference; ShotMark uses its own AppKit implementation |
 | [Flameshot](https://github.com/flameshot-org/flameshot) | GPL-3.0 | Annotation shortcuts, pixel nudging, constrained drawing, export actions | Interaction reference only |
 | [ShareX](https://github.com/ShareX/ShareX) | GPL-3.0 | Capture workflows, scrolling capture fallbacks, history and destinations | Interaction and test-matrix reference only |
 | [Mio](https://github.com/iSoldLeo/Mio) | No declared license when evaluated | Fast frozen-display activation, transparent window capture | Behavior reference only |
@@ -40,8 +41,8 @@ adapted because upstream projects can change.
 | Annotation | Editable rectangle, ellipse, arrow, freehand pen, non-compounding highlighter, number, text, callout and blur | capcap, Snapzy, Flameshot | Add constrained geometry, spotlight and multi-selection |
 | OCR and translation | Implemented with Vision and Translation | Snapzy, Apple Vision | Preserve layout, language chooser and searchable OCR history |
 | Scrolling capture | Bidirectional stitching with pixel matching and Vision recovery | Snapzy, ScrollSnap, ShareX | Add session metrics, safety state and fixture benchmark corpus |
-| Recording | MP4, quality and audio modes | Kap, Snapzy | Pause/resume, GIF export, click highlight and keystroke overlay |
-| Pinning | Implemented | Snapzy | Opacity control, zoom and multi-pin management |
+| Recording | Native selection-size MP4 with silent, system, microphone and mixed audio modes | Kap, Snapzy | Pause/resume, GIF export, click highlight and keystroke overlay |
+| Pinning | Independent windows with constrained zoom, opacity, copy/save, mouse pass-through lock and multi-pin management | Snapzy, Shotnix | Drag-out, pin groups and persisted workspaces |
 | Export | PNG clipboard and Downloads save | Snapzy, ShareX | PNG/JPEG/WebP, naming template, configurable destination and drag-out |
 | History | Searchable local image/video history, private media copies, 30-day/200-item retention and quick result card implemented | Maccy, Snapzy | Add configurable retention, favorites and OCR text indexing |
 | Updates | Manual GitHub Release | Snapzy | Signed Developer ID build, notarization and Sparkle update feed |

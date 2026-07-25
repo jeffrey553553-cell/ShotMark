@@ -3,6 +3,7 @@ import Foundation
 
 final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
     var onRecordingStateChanged: ((RecordingUIState) -> Void)?
+    var onPinnedCountChanged: ((Int) -> Void)?
 
     private var overlayController: SelectionOverlayController?
     private var editorController: EditorWindowController?
@@ -32,6 +33,19 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
 
     var currentRecordingState: RecordingUIState {
         recordingState
+    }
+
+    var pinnedScreenshotCount: Int {
+        pinnedControllers.count
+    }
+
+    func bringPinnedScreenshotsToFront() {
+        pinnedControllers.forEach { $0.bringToFront() }
+    }
+
+    func closeAllPinnedScreenshots() {
+        let controllers = pinnedControllers
+        controllers.forEach { $0.close() }
     }
 
     func handlePrimaryShortcut() {
@@ -178,15 +192,19 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
 
                 let controller = PinnedScreenshotWindowController(
                     image: image,
+                    pngData: data,
                     pointSize: capture.imagePointSize,
                     sourceRect: capture.selectionRectInScreen,
-                    screen: screen(containing: capture.selectionRectInScreen)
+                    screen: screen(containing: capture.selectionRectInScreen),
+                    createdAt: capture.createdAt
                 )
                 controller.onClose = { [weak self, weak controller] in
                     guard let controller else { return }
                     self?.pinnedControllers.removeAll { $0 === controller }
+                    self?.notifyPinnedCountChanged()
                 }
                 pinnedControllers.append(controller)
+                notifyPinnedCountChanged()
                 controller.show()
                 recordImage(
                     data: data,
@@ -411,6 +429,10 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
             .map { ($0, $0.frame.intersection(rect).width * $0.frame.intersection(rect).height) }
             .max { $0.1 < $1.1 }?
             .0
+    }
+
+    private func notifyPinnedCountChanged() {
+        onPinnedCountChanged?(pinnedControllers.count)
     }
 
     private func showError(_ error: Error, title: String = "截图失败") {

@@ -6,6 +6,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var screenRecordingStatusMenuItem: NSMenuItem?
     private var accessibilityStatusMenuItem: NSMenuItem?
     private var microphoneStatusMenuItem: NSMenuItem?
+    private var pinnedMenuItem: NSMenuItem?
+    private var showPinnedMenuItem: NSMenuItem?
+    private var closePinnedMenuItem: NSMenuItem?
     private var recordingTimer: Timer?
     private var recordingStartedAt: Date?
     private var hotKeyService: HotKeyService?
@@ -18,6 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let coordinator = ScreenshotCoordinator()
         coordinator.onRecordingStateChanged = { [weak self] state in
             self?.updateRecordingState(state)
+        }
+        coordinator.onPinnedCountChanged = { [weak self] count in
+            self?.updatePinnedMenuItems(count: count)
         }
         self.coordinator = coordinator
         configureStatusItem()
@@ -45,6 +51,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let primaryItem = NSMenuItem(title: primaryMenuTitle(), action: #selector(primaryActionMenuItem), keyEquivalent: "")
         menu.addItem(primaryItem)
         menu.addItem(NSMenuItem(title: "截图历史...", action: #selector(openHistory), keyEquivalent: ""))
+        let pinnedItem = NSMenuItem(title: "钉图（0）", action: nil, keyEquivalent: "")
+        let pinnedMenu = NSMenu()
+        let showPinnedItem = NSMenuItem(title: "显示全部钉图", action: #selector(showAllPinnedScreenshots), keyEquivalent: "")
+        showPinnedItem.isEnabled = false
+        pinnedMenu.addItem(showPinnedItem)
+        let closePinnedItem = NSMenuItem(title: "关闭全部钉图", action: #selector(closeAllPinnedScreenshots), keyEquivalent: "")
+        closePinnedItem.isEnabled = false
+        pinnedMenu.addItem(closePinnedItem)
+        pinnedItem.submenu = pinnedMenu
+        menu.addItem(pinnedItem)
         menu.addItem(.separator())
         let screenRecordingStatusItem = NSMenuItem(title: "屏幕录制权限：检查中", action: nil, keyEquivalent: "")
         screenRecordingStatusItem.isEnabled = false
@@ -68,6 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         screenRecordingStatusMenuItem = screenRecordingStatusItem
         accessibilityStatusMenuItem = accessibilityStatusItem
         microphoneStatusMenuItem = microphoneStatusItem
+        pinnedMenuItem = pinnedItem
+        showPinnedMenuItem = showPinnedItem
+        closePinnedMenuItem = closePinnedItem
         statusItem = item
     }
 
@@ -94,6 +113,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         historyWindowController?.showWindow(nil)
         historyWindowController?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func showAllPinnedScreenshots() {
+        coordinator?.bringPinnedScreenshotsToFront()
+    }
+
+    @objc private func closeAllPinnedScreenshots() {
+        coordinator?.closeAllPinnedScreenshots()
     }
 
     @objc private func openSettings() {
@@ -259,6 +286,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         microphoneStatusMenuItem?.title = PermissionService.hasMicrophoneAccess
             ? "麦克风权限：已允许"
             : "麦克风权限：未允许"
+    }
+
+    private func updatePinnedMenuItems(count: Int) {
+        pinnedMenuItem?.title = "钉图（\(count)）"
+        showPinnedMenuItem?.isEnabled = count > 0
+        closePinnedMenuItem?.isEnabled = count > 0
     }
 
     private func showError(title: String, message: String) {

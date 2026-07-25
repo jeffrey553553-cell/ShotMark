@@ -69,6 +69,9 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "case callout, rectangle, ellipse, arrow, pen, highlighter, number, text, mosaic, ocr, pin, longScreenshot, record, undo, redo, delete" Sources/ShotMark/SelectionOverlayController.swift
   ! rg -q "VideoQualityPreset|720p|1080p|2K|recordQuality" Sources/ShotMark
   rg -q "nativeOutputPixelSize" Sources/ShotMark/VideoRecordingService.swift
+  rg -q "PinnedScreenshotGeometry" Sources/ShotMark/PinnedScreenshotWindowController.swift
+  rg -q "onPinnedCountChanged" Sources/ShotMark/ScreenshotCoordinator.swift Sources/ShotMark/AppDelegate.swift
+  rg -q "passThroughTimer" Sources/ShotMark/PinnedScreenshotWindowController.swift
   rg -q "case callout" Sources/ShotMark/Models.swift
   rg -q "case ellipse" Sources/ShotMark/Models.swift
   rg -q "case freehand" Sources/ShotMark/Models.swift
@@ -266,7 +269,9 @@ Mark each item PASS/FAIL after running it.
 | Small area | Select small area around text | Toolbar stays usable; output only contains selected area | |
 | Save | Press Space after annotations | PNG saved to Downloads with annotations applied | |
 | Copy | Press Cmd+C or Enter | Clipboard image pastes into Preview/Notes/Chat correctly | |
-| Pin | Click pin icon | Pinned image floats above other windows; close button removes it | |
+| Pin | Click pin icon, then scroll/pinch and right-click | Pinned image keeps its aspect ratio; zoom, opacity, copy/save and close work | |
+| Pin lock | Lock a pinned image, then move the pointer away and back | Image area passes mouse events through; lock control remains available to unlock | |
+| Multiple pins | Create two pins, then use the status menu | Count is correct; Show All and Close All affect every pin | |
 | OCR | Click OCR on Chinese+English text | OCR panel shows recognized text; copy all works | |
 | OCR | Open OCR panel and press Esc | OCR panel closes and screenshot/editor focus returns | |
 | Toast | Save or copy in light mode | Success toast remains readable with dark pill, check icon and white text | |
