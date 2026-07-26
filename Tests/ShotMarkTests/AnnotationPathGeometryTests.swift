@@ -111,6 +111,62 @@ final class AnnotationPathGeometryTests: XCTestCase {
         )
     }
 
+    func testConstrainedRectSupportsSquareAndCenterDrawing() {
+        let bounds = CGRect(x: 0, y: 0, width: 300, height: 200)
+
+        let square = AnnotationConstraintGeometry.constrainedRect(
+            anchor: CGPoint(x: 40, y: 40),
+            current: CGPoint(x: 120, y: 90),
+            constrainsToSquare: true,
+            drawsFromCenter: false,
+            inside: bounds
+        )
+        XCTAssertEqual(square, CGRect(x: 40, y: 40, width: 80, height: 80))
+
+        let centered = AnnotationConstraintGeometry.constrainedRect(
+            anchor: CGPoint(x: 150, y: 100),
+            current: CGPoint(x: 190, y: 130),
+            constrainsToSquare: false,
+            drawsFromCenter: true,
+            inside: bounds
+        )
+        XCTAssertEqual(centered, CGRect(x: 110, y: 70, width: 80, height: 60))
+    }
+
+    func testCenteredSquareStopsAtNearestCanvasEdge() {
+        let rect = AnnotationConstraintGeometry.constrainedRect(
+            anchor: CGPoint(x: 30, y: 50),
+            current: CGPoint(x: 180, y: 180),
+            constrainsToSquare: true,
+            drawsFromCenter: true,
+            inside: CGRect(x: 0, y: 0, width: 300, height: 200)
+        )
+
+        XCTAssertEqual(rect, CGRect(x: 0, y: 20, width: 60, height: 60))
+    }
+
+    func testLineMeasurementReportsLengthAndAngle() {
+        let measurement = AnnotationConstraintGeometry.lineMeasurement(
+            from: .zero,
+            to: CGPoint(x: 30, y: 40)
+        )
+
+        XCTAssertEqual(measurement.length, 50, accuracy: 0.001)
+        XCTAssertEqual(measurement.angleDegrees, 53.130, accuracy: 0.001)
+    }
+
+    func testAspectConstrainedResizePreservesRatioAndCanvasBounds() {
+        let rect = AnnotationConstraintGeometry.aspectConstrainedRect(
+            fixedCorner: CGPoint(x: 40, y: 40),
+            movingCorner: CGPoint(x: 280, y: 190),
+            aspectRatio: 2,
+            inside: CGRect(x: 0, y: 0, width: 220, height: 160)
+        )
+
+        XCTAssertEqual(rect.maxX, 220, accuracy: 0.001)
+        XCTAssertEqual(rect.width / rect.height, 2, accuracy: 0.001)
+    }
+
     func testLineConstraintSnapsToNearestFortyFiveDegrees() {
         let horizontal = AnnotationConstraintGeometry.snappedLineEndpoint(
             from: .zero,

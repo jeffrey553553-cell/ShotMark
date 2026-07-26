@@ -133,6 +133,26 @@ final class LongScreenshotStitcherTests: XCTestCase {
         XCTAssertEqual(prepended.outputHeight, 520)
     }
 
+    func testBidirectionalMergedPixelsContainEveryContentRowExactlyOnce() throws {
+        let stitcher = LongScreenshotStitcher()
+        _ = try XCTUnwrap(stitcher.append(makeFrame(contentOffset: 200)))
+        _ = try XCTUnwrap(stitcher.append(
+            makeFrame(contentOffset: 280),
+            expectedDeltaPixels: 80,
+            expectedDirection: .downward
+        ))
+        _ = try XCTUnwrap(stitcher.append(
+            makeFrame(contentOffset: 140),
+            expectedDeltaPixels: 140,
+            expectedDirection: .upward
+        ))
+
+        let merged = try XCTUnwrap(stitcher.mergedImage())
+        let sampledRows = try decodedGlobalRows(in: merged, sampleX: 90, searchRange: 0...800)
+
+        XCTAssertEqual(sampledRows, Array(140...479))
+    }
+
     func testLocalizedAnimatedBandDoesNotDiscardOtherwiseAlignedFrame() throws {
         let stitcher = LongScreenshotStitcher()
         _ = try XCTUnwrap(stitcher.append(makeFrame(contentOffset: 200)))
@@ -176,11 +196,7 @@ final class LongScreenshotStitcherTests: XCTestCase {
                             UInt8((x * 17 + y * 13) % 240)
                         )
                     } else {
-                        color = (
-                            UInt8((globalY * 17 + x * 3) % 220 + 20),
-                            UInt8((globalY * 7 + x * 11) % 210 + 25),
-                            UInt8((globalY * 13 + x * 5) % 200 + 30)
-                        )
+                        color = contentColor(globalY: globalY, x: x)
                     }
                 }
                 pixels[offset] = color.0
@@ -206,5 +222,33 @@ final class LongScreenshotStitcherTests: XCTestCase {
             shouldInterpolate: false,
             intent: .defaultIntent
         ))
+    }
+
+    private func contentColor(globalY: Int, x: Int) -> (UInt8, UInt8, UInt8) {
+        (
+            UInt8((globalY * 17 + x * 3) % 220 + 20),
+            UInt8((globalY * 7 + x * 11) % 210 + 25),
+            UInt8((globalY * 13 + x * 5) % 200 + 30)
+        )
+    }
+
+    private func decodedGlobalRows(
+        in image: CGImage,
+        sampleX: Int,
+        searchRange: ClosedRange<Int>
+    ) throws -> [Int] {
+        let data = try XCTUnwrap(image.dataProvider?.data)
+        let bytes = CFDataGetBytePtr(data)
+        let bytesPerRow = image.bytesPerRow
+        return try (0..<image.height).map { row in
+            let offset = row * bytesPerRow + sampleX * 4
+            let sampled = (bytes?[offset], bytes?[offset + 1], bytes?[offset + 2])
+            return try XCTUnwrap(searchRange.first { globalY in
+                let expected = contentColor(globalY: globalY, x: sampleX)
+                return sampled.0 == expected.0
+                    && sampled.1 == expected.1
+                    && sampled.2 == expected.2
+            })
+        }
     }
 }

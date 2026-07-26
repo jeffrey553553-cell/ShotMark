@@ -70,6 +70,31 @@ final class AnnotationGeometryTests: XCTestCase {
         XCTAssertTrue(CGRect(x: 2, y: 2, width: 96, height: 96).contains(translated))
     }
 
+    func testThickArrowHeadAndShaftAreSelectable() {
+        let arrow = Annotation.arrow(
+            start: CGPoint(x: 30, y: 40),
+            end: CGPoint(x: 180, y: 40),
+            color: .systemRed,
+            lineWidth: 14
+        )
+
+        XCTAssertTrue(AnnotationGeometry.contains(CGPoint(x: 100, y: 47), annotation: arrow))
+        XCTAssertTrue(AnnotationGeometry.contains(CGPoint(x: 176, y: 66), annotation: arrow))
+        XCTAssertFalse(AnnotationGeometry.contains(CGPoint(x: 100, y: 80), annotation: arrow))
+    }
+
+    func testRectangleInteriorRemainsAvailableForCurrentTool() {
+        let rectangle = Annotation.rectangle(
+            rect: CGRect(x: 20, y: 20, width: 160, height: 100),
+            color: .systemRed,
+            lineWidth: 12,
+            filled: false
+        )
+
+        XCTAssertTrue(AnnotationGeometry.contains(CGPoint(x: 24, y: 70), annotation: rectangle))
+        XCTAssertFalse(AnnotationGeometry.contains(CGPoint(x: 100, y: 70), annotation: rectangle))
+    }
+
     func testTextEditorExpandsLeftWhenItReachesSelectionEdge() {
         let frame = AnnotationGeometry.fittedHorizontalEditorFrame(
             preferredMinX: 470,

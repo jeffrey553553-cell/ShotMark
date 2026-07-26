@@ -96,7 +96,7 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "neckHalfWidth" Sources/ShotMark/AnnotationDrawing.swift
   rg -q "let placementGap: CGFloat = 68" Sources/ShotMark/AnnotationGeometry.swift
   rg -q "let textClearance: CGFloat = 22" Sources/ShotMark/AnnotationGeometry.swift
-  rg -q "clampedPoint\\.x - arrowStart\\.x" Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
+  rg -q "snappedLineEndpoint\\(from: arrowEnd" Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
   rg -q "private func undoEdit\\(" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "private func redoEdit\\(" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "private func deleteSelectedAnnotation\\(" Sources/ShotMark/SelectionOverlayController.swift
@@ -180,10 +180,16 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "textContainerInset = NSSize" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "widthTracksTextView = false" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "containerSize = CGSize" Sources/ShotMark/SelectionOverlayController.swift
-  rg -q "annotationRectangleBorderContains" Sources/ShotMark/SelectionOverlayController.swift
-  rg -q "rectangleBorderContains" Sources/ShotMark/AnnotationCanvasView.swift
+  rg -q "AnnotationGeometry.contains" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "AnnotationGeometry.contains" Sources/ShotMark/AnnotationCanvasView.swift
+  rg -q "constrainedRect" Sources/ShotMark/AnnotationPathGeometry.swift Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
+  rg -q "aspectConstrainedRect" Sources/ShotMark/AnnotationPathGeometry.swift Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
+  rg -q "drawAnnotationMeasurementBadge" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "AnnotationGeometry.calloutLayout" Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
   rg -q "clampedTranslation" Sources/ShotMark/AnnotationGeometry.swift
+  rg -q "testConstrainedRectSupportsSquareAndCenterDrawing" Tests/ShotMarkTests/AnnotationPathGeometryTests.swift
+  rg -q "testThickArrowHeadAndShaftAreSelectable" Tests/ShotMarkTests/AnnotationGeometryTests.swift
+  rg -q "testBidirectionalMergedPixelsContainEveryContentRowExactlyOnce" Tests/ShotMarkTests/LongScreenshotStitcherTests.swift
   rg -q "testCalloutLayoutKeepsTextVisibleAndArrowAttached" Tests/ShotMarkTests/AnnotationGeometryTests.swift
   rg -q "testTextEditorExpandsLeftWhenItReachesSelectionEdge" Tests/ShotMarkTests/AnnotationGeometryTests.swift
   rg -q "testAnnotationShowcaseRendersVisiblePixels" Tests/ShotMarkTests/AnnotationRenderingTests.swift
@@ -279,6 +285,9 @@ Mark each item PASS/FAIL after running it.
 | Precision | Hold Command and move/scroll | Magnifier shows pixel coordinates/color; scrolling changes zoom without moving the selection | |
 | Precision | Press arrow keys, then Shift+arrow keys | Selection moves by one physical pixel; Shift resizes by one physical pixel | |
 | Precision | Select an annotation and press arrow keys | Annotation moves by one physical pixel; Shift moves it by ten physical pixels | |
+| Precision | Draw selection/rectangle/ellipse/mosaic/comment with Shift, Option, then Shift+Option | Shift constrains a square/circle, Option draws from center, combined mode preserves both behaviors at screen edges | |
+| Precision | Resize a selection or resizable annotation corner while holding Shift | Original aspect ratio is preserved and the object remains inside the capture bounds | |
+| Precision | Draw an arrow or move one endpoint while holding Shift | Direction snaps in 45-degree increments; the live length/angle badge follows without covering the active handle | |
 | Full screen | Select nearly entire screen | Toolbar stays visible and final image has no blue selection frame | |
 | Small area | Select small area around text | Toolbar stays usable; output only contains selected area | |
 | Save | Press Space after annotations | A PNG with annotations is saved to Downloads | |
@@ -300,6 +309,7 @@ Mark each item PASS/FAIL after running it.
 | Long screenshot | Reverse direction through already captured content | Preview height stays unchanged while traversing covered content and resumes only after reaching new content | |
 | Long screenshot | Start near page bottom, scroll upward | New upper content is prepended above the starting frame | |
 | Long screenshot | Scroll through a lazy-loading or animated page | Automatic retries preserve direction/distance context and recover after the page settles | |
+| Long screenshot | Capture down, then beyond the original viewport upward | Every content row appears once in the final image, with no duplicated or missing seam pixels | |
 | Edit | Draw rectangle/arrow/text/mosaic, then Cmd+Z/Cmd+Shift+Z | Undo and redo restore the previous annotation state | |
 | Edit | Select an annotation and press Delete | The selected annotation is removed only after selection | |
 | Edit | Select rectangle/mosaic and drag corner handles | The object resizes without moving unrelated annotations | |

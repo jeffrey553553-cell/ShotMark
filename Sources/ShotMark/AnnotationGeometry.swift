@@ -158,6 +158,47 @@ enum AnnotationGeometry {
         }
     }
 
+    static func contains(
+        _ point: CGPoint,
+        annotation: Annotation,
+        emptyCalloutTextSize: CGSize = CGSize(width: 150, height: 30)
+    ) -> Bool {
+        switch annotation {
+        case .rectangle(let rect, _, let lineWidth, _):
+            return rectangleBorderContains(point, rect: rect, lineWidth: lineWidth)
+        case .ellipse(let rect, _, let lineWidth, _):
+            return ellipseBorderContains(point, rect: rect, lineWidth: lineWidth)
+        case .arrow(let start, let end, _, let lineWidth):
+            return arrowContains(point, start: start, end: end, lineWidth: lineWidth)
+        case .freehand(let points, _, let lineWidth),
+             .highlighter(let points, _, let lineWidth):
+            return AnnotationPathGeometry.contains(point, points: points, lineWidth: lineWidth)
+        case .numberMarker(let center, _, _, let markerSize, _):
+            return hypot(point.x - center.x, point.y - center.y) <= max(16, markerSize + 4)
+        case .text(let origin, let value, _, let fontSize):
+            let size = AnnotationTextLayout.size(for: value.isEmpty ? " " : value, fontSize: fontSize)
+            return CGRect(origin: origin, size: size).insetBy(dx: -6, dy: -6).contains(point)
+        case .mosaic(let rect, _):
+            return rectangleBorderContains(point, rect: rect, lineWidth: 2)
+        case .callout(
+            let targetRect,
+            let arrowStart,
+            let arrowEnd,
+            let textOrigin,
+            let text,
+            _,
+            let lineWidth,
+            let fontSize
+        ):
+            let textSize = text.isEmpty
+                ? emptyCalloutTextSize
+                : AnnotationTextLayout.size(for: text, fontSize: fontSize)
+            return rectangleBorderContains(point, rect: targetRect, lineWidth: lineWidth)
+                || arrowContains(point, start: arrowStart, end: arrowEnd, lineWidth: lineWidth)
+                || CGRect(origin: textOrigin, size: textSize).insetBy(dx: -10, dy: -8).contains(point)
+        }
+    }
+
     static func clampedTranslation(
         for visualBounds: CGRect,
         requested delta: CGPoint,
@@ -185,6 +226,66 @@ enum AnnotationGeometry {
             }
         }
         return result
+    }
+
+    private static func rectangleBorderContains(
+        _ point: CGPoint,
+        rect: CGRect,
+        lineWidth: CGFloat
+    ) -> Bool {
+        let tolerance = max(7, lineWidth / 2 + 4)
+        let outer = rect.insetBy(dx: -tolerance, dy: -tolerance)
+        guard outer.contains(point) else { return false }
+        let inner = rect.insetBy(dx: tolerance, dy: tolerance)
+        return inner.width <= 0 || inner.height <= 0 || !inner.contains(point)
+    }
+
+    private static func ellipseBorderContains(
+        _ point: CGPoint,
+        rect: CGRect,
+        lineWidth: CGFloat
+    ) -> Bool {
+        let radiusX = rect.width / 2
+        let radiusY = rect.height / 2
+        guard radiusX > 0, radiusY > 0 else { return false }
+        let normalizedX = (point.x - rect.midX) / radiusX
+        let normalizedY = (point.y - rect.midY) / radiusY
+        let normalizedDistance = normalizedX * normalizedX + normalizedY * normalizedY
+        let tolerance = (max(7, lineWidth / 2 + 4)) / max(1, min(radiusX, radiusY))
+        return abs(normalizedDistance - 1) <= tolerance
+    }
+
+    private static func arrowContains(
+        _ point: CGPoint,
+        start: CGPoint,
+        end: CGPoint,
+        lineWidth: CGFloat
+    ) -> Bool {
+        let shaftTolerance = max(7, lineWidth / 2 + 4)
+        let headTolerance = max(10, lineWidth * 2.25)
+        return distanceFromPoint(point, toLineFrom: start, to: end) <= shaftTolerance
+            || hypot(point.x - start.x, point.y - start.y) <= max(10, lineWidth)
+            || hypot(point.x - end.x, point.y - end.y) <= headTolerance
+    }
+
+    private static func distanceFromPoint(_ point: CGPoint, toLineFrom start: CGPoint, to end: CGPoint) -> CGFloat {
+        let lengthSquared = pow(end.x - start.x, 2) + pow(end.y - start.y, 2)
+        guard lengthSquared > 0 else {
+            return hypot(point.x - start.x, point.y - start.y)
+        }
+        let projection = max(
+            0,
+            min(
+                1,
+                ((point.x - start.x) * (end.x - start.x)
+                    + (point.y - start.y) * (end.y - start.y)) / lengthSquared
+            )
+        )
+        let projectedPoint = CGPoint(
+            x: start.x + projection * (end.x - start.x),
+            y: start.y + projection * (end.y - start.y)
+        )
+        return hypot(point.x - projectedPoint.x, point.y - projectedPoint.y)
     }
 
     private static func clampOrigin(_ origin: CGPoint, size: CGSize, to bounds: CGRect) -> CGPoint {
