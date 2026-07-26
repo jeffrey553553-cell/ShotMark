@@ -1,15 +1,15 @@
 import AppKit
 
 final class ToastWindowController: NSWindowController {
-    static func show(message: String) {
-        let toast = ToastWindowController(message: message)
+    static func show(message: String, screen: NSScreen? = nil) {
+        let toast = ToastWindowController(message: message, screen: screen)
         toast.showWindow(nil)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.55) {
             toast.close()
         }
     }
 
-    init(message: String) {
+    init(message: String, screen: NSScreen? = nil) {
         let font = NSFont.systemFont(ofSize: 13.5, weight: .semibold)
         let textWidth = message.size(withAttributes: [.font: font]).width
         let width = min(max(textWidth + 68, 176), 360)
@@ -32,7 +32,7 @@ final class ToastWindowController: NSWindowController {
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.contentView = content
 
-        if let screen = NSScreen.main {
+        if let screen = screen ?? NSScreen.main {
             window.setFrameOrigin(CGPoint(
                 x: screen.visibleFrame.midX - window.frame.width / 2,
                 y: screen.visibleFrame.minY + 82

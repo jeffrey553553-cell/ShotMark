@@ -141,10 +141,18 @@ final class EditorWindowController: NSWindowController {
                 format: payload.fileFormat,
                 to: .file(url)
             )
+            let followUp = PostCaptureActions.copyImageAfterSavingIfNeeded(
+                pngData: payload.pngData
+            ) { data in
+                try exportService.exportPNGData(data, to: .clipboard)
+            }
             showResult(
                 data: payload.pngData,
                 externalURL: url,
-                message: ExportService.saveConfirmation(for: url)
+                message: PostCaptureActions.saveConfirmation(
+                    for: url,
+                    followUpResult: followUp
+                )
             )
         } catch {
             showError(title: "保存失败", message: error.localizedDescription)
@@ -166,12 +174,16 @@ final class EditorWindowController: NSWindowController {
         let targetScreen = NSScreen.screens.first {
             $0.frame.intersects(state.capture.selectionRectInScreen)
         }
-        quickAccessController.show(
-            record: record,
-            store: historyStore,
-            message: message,
-            screen: targetScreen
-        )
+        if AppSettings.shared.showsQuickAccess {
+            quickAccessController.show(
+                record: record,
+                store: historyStore,
+                message: message,
+                screen: targetScreen
+            )
+        } else {
+            toolbarController.showToast(message)
+        }
     }
 
     private func showOCRPanel(text: String) {

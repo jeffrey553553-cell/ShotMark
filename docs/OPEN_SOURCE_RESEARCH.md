@@ -44,7 +44,7 @@ adapted because upstream projects can change.
 | Scrolling capture | Bidirectional stitching with pixel matching and Vision recovery | Snapzy, ScrollSnap, ShareX | Add session metrics, safety state and fixture benchmark corpus |
 | Recording | Native-size MP4, four audio modes, system click highlight, pause/resume with H.264 segment merging | Kap, Snapzy, Apple ScreenCaptureKit | GIF export, keystroke overlay and lightweight trim |
 | Pinning | Independent windows with constrained zoom, opacity, copy/save, mouse pass-through lock and multi-pin management | Snapzy, Shotnix | Drag-out, pin groups and persisted workspaces |
-| Export | PNG clipboard; PNG/JPEG/HEIC/TIFF save; adjustable lossy quality; configurable directory and filename template; collision-safe naming; concrete-file drag-out and native macOS share picker from quick access and history | Snapzy, MacShot, ShareX, Apple AppKit | Configurable post-capture actions and optional cloud destinations |
+| Export | PNG clipboard; PNG/JPEG/HEIC/TIFF save; adjustable lossy quality; configurable directory and filename template; collision-safe naming; concrete-file drag-out; native share picker; optional copy-after-save and quick-access feedback | Snapzy, MacShot, ShareX, Apple AppKit | Optional cloud destinations and workflow presets |
 | History | Searchable local image/video history, private media copies, 30-day/200-item retention and quick result card implemented | Maccy, Snapzy | Add configurable retention, favorites and OCR text indexing |
 | Updates | Manual GitHub Release | Snapzy | Signed Developer ID build, notarization and Sparkle update feed |
 
@@ -54,5 +54,5 @@ adapted because upstream projects can change.
 2. Local capture history and quick-access result card.
 3. Recording GIF export, keystroke overlay and lightweight trim.
 4. Constrained geometry, spotlight and annotation multi-selection.
-5. Configurable post-capture actions.
+5. Optional cloud destinations and reusable workflow presets.
 6. Signed, notarized automatic updates.

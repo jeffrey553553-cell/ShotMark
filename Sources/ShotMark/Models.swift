@@ -204,6 +204,8 @@ final class AppSettings {
     private let imageExportQualityKey = "shotmark.imageExportQuality"
     private let saveDirectoryKey = "shotmark.saveDirectory"
     private let filenameTemplateKey = "shotmark.filenameTemplate"
+    private let copyImageAfterSavingKey = "shotmark.copyImageAfterSaving"
+    private let showQuickAccessKey = "shotmark.showQuickAccess"
 
     private init() {
         hidesDockIcon = true
@@ -266,6 +268,21 @@ final class AppSettings {
                 forKey: filenameTemplateKey
             )
         }
+    }
+
+    var copyImageAfterSaving: Bool {
+        get { defaults.bool(forKey: copyImageAfterSavingKey) }
+        set { defaults.set(newValue, forKey: copyImageAfterSavingKey) }
+    }
+
+    var showsQuickAccess: Bool {
+        get {
+            guard defaults.object(forKey: showQuickAccessKey) != nil else {
+                return true
+            }
+            return defaults.bool(forKey: showQuickAccessKey)
+        }
+        set { defaults.set(newValue, forKey: showQuickAccessKey) }
     }
 
     func resetSaveDirectory() {

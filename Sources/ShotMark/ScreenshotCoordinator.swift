@@ -177,12 +177,20 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
                     format: payload.fileFormat,
                     to: .file(url)
                 )
+                let followUp = PostCaptureActions.copyImageAfterSavingIfNeeded(
+                    pngData: payload.pngData
+                ) { data in
+                    try exportService.exportPNGData(data, to: .clipboard)
+                }
                 showImageResult(
                     data: payload.pngData,
                     capture: capture,
                     kind: .screenshot,
                     externalURL: url,
-                    message: ExportService.saveConfirmation(for: url)
+                    message: PostCaptureActions.saveConfirmation(
+                        for: url,
+                        followUpResult: followUp
+                    )
                 )
             } catch {
                 showError(error)
@@ -258,12 +266,20 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
                             format: payload.fileFormat,
                             to: .file(url)
                         )
+                        let followUp = PostCaptureActions.copyImageAfterSavingIfNeeded(
+                            pngData: payload.pngData
+                        ) { data in
+                            try exportService.exportPNGData(data, to: .clipboard)
+                        }
                         self.showImageResult(
                             data: payload.pngData,
                             capture: capture,
                             kind: .longScreenshot,
                             externalURL: url,
-                            message: ExportService.saveConfirmation(for: url)
+                            message: PostCaptureActions.saveConfirmation(
+                                for: url,
+                                followUpResult: followUp
+                            )
                         )
                     }
                 } catch {
@@ -432,12 +448,17 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
                             pixelHeight: metadata.pixelHeight,
                             duration: metadata.duration
                         )
-                        self.quickAccessController.show(
-                            record: record,
-                            store: self.historyStore,
-                            message: ExportService.saveConfirmation(for: url),
-                            screen: resultScreen
-                        )
+                        let message = ExportService.saveConfirmation(for: url)
+                        if AppSettings.shared.showsQuickAccess {
+                            self.quickAccessController.show(
+                                record: record,
+                                store: self.historyStore,
+                                message: message,
+                                screen: resultScreen
+                            )
+                        } else {
+                            ToastWindowController.show(message: message, screen: resultScreen)
+                        }
                     } catch {
                         ToastWindowController.show(message: ExportService.saveConfirmation(for: url))
                     }
@@ -471,12 +492,17 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
             ToastWindowController.show(message: message)
             return
         }
-        quickAccessController.show(
-            record: record,
-            store: historyStore,
-            message: message,
-            screen: screen(containing: capture.selectionRectInScreen)
-        )
+        let targetScreen = screen(containing: capture.selectionRectInScreen)
+        if AppSettings.shared.showsQuickAccess {
+            quickAccessController.show(
+                record: record,
+                store: historyStore,
+                message: message,
+                screen: targetScreen
+            )
+        } else {
+            ToastWindowController.show(message: message, screen: targetScreen)
+        }
     }
 
     @discardableResult

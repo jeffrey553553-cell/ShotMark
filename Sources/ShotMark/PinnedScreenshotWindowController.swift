@@ -271,7 +271,17 @@ final class PinnedScreenshotWindowController: NSWindowController, NSWindowDelega
             let format = AppSettings.shared.imageExportFormat
             let data = try exportService.transcodePNGData(pngData, to: format)
             try exportService.exportImageData(data, format: format, to: .file(url))
-            ToastWindowController.show(message: ExportService.saveConfirmation(for: url))
+            let followUp = PostCaptureActions.copyImageAfterSavingIfNeeded(
+                pngData: pngData
+            ) { data in
+                try exportService.exportPNGData(data, to: .clipboard)
+            }
+            ToastWindowController.show(
+                message: PostCaptureActions.saveConfirmation(
+                    for: url,
+                    followUpResult: followUp
+                )
+            )
         } catch {
             showExportError(error)
         }

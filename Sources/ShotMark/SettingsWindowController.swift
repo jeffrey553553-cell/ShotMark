@@ -47,6 +47,8 @@ struct SettingsView: View {
     @State private var imageExportQuality = AppSettings.shared.imageExportQuality
     @State private var saveDirectory = AppSettings.shared.saveDirectory
     @State private var filenameTemplate = AppSettings.shared.filenameTemplate
+    @State private var copyImageAfterSaving = AppSettings.shared.copyImageAfterSaving
+    @State private var showsQuickAccess = AppSettings.shared.showsQuickAccess
 
     var body: some View {
         ScrollView {
@@ -65,6 +67,8 @@ struct SettingsView: View {
                 }
 
                 exportSection
+
+                postCaptureSection
 
                 SettingsSection(title: "权限") {
                     VStack(alignment: .leading, spacing: 12) {
@@ -275,6 +279,54 @@ struct SettingsView: View {
         )
     }
 
+    private var postCaptureSection: some View {
+        SettingsSection(title: "完成后") {
+            VStack(alignment: .leading, spacing: 13) {
+                settingsToggleRow(
+                    title: "保存图片后同时复制",
+                    detail: "按 Space 保存普通截图或长截图时，同时把 PNG 图像放入剪切板。",
+                    isOn: $copyImageAfterSaving
+                )
+                .onChange(of: copyImageAfterSaving) { _, value in
+                    AppSettings.shared.copyImageAfterSaving = value
+                }
+
+                Divider()
+
+                settingsToggleRow(
+                    title: "显示快速访问",
+                    detail: "截图或录屏完成后显示缩略图和复制、拖出、分享等快捷操作。",
+                    isOn: $showsQuickAccess
+                )
+                .onChange(of: showsQuickAccess) { _, value in
+                    AppSettings.shared.showsQuickAccess = value
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func settingsToggleRow(
+        title: String,
+        detail: String,
+        isOn: Binding<Bool>
+    ) -> some View {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 13))
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+        }
+    }
+
     private func chooseSaveDirectory() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
@@ -364,6 +416,8 @@ struct SettingsView: View {
         imageExportQuality = AppSettings.shared.imageExportQuality
         saveDirectory = AppSettings.shared.saveDirectory
         filenameTemplate = AppSettings.shared.filenameTemplate
+        copyImageAfterSaving = AppSettings.shared.copyImageAfterSaving
+        showsQuickAccess = AppSettings.shared.showsQuickAccess
     }
 
     private func startShortcutRecording() {
