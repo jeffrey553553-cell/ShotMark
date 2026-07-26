@@ -277,8 +277,7 @@ Mark each item PASS/FAIL after running it.
 | Precision | Select an annotation and press arrow keys | Annotation moves by one physical pixel; Shift moves it by ten physical pixels | |
 | Full screen | Select nearly entire screen | Toolbar stays visible and final image has no blue selection frame | |
 | Small area | Select small area around text | Toolbar stays usable; output only contains selected area | |
-| Save | Press Space after annotations | Image is saved in the configured format/directory with annotations applied; default remains PNG in Downloads | |
-| Export settings | Change format, quality, directory and filename template | PNG/JPEG/HEIC/TIFF all save and open correctly; duplicate names are not overwritten | |
+| Save | Press Space after annotations | A PNG with annotations is saved to Downloads | |
 | Copy | Press Cmd+C or Enter | Clipboard image pastes into Preview/Notes/Chat correctly | |
 | Pin | Click pin icon, then scroll/pinch and right-click | Pinned image keeps its aspect ratio; zoom, opacity, copy/save and close work | |
 | Pin lock | Lock a pinned image, then move the pointer away and back | Image area passes mouse events through; lock control remains available to unlock | |
@@ -286,7 +285,7 @@ Mark each item PASS/FAIL after running it.
 | OCR | Click OCR on Chinese+English text | OCR panel shows recognized text; copy all works | |
 | OCR | Open OCR panel and press Esc | OCR panel closes and screenshot/editor focus returns | |
 | Toast | Save or copy in light mode | Success toast remains readable with dark pill, check icon and white text | |
-| Recording | Select area -> record -> choose audio mode | Recording uses the selection's native pixel size; overlay/timer appears; Stop saves MP4 to the configured directory without red frame/overlay in the video | |
+| Recording | Select area -> record -> choose audio mode | Recording uses the selection's native pixel size; overlay/timer appears; Stop saves MP4 to Downloads without red frame/overlay in the video | |
 | Recording audio | Record with Silent/System/Microphone/System+Microphone | Selected audio mode is captured; microphone modes prompt clearly when permission is missing | |
 | Recording click highlight | Enable Show Mouse Clicks, then click inside the region | System cursor click circles appear in the saved MP4 | |
 | Recording pause | Pause, wait, resume, then stop | Timer freezes while paused; paused time is absent; all recorded segments merge into one playable MP4 | |

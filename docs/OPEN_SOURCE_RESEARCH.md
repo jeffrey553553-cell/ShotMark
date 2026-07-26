@@ -19,16 +19,14 @@ adapted because upstream projects can change.
 
 | Project | License | Useful Areas | ShotMark Decision |
 | --- | --- | --- | --- |
-| [Snapzy](https://github.com/duongductrong/Snapzy) | BSD-3-Clause | ScreenCaptureKit capture, multi-display selection, magnifier, Vision-assisted scrolling capture, OCR, recording, history, concrete-file drag-out | Primary native macOS reference; adapted work is attributed in `THIRD_PARTY_NOTICES.md` |
+| [Snapzy](https://github.com/duongductrong/Snapzy) | BSD-3-Clause | ScreenCaptureKit capture, multi-display selection, magnifier, Vision-assisted scrolling capture, OCR and recording | Primary native macOS reference; adapted work is attributed in `THIRD_PARTY_NOTICES.md` |
 | [capcap](https://github.com/realskyrin/capcap) | MIT | Native annotation geometry, smoothed pen paths, non-compounding marker strokes, selection editing | Annotation interaction and rendering reference; adapted work is attributed in `THIRD_PARTY_NOTICES.md` |
 | [Capso](https://github.com/lzhgus/Capso) | Business Source License 1.1 | Broad native capture and annotation architecture | Behavior reference only; its current license prohibits use in a third-party screen-capture service |
 | [ScrollSnap](https://github.com/Brkgng/ScrollSnap) | MIT | Scrolling capture, Vision translation registration, live preview | Secondary long-screenshot reference |
 | [Kap](https://github.com/wulkano/Kap) | MIT | Recording lifecycle, pause interaction, export workflows, plugin-style post-processing | Pause interaction reference; ShotMark uses native segmented ScreenCaptureKit recording |
-| [MacShot](https://github.com/Hunter-Matata/macshot) | MIT | Native image format settings, filename templates, save-directory validation, GIF and replay workflows | Export-settings reference; ShotMark uses its own ImageIO encoder and naming implementation |
-| [Maccy](https://github.com/p0deje/Maccy) | MIT | Local history storage, retention, search, keyboard navigation | Candidate reference for capture history |
 | [Shotnix](https://github.com/Rishabh-Bansal/Shotnix) | MIT | Pinned-window copy, save, close and contextual actions | Pin interaction reference; ShotMark uses its own AppKit implementation |
 | [Flameshot](https://github.com/flameshot-org/flameshot) | GPL-3.0 | Annotation shortcuts, pixel nudging, constrained drawing, export actions | Interaction reference only |
-| [ShareX](https://github.com/ShareX/ShareX) | GPL-3.0 | Capture workflows, scrolling capture fallbacks, history and destinations | Interaction and test-matrix reference only |
+| [ShareX](https://github.com/ShareX/ShareX) | GPL-3.0 | Capture workflows and scrolling capture fallbacks | Interaction and test-matrix reference only |
 | [Mio](https://github.com/iSoldLeo/Mio) | No declared license when evaluated | Fast frozen-display activation, transparent window capture | Behavior reference only |
 | [Rectangle](https://github.com/rxhanson/Rectangle) | No SPDX license reported when evaluated | Multi-display geometry and hotkey ergonomics | Behavior reference until license is verified manually |
 
@@ -40,19 +38,16 @@ adapted because upstream projects can change.
 | Smart window selection | Implemented with ScreenCaptureKit, CGWindow and AX calibration | Snapzy | Add application/element mode and window-shadow export |
 | Selection precision | Magnifier, color readout and physical-pixel keyboard movement implemented | Snapzy, Flameshot | Add optional standalone color picker |
 | Annotation | Editable rectangle, ellipse, arrow, freehand pen, non-compounding highlighter, number, text, callout and blur | capcap, Snapzy, Flameshot | Add constrained geometry, spotlight and multi-selection |
-| OCR and translation | Implemented with Vision and Translation | Snapzy, Apple Vision | Preserve layout, language chooser and searchable OCR history |
+| OCR and translation | Implemented with Vision and Translation | Snapzy, Apple Vision | Preserve layout and add language chooser |
 | Scrolling capture | Bidirectional stitching with pixel matching and Vision recovery | Snapzy, ScrollSnap, ShareX | Add session metrics, safety state and fixture benchmark corpus |
 | Recording | Native-size MP4, four audio modes, system click highlight, pause/resume with H.264 segment merging | Kap, Snapzy, Apple ScreenCaptureKit | GIF export, keystroke overlay and lightweight trim |
-| Pinning | Independent windows with constrained zoom, opacity, copy/save, mouse pass-through lock and multi-pin management | Snapzy, Shotnix | Drag-out, pin groups and persisted workspaces |
-| Export | PNG clipboard; PNG/JPEG/HEIC/TIFF save; adjustable lossy quality; configurable directory and filename template; collision-safe naming; concrete-file drag-out; native share picker; optional copy-after-save and quick-access feedback | Snapzy, MacShot, ShareX, Apple AppKit | Optional cloud destinations and workflow presets |
-| History | Searchable local image/video history, private media copies, 30-day/200-item retention and quick result card implemented | Maccy, Snapzy | Add configurable retention, favorites and OCR text indexing |
+| Pinning | Independent windows with constrained zoom, opacity, copy/save, mouse pass-through lock and multi-pin management | Snapzy, Shotnix | Pin groups and persisted workspaces |
+| Export | Reliable PNG clipboard and PNG save to Downloads | Snapzy, Apple AppKit | Keep the confirmation path fast and predictable |
 | Updates | Manual GitHub Release | Snapzy | Signed Developer ID build, notarization and Sparkle update feed |
 
 ## Priority
 
 1. Capture precision and activation latency.
-2. Local capture history and quick-access result card.
-3. Recording GIF export, keystroke overlay and lightweight trim.
-4. Constrained geometry, spotlight and annotation multi-selection.
-5. Optional cloud destinations and reusable workflow presets.
-6. Signed, notarized automatic updates.
+2. Recording GIF export, keystroke overlay and lightweight trim.
+3. Constrained geometry, spotlight and annotation multi-selection.
+4. Signed, notarized automatic updates.
