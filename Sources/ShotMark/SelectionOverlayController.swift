@@ -239,8 +239,67 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         case adjustingStyle(control: StyleControl)
     }
 
-    private enum OverlayButton: CaseIterable {
+    enum OverlayButton: CaseIterable, Hashable {
         case callout, rectangle, ellipse, arrow, pen, highlighter, number, text, mosaic, ocr, pin, longScreenshot, record, undo, redo, delete, copy, save, cancel
+
+        static let toolbarOrder: [OverlayButton] = [
+            .callout, .rectangle, .arrow, .number, .mosaic, .ocr, .pin, .longScreenshot, .record,
+            .ellipse, .pen, .highlighter, .text,
+            .undo, .redo, .delete, .copy, .save, .cancel
+        ]
+
+        var persistenceID: String {
+            switch self {
+            case .callout: "callout"
+            case .rectangle: "rectangle"
+            case .ellipse: "ellipse"
+            case .arrow: "arrow"
+            case .pen: "pen"
+            case .highlighter: "highlighter"
+            case .number: "number"
+            case .text: "text"
+            case .mosaic: "mosaic"
+            case .ocr: "ocr"
+            case .pin: "pin"
+            case .longScreenshot: "longScreenshot"
+            case .record: "record"
+            case .undo: "undo"
+            case .redo: "redo"
+            case .delete: "delete"
+            case .copy: "copy"
+            case .save: "save"
+            case .cancel: "cancel"
+            }
+        }
+
+        init?(persistenceID: String) {
+            guard let button = Self.allCases.first(where: { $0.persistenceID == persistenceID }) else {
+                return nil
+            }
+            self = button
+        }
+
+        var defaultShortcutKey: String? {
+            switch self {
+            case .callout: "1"
+            case .rectangle: "2"
+            case .arrow: "3"
+            case .number: "4"
+            case .mosaic: "5"
+            case .ocr: "6"
+            case .pin: "7"
+            case .longScreenshot: "8"
+            case .record: "9"
+            case .ellipse: "E"
+            case .pen: "P"
+            case .highlighter: "H"
+            case .text: "T"
+            case .copy: "RETURN"
+            case .save: "SPACE"
+            case .cancel: "ESCAPE"
+            case .undo, .redo, .delete: nil
+            }
+        }
 
         var title: String {
             switch self {
@@ -400,6 +459,14 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     init(screen: NSScreen, frozenSnapshot: ScreenSnapshot?) {
         targetScreen = screen
         self.frozenSnapshot = frozenSnapshot
+        let shortcutPreferences = AppSettings.shared.toolbarShortcutPreferences
+        customShortcuts = shortcutPreferences.overrides.reduce(into: [:]) { result, entry in
+            guard let button = OverlayButton(persistenceID: entry.key) else { return }
+            result[button] = entry.value
+        }
+        clearedShortcuts = Set(
+            shortcutPreferences.clearedButtonIDs.compactMap(OverlayButton.init(persistenceID:))
+        )
         super.init(frame: CGRect(origin: .zero, size: screen.frame.size))
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
@@ -1461,7 +1528,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         let bar = toolbarFrame(for: rect)
         drawFloatingPanelBackground(in: bar, radius: 14, alpha: 0.86)
 
-        for button in OverlayButton.allCases {
+        for button in OverlayButton.toolbarOrder {
             if button == .record {
                 drawRecordButtonGroup(for: rect)
                 continue
@@ -2455,7 +2522,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private func handleButtonClick(at point: CGPoint, selectionRect: CGRect) -> Bool {
-        for button in OverlayButton.allCases where buttonFrame(button, for: selectionRect).contains(point) {
+        for button in OverlayButton.toolbarOrder where buttonFrame(button, for: selectionRect).contains(point) {
             guard isButtonEnabled(button) else { return true }
             shortcutMenuButton = nil
             switch button {
@@ -2582,7 +2649,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         if let shortcutMenuButton, shortcutMenuFrame(for: shortcutMenuButton, selectionRect: selectionRect).contains(point) {
             return shortcutMenuButton
         }
-        return OverlayButton.allCases.first { buttonFrame($0, for: selectionRect).contains(point) }
+        return OverlayButton.toolbarOrder.first { buttonFrame($0, for: selectionRect).contains(point) }
     }
 
     private func tooltipTitle(for button: OverlayButton) -> String {
@@ -2653,15 +2720,15 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         case .text:
             return "T"
         case .mosaic:
-            return "6"
+            return "5"
         case .ocr:
-            return "7"
+            return "6"
         case .pin:
-            return "8"
+            return "7"
         case .longScreenshot:
-            return "9"
+            return "8"
         case .record:
-            return "0"
+            return "9"
         case .undo:
             return "Cmd+Z"
         case .redo:
@@ -2700,11 +2767,26 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         guard shortcutOwner(for: key).map({ $0 == button }) ?? true else { return }
         clearedShortcuts.remove(button)
         customShortcuts[button] = key
+        persistToolbarShortcuts()
     }
 
     private func clearShortcut(for button: OverlayButton) {
         customShortcuts.removeValue(forKey: button)
         clearedShortcuts.insert(button)
+        persistToolbarShortcuts()
+    }
+
+    private func persistToolbarShortcuts() {
+        let overrides = Dictionary(
+            uniqueKeysWithValues: customShortcuts.map { ($0.key.persistenceID, $0.value) }
+        )
+        let clearedButtonIDs = Set(clearedShortcuts.map(\.persistenceID))
+        AppSettings.shared.setToolbarShortcutPreferences(
+            ToolbarShortcutPreferences(
+                overrides: overrides,
+                clearedButtonIDs: clearedButtonIDs
+            )
+        )
     }
 
     private func handleToolbarShortcut(_ key: String) -> Bool {
@@ -2776,42 +2858,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private func defaultShortcutKey(for button: OverlayButton) -> String? {
-        switch button {
-        case .callout:
-            return "1"
-        case .rectangle:
-            return "2"
-        case .ellipse:
-            return "E"
-        case .arrow:
-            return "3"
-        case .pen:
-            return "P"
-        case .highlighter:
-            return "H"
-        case .number:
-            return "4"
-        case .text:
-            return "T"
-        case .mosaic:
-            return "6"
-        case .ocr:
-            return "7"
-        case .pin:
-            return "8"
-        case .longScreenshot:
-            return "9"
-        case .record:
-            return "0"
-        case .copy:
-            return "RETURN"
-        case .save:
-            return "SPACE"
-        case .cancel:
-            return "ESCAPE"
-        case .undo, .redo, .delete:
-            return nil
-        }
+        button.defaultShortcutKey
     }
 
     private func shortcutDisplayName(for key: String) -> String {
@@ -2935,8 +2982,10 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private func toolbarSize() -> CGSize {
-        let contentWidth = OverlayButton.allCases.reduce(CGFloat.zero) { $0 + buttonWidth($1) }
-        let spacing = CGFloat(max(0, OverlayButton.allCases.count - 1)) * toolbarButtonSpacing()
+        let contentWidth = OverlayButton.toolbarOrder.reduce(CGFloat.zero) { $0 + buttonWidth($1) }
+        let spacing = OverlayButton.toolbarOrder.dropLast().reduce(CGFloat.zero) {
+            $0 + toolbarButtonSpacing(after: $1)
+        }
         return CGSize(width: ceil(toolbarHorizontalPadding() * 2 + contentWidth + spacing), height: 40)
     }
 
@@ -2954,12 +3003,12 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         var x = bar.minX + toolbarHorizontalPadding()
         let y = bar.minY + 5
 
-        for current in OverlayButton.allCases {
+        for current in OverlayButton.toolbarOrder {
             if current == .record {
                 if button == .record {
                     return CGRect(x: x, y: y, width: buttonWidth(.record), height: 30)
                 }
-                x += buttonWidth(.record) + toolbarButtonSpacing()
+                x += buttonWidth(.record) + toolbarButtonSpacing(after: current)
                 continue
             }
 
@@ -2967,7 +3016,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             if current == button {
                 return CGRect(x: x, y: y, width: width, height: 30)
             }
-            x += width + toolbarButtonSpacing()
+            x += width + toolbarButtonSpacing(after: current)
         }
 
         return CGRect(x: x, y: y, width: 28, height: 30)
@@ -2984,8 +3033,13 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         7
     }
 
-    private func toolbarButtonSpacing() -> CGFloat {
-        4
+    private func toolbarButtonSpacing(after button: OverlayButton) -> CGFloat {
+        switch button {
+        case .record, .text:
+            return 10
+        default:
+            return 4
+        }
     }
 
     private func tool(for button: OverlayButton) -> AnnotationTool? {

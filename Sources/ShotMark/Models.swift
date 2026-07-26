@@ -206,14 +206,16 @@ extension Notification.Name {
 }
 
 final class AppSettings {
-    static let shared = AppSettings()
+    static let shared = AppSettings(defaults: .standard)
 
     let hidesDockIcon: Bool
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
     private let shortcutKey = "shotmark.captureShortcut"
     private let recordingShowsMouseClicksKey = "shotmark.recordingShowsMouseClicks"
+    private let toolbarShortcutPreferencesKey = "shotmark.toolbarShortcutPreferences.v1"
 
-    private init() {
+    init(defaults: UserDefaults) {
+        self.defaults = defaults
         hidesDockIcon = true
     }
 
@@ -242,6 +244,21 @@ final class AppSettings {
         set { defaults.set(newValue, forKey: recordingShowsMouseClicksKey) }
     }
 
+    var toolbarShortcutPreferences: ToolbarShortcutPreferences {
+        guard
+            let data = defaults.data(forKey: toolbarShortcutPreferencesKey),
+            let preferences = try? JSONDecoder().decode(ToolbarShortcutPreferences.self, from: data)
+        else {
+            return .empty
+        }
+        return preferences
+    }
+
+    func setToolbarShortcutPreferences(_ preferences: ToolbarShortcutPreferences) {
+        guard let data = try? JSONEncoder().encode(preferences) else { return }
+        defaults.set(data, forKey: toolbarShortcutPreferencesKey)
+    }
+
     func setShortcut(_ shortcut: GlobalShortcut) {
         guard let data = try? JSONEncoder().encode(shortcut) else { return }
         defaults.set(data, forKey: shortcutKey)
@@ -251,6 +268,13 @@ final class AppSettings {
     func resetShortcut() {
         setShortcut(.defaultShortcut)
     }
+}
+
+struct ToolbarShortcutPreferences: Codable, Equatable {
+    var overrides: [String: String]
+    var clearedButtonIDs: Set<String>
+
+    static let empty = ToolbarShortcutPreferences(overrides: [:], clearedButtonIDs: [])
 }
 
 private extension CGSize {

@@ -102,11 +102,8 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "private func deleteSelectedAnnotation\\(" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "appearance: NumberMarkerAppearance" Sources/ShotMark/Models.swift
   rg -q "private var numberMarkerStyle" Sources/ShotMark/SelectionOverlayController.swift
-  rg -q "return \"6\"" Sources/ShotMark/SelectionOverlayController.swift
-  rg -q "return \"7\"" Sources/ShotMark/SelectionOverlayController.swift
-  rg -q "return \"8\"" Sources/ShotMark/SelectionOverlayController.swift
-  rg -q "return \"9\"" Sources/ShotMark/SelectionOverlayController.swift
-  rg -q "return \"0\"" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "var defaultShortcutKey: String?" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "testNumericShortcutButtonsComeFirstInOneThroughNineOrder" Tests/ShotMarkTests/ToolbarOrderingTests.swift
   rg -q "requestMicrophoneAccess" Sources/ShotMark/PermissionService.swift
   rg -q "openMicrophoneSettings" Sources/ShotMark/PermissionService.swift
   rg -q "captureMicrophone = options.audioMode.capturesMicrophone" Sources/ShotMark/VideoRecordingService.swift
@@ -203,6 +200,9 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "calloutLineWidth" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "AnnotationInteractionPolicy.pointerDownResolution" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "testCalloutTextCommitContinuesTheSamePointerInteraction" Tests/ShotMarkTests/AnnotationGeometryTests.swift
+  rg -q "testNumericShortcutButtonsComeFirstInOneThroughNineOrder" Tests/ShotMarkTests/ToolbarOrderingTests.swift
+  rg -q "testToolbarShortcutPreferencesSurviveSettingsRecreation" Tests/ShotMarkTests/ToolbarOrderingTests.swift
+  rg -q "toolbarShortcutPreferences" Sources/ShotMark/Models.swift Sources/ShotMark/SelectionOverlayController.swift
   rg -q "case topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left" Sources/ShotMark/SelectionOverlayController.swift
   ! rg -q "value\\.isEmpty, calloutWasJustCreated" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "testTextEditorExpandsLeftWhenItReachesSelectionEdge" Tests/ShotMarkTests/AnnotationGeometryTests.swift
@@ -330,6 +330,9 @@ Mark each item PASS/FAIL after running it.
 | Edit | Select arrow, increase thickness, then draw | Arrow line and arrowhead remain visible at thick sizes | |
 | Edit | Select arrow and drag endpoint handles | Arrow start/end handles move independently | |
 | Edit | Select number marker and adjust style panel | Filled/outlined/light styles plus size/color/opacity update and export correctly | |
+| Toolbar | Start a new capture and scan the toolbar from left to right | Numeric defaults appear first in 1 through 9 order, then E/P/H/T, then edit/export actions | |
+| Toolbar | Change a tool shortcut, cancel capture, quit and reopen ShotMark, then capture again | The custom shortcut still triggers the same tool and its icon remains in the fixed default position | |
+| Toolbar | Clear a tool shortcut, quit and reopen ShotMark | The cleared shortcut remains unset and no other tool silently takes it | |
 | Edit | Click comment tool or press 1, then drag a target box | A target rectangle, arrow and editable text comment are created as one annotation group | |
 | Edit | Immediately drag the comment target, a resize handle or an arrow endpoint while the text cursor is active | The first drag works directly; it is not consumed by ending text input and the empty comment remains available | |
 | Edit | Select a comment annotation | Target rectangle shows eight resize handles, arrow endpoints remain draggable, and text shows a lightweight selection boundary | |
