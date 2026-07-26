@@ -565,6 +565,10 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
             if let selectedAnnotationIndex, let drag = hitSelectedAnnotationHandle(at: point, index: selectedAnnotationIndex) {
                 registerUndo()
+                if event.clickCount >= 2, reattachCalloutArrowHead(for: drag) {
+                    needsDisplay = true
+                    return
+                }
                 dragMode = drag
                 return
             }
@@ -3334,7 +3338,18 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     private func updateCalloutText(at index: Int, value: String, origin: CGPoint) {
         guard annotations.indices.contains(index) else { return }
-        guard case .callout(let targetRect, _, _, _, _, let color, let lineWidth, let fontSize) = annotations[index] else { return }
+        guard case .callout(
+            let targetRect,
+            _,
+            let arrowEnd,
+            _,
+            _,
+            let color,
+            let lineWidth,
+            let fontSize
+        ) = annotations[index] else {
+            return
+        }
         let textSize = value.isEmpty
             ? AnnotationTextLayout.size(for: " ", fontSize: fontSize)
             : AnnotationTextLayout.size(for: value, fontSize: fontSize)
@@ -3346,7 +3361,9 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         annotations[index] = .callout(
             targetRect: targetRect,
             arrowStart: connector.arrowStart,
-            arrowEnd: connector.arrowEnd,
+            arrowEnd: AnnotationGeometry.calloutArrowHeadIsAttached(arrowEnd, to: targetRect)
+                ? connector.arrowEnd
+                : arrowEnd,
             textOrigin: origin,
             text: value,
             color: color,
@@ -3360,7 +3377,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         guard case .callout(
             let targetRect,
             _,
-            _,
+            let arrowEnd,
             _,
             let text,
             let color,
@@ -3377,7 +3394,9 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         annotations[index] = .callout(
             targetRect: targetRect,
             arrowStart: connector.arrowStart,
-            arrowEnd: connector.arrowEnd,
+            arrowEnd: AnnotationGeometry.calloutArrowHeadIsAttached(arrowEnd, to: targetRect)
+                ? connector.arrowEnd
+                : arrowEnd,
             textOrigin: textOrigin,
             text: text,
             color: color,
@@ -3802,7 +3821,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         guard case .callout(
             let targetRect,
             let arrowStart,
-            _,
+            let arrowEnd,
             let textOrigin,
             let text,
             let color,
@@ -3814,6 +3833,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         let placement = AnnotationGeometry.movedCalloutTarget(
             targetRect: targetRect,
             arrowStart: arrowStart,
+            arrowEnd: arrowEnd,
             requestedDelta: delta,
             within: CGRect(origin: .zero, size: selectionRect.size)
         )
@@ -3989,11 +4009,16 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             annotations[index] = .ellipse(rect: nextRect, color: color, lineWidth: lineWidth, filled: filled)
         case .mosaic(_, let blockSize):
             annotations[index] = .mosaic(rect: nextRect, blockSize: blockSize)
-        case .callout(_, let arrowStart, _, let textOrigin, let text, let color, let lineWidth, let fontSize):
+        case .callout(let previousTargetRect, let arrowStart, let arrowEnd, let textOrigin, let text, let color, let lineWidth, let fontSize):
             annotations[index] = .callout(
                 targetRect: nextRect,
                 arrowStart: arrowStart,
-                arrowEnd: AnnotationGeometry.nearestPointOnBorder(of: nextRect, to: arrowStart),
+                arrowEnd: AnnotationGeometry.calloutArrowEndAfterTargetChange(
+                    previousTargetRect: previousTargetRect,
+                    nextTargetRect: nextRect,
+                    arrowStart: arrowStart,
+                    currentArrowEnd: arrowEnd
+                ),
                 textOrigin: textOrigin,
                 text: text,
                 color: color,
@@ -4073,10 +4098,15 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                 let nextPoint = snapsAngle
                     ? AnnotationConstraintGeometry.snappedLineEndpoint(from: arrowStart, to: clampedPoint)
                     : clampedPoint
+                let placement = AnnotationGeometry.calloutArrowHeadPlacement(
+                    proposedPoint: nextPoint,
+                    targetRect: targetRect,
+                    within: annotationBounds
+                )
                 annotations[index] = .callout(
                     targetRect: targetRect,
                     arrowStart: arrowStart,
-                    arrowEnd: AnnotationGeometry.nearestPointOnBorder(of: targetRect, to: nextPoint),
+                    arrowEnd: placement.point,
                     textOrigin: textOrigin,
                     text: text,
                     color: color,
@@ -4087,6 +4117,36 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         default:
             return
         }
+    }
+
+    private func reattachCalloutArrowHead(for dragMode: DragMode) -> Bool {
+        guard case .movingArrowEndpoint(let index, let endpoint) = dragMode, case .end = endpoint else {
+            return false
+        }
+        guard annotations.indices.contains(index) else { return false }
+        guard case .callout(
+            let targetRect,
+            let arrowStart,
+            _,
+            let textOrigin,
+            let text,
+            let color,
+            let lineWidth,
+            let fontSize
+        ) = annotations[index] else {
+            return false
+        }
+        annotations[index] = .callout(
+            targetRect: targetRect,
+            arrowStart: arrowStart,
+            arrowEnd: AnnotationGeometry.nearestPointOnBorder(of: targetRect, to: arrowStart),
+            textOrigin: textOrigin,
+            text: text,
+            color: color,
+            lineWidth: lineWidth,
+            fontSize: fontSize
+        )
+        return true
     }
 
     private func drawSelectedAnnotationHandles() {

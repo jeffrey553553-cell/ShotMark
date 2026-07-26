@@ -39,6 +39,40 @@ final class AnnotationGeometryTests: XCTestCase {
         XCTAssertTrue(isOnBorder(point, of: rect))
     }
 
+    func testCalloutArrowHeadSnapsNearTargetAndMovesFreelyOutsideSnapRange() {
+        let bounds = CGRect(x: 0, y: 0, width: 600, height: 400)
+        let target = CGRect(x: 100, y: 80, width: 180, height: 120)
+        let attached = AnnotationGeometry.calloutArrowHeadPlacement(
+            proposedPoint: CGPoint(x: 287, y: 140),
+            targetRect: target,
+            within: bounds
+        )
+        let free = AnnotationGeometry.calloutArrowHeadPlacement(
+            proposedPoint: CGPoint(x: 370, y: 260),
+            targetRect: target,
+            within: bounds
+        )
+
+        XCTAssertTrue(attached.isAttached)
+        XCTAssertEqual(attached.point.x, target.maxX, accuracy: 0.001)
+        XCTAssertFalse(free.isAttached)
+        XCTAssertEqual(free.point.x, 370, accuracy: 0.001)
+        XCTAssertEqual(free.point.y, 260, accuracy: 0.001)
+    }
+
+    func testCalloutArrowHeadCanBePlacedFreelyInsideTarget() {
+        let target = CGRect(x: 100, y: 80, width: 180, height: 120)
+        let placement = AnnotationGeometry.calloutArrowHeadPlacement(
+            proposedPoint: CGPoint(x: target.midX, y: target.midY),
+            targetRect: target,
+            within: CGRect(x: 0, y: 0, width: 600, height: 400)
+        )
+
+        XCTAssertFalse(placement.isAttached)
+        XCTAssertEqual(placement.point.x, target.midX, accuracy: 0.001)
+        XCTAssertEqual(placement.point.y, target.midY, accuracy: 0.001)
+    }
+
     func testCalloutLayoutKeepsTextVisibleAndArrowAttached() {
         let bounds = CGRect(x: 0, y: 0, width: 900, height: 620)
         let target = CGRect(x: 330, y: 240, width: 180, height: 100)
@@ -156,6 +190,7 @@ final class AnnotationGeometryTests: XCTestCase {
         let placement = AnnotationGeometry.movedCalloutTarget(
             targetRect: target,
             arrowStart: arrowStart,
+            arrowEnd: AnnotationGeometry.nearestPointOnBorder(of: target, to: arrowStart),
             requestedDelta: CGPoint(x: 90, y: 60),
             within: CGRect(x: 0, y: 0, width: 500, height: 360)
         )
@@ -163,6 +198,25 @@ final class AnnotationGeometryTests: XCTestCase {
         XCTAssertEqual(placement.targetRect.origin.x, 130, accuracy: 0.001)
         XCTAssertEqual(placement.targetRect.origin.y, 110, accuracy: 0.001)
         XCTAssertTrue(isOnBorder(placement.arrowEnd, of: placement.targetRect))
+    }
+
+    func testMovingCalloutTargetPreservesFreelyPositionedArrowHead() {
+        let target = CGRect(x: 40, y: 50, width: 120, height: 80)
+        let freeArrowEnd = CGPoint(x: 310, y: 75)
+        let placement = AnnotationGeometry.movedCalloutTarget(
+            targetRect: target,
+            arrowStart: CGPoint(x: 280, y: 220),
+            arrowEnd: freeArrowEnd,
+            requestedDelta: CGPoint(x: 90, y: 60),
+            within: CGRect(x: 0, y: 0, width: 500, height: 360)
+        )
+
+        XCTAssertEqual(placement.arrowEnd.x, freeArrowEnd.x, accuracy: 0.001)
+        XCTAssertEqual(placement.arrowEnd.y, freeArrowEnd.y, accuracy: 0.001)
+        XCTAssertFalse(AnnotationGeometry.calloutArrowHeadIsAttached(
+            placement.arrowEnd,
+            to: placement.targetRect
+        ))
     }
 
     func testMovingCalloutTextKeepsArrowTailBoundAndStopsAtCanvasEdge() {

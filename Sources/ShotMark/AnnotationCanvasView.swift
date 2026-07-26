@@ -414,21 +414,21 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
                     return .resizingRectangle(index: selectedIndex, handle: handle)
                 }
             case .arrow(let start, let end, _, _):
-                if distance(point, start) <= 10 {
+                if distance(point, start) <= 14 {
                     return .movingArrowEndpoint(index: selectedIndex, endpoint: .start)
                 }
-                if distance(point, end) <= 10 {
+                if distance(point, end) <= 14 {
                     return .movingArrowEndpoint(index: selectedIndex, endpoint: .end)
                 }
             case .callout(let targetRect, let arrowStart, let arrowEnd, _, _, _, _, _):
-                if let handle = rectangleHandleHit(at: point, rect: targetRect) {
-                    return .resizingRectangle(index: selectedIndex, handle: handle)
-                }
-                if distance(point, arrowStart) <= 10 {
+                if distance(point, arrowStart) <= 14 {
                     return .movingArrowEndpoint(index: selectedIndex, endpoint: .start)
                 }
-                if distance(point, arrowEnd) <= 10 {
+                if distance(point, arrowEnd) <= 14 {
                     return .movingArrowEndpoint(index: selectedIndex, endpoint: .end)
+                }
+                if let handle = rectangleHandleHit(at: point, rect: targetRect) {
+                    return .resizingRectangle(index: selectedIndex, handle: handle)
                 }
             case .freehand, .highlighter, .numberMarker, .text:
                 break
@@ -579,11 +579,16 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
             state.annotations[index] = .ellipse(rect: nextRect, color: color, lineWidth: lineWidth, filled: filled)
         case .mosaic(_, let blockSize):
             state.annotations[index] = .mosaic(rect: nextRect, blockSize: blockSize)
-        case .callout(_, let arrowStart, _, let textOrigin, let text, let color, let lineWidth, let fontSize):
+        case .callout(let previousTargetRect, let arrowStart, let arrowEnd, let textOrigin, let text, let color, let lineWidth, let fontSize):
             state.annotations[index] = .callout(
                 targetRect: nextRect,
                 arrowStart: arrowStart,
-                arrowEnd: AnnotationGeometry.nearestPointOnBorder(of: nextRect, to: arrowStart),
+                arrowEnd: AnnotationGeometry.calloutArrowEndAfterTargetChange(
+                    previousTargetRect: previousTargetRect,
+                    nextTargetRect: nextRect,
+                    arrowStart: arrowStart,
+                    currentArrowEnd: arrowEnd
+                ),
                 textOrigin: textOrigin,
                 text: text,
                 color: color,
@@ -659,10 +664,15 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
                 let nextPoint = snapsAngle
                     ? AnnotationConstraintGeometry.snappedLineEndpoint(from: arrowStart, to: clampedPoint)
                     : clampedPoint
+                let placement = AnnotationGeometry.calloutArrowHeadPlacement(
+                    proposedPoint: nextPoint,
+                    targetRect: targetRect,
+                    within: bounds
+                )
                 state.annotations[index] = .callout(
                     targetRect: targetRect,
                     arrowStart: arrowStart,
-                    arrowEnd: AnnotationGeometry.nearestPointOnBorder(of: targetRect, to: nextPoint),
+                    arrowEnd: placement.point,
                     textOrigin: textOrigin,
                     text: text,
                     color: color,

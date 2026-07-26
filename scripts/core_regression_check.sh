@@ -194,6 +194,8 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "testCalloutHitRegionsKeepTargetArrowAndTextIndependent" Tests/ShotMarkTests/AnnotationGeometryTests.swift
   rg -q "testMovingCalloutTargetLeavesTextSideFixedAndReattachesArrowHead" Tests/ShotMarkTests/AnnotationGeometryTests.swift
   rg -q "testMovingCalloutTextKeepsArrowTailBoundAndStopsAtCanvasEdge" Tests/ShotMarkTests/AnnotationGeometryTests.swift
+  rg -q "testCalloutArrowHeadSnapsNearTargetAndMovesFreelyOutsideSnapRange" Tests/ShotMarkTests/AnnotationGeometryTests.swift
+  rg -q "testMovingCalloutTargetPreservesFreelyPositionedArrowHead" Tests/ShotMarkTests/AnnotationGeometryTests.swift
   rg -q "movingCalloutTarget" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "movingCalloutText" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "activeCalloutOriginalAnnotation" Sources/ShotMark/SelectionOverlayController.swift
@@ -332,6 +334,9 @@ Mark each item PASS/FAIL after running it.
 | Edit | Immediately drag the comment target, a resize handle or an arrow endpoint while the text cursor is active | The first drag works directly; it is not consumed by ending text input and the empty comment remains available | |
 | Edit | Select a comment annotation | Target rectangle shows eight resize handles, arrow endpoints remain draggable, and text shows a lightweight selection boundary | |
 | Edit | Drag the tail handle of a comment arrow | The comment text moves with the arrow tail and keeps its spacing from the arrow | |
+| Edit | Drag the comment arrow head near, inside and outside the target | Near the border it snaps cleanly; beyond the snap range it stays exactly where released, including inside the target | |
+| Edit | Move or resize a target after freeing its arrow head | The free arrow head remains fixed instead of being forced back to the target border | |
+| Edit | Double-click a free comment arrow head | The arrow head returns to the nearest target border and resumes automatic attachment | |
 | Edit | Drag a selected comment target border | Only the target box moves; the arrow head reattaches and the text stays fixed | |
 | Edit | Drag selected comment text | Text and arrow tail move together; the target stays fixed | |
 | Edit | Drag the shaft of a selected comment arrow | Target, arrow and text move as one group | |

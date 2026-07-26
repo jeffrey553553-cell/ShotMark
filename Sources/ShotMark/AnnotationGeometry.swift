@@ -16,6 +16,11 @@ struct CalloutTextPlacement: Equatable {
     let textOrigin: CGPoint
 }
 
+struct CalloutArrowHeadPlacement: Equatable {
+    let point: CGPoint
+    let isAttached: Bool
+}
+
 enum CalloutHitRegion: Equatable {
     case targetBorder
     case arrow
@@ -86,6 +91,41 @@ enum AnnotationGeometry {
             (abs(point.y - rect.maxY), CGPoint(x: point.x, y: rect.maxY))
         ]
         return candidates.min { $0.distance < $1.distance }?.point ?? clamped
+    }
+
+    static func calloutArrowHeadIsAttached(
+        _ arrowEnd: CGPoint,
+        to targetRect: CGRect,
+        tolerance: CGFloat = 2
+    ) -> Bool {
+        let attachedPoint = nearestPointOnBorder(of: targetRect, to: arrowEnd)
+        return hypot(arrowEnd.x - attachedPoint.x, arrowEnd.y - attachedPoint.y) <= tolerance
+    }
+
+    static func calloutArrowHeadPlacement(
+        proposedPoint: CGPoint,
+        targetRect: CGRect,
+        within bounds: CGRect,
+        snapDistance: CGFloat = 14
+    ) -> CalloutArrowHeadPlacement {
+        let clamped = clampedPoint(proposedPoint, to: bounds)
+        let attachedPoint = nearestPointOnBorder(of: targetRect, to: clamped)
+        guard hypot(clamped.x - attachedPoint.x, clamped.y - attachedPoint.y) <= snapDistance else {
+            return CalloutArrowHeadPlacement(point: clamped, isAttached: false)
+        }
+        return CalloutArrowHeadPlacement(point: attachedPoint, isAttached: true)
+    }
+
+    static func calloutArrowEndAfterTargetChange(
+        previousTargetRect: CGRect,
+        nextTargetRect: CGRect,
+        arrowStart: CGPoint,
+        currentArrowEnd: CGPoint
+    ) -> CGPoint {
+        guard calloutArrowHeadIsAttached(currentArrowEnd, to: previousTargetRect) else {
+            return currentArrowEnd
+        }
+        return nearestPointOnBorder(of: nextTargetRect, to: arrowStart)
     }
 
     static func calloutLayout(
@@ -188,6 +228,7 @@ enum AnnotationGeometry {
     static func movedCalloutTarget(
         targetRect: CGRect,
         arrowStart: CGPoint,
+        arrowEnd: CGPoint,
         requestedDelta: CGPoint,
         within bounds: CGRect
     ) -> CalloutTargetPlacement {
@@ -199,7 +240,12 @@ enum AnnotationGeometry {
         let nextTarget = targetRect.offsetBy(dx: appliedDelta.x, dy: appliedDelta.y)
         return CalloutTargetPlacement(
             targetRect: nextTarget,
-            arrowEnd: nearestPointOnBorder(of: nextTarget, to: arrowStart)
+            arrowEnd: calloutArrowEndAfterTargetChange(
+                previousTargetRect: targetRect,
+                nextTargetRect: nextTarget,
+                arrowStart: arrowStart,
+                currentArrowEnd: arrowEnd
+            )
         )
     }
 
