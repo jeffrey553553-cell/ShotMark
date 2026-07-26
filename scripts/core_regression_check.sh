@@ -199,6 +199,10 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "activeCalloutOriginalAnnotation" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "annotationsForDrawing" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "calloutLineWidth" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "AnnotationInteractionPolicy.pointerDownResolution" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "testCalloutTextCommitContinuesTheSamePointerInteraction" Tests/ShotMarkTests/AnnotationGeometryTests.swift
+  rg -q "case topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left" Sources/ShotMark/SelectionOverlayController.swift
+  ! rg -q "value\\.isEmpty, calloutWasJustCreated" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "testTextEditorExpandsLeftWhenItReachesSelectionEdge" Tests/ShotMarkTests/AnnotationGeometryTests.swift
   rg -q "testAnnotationShowcaseRendersVisiblePixels" Tests/ShotMarkTests/AnnotationRenderingTests.swift
   rg -q "NumberMarkerAppearance" Sources/ShotMark/Models.swift Sources/ShotMark/SelectionOverlayController.swift
@@ -325,7 +329,8 @@ Mark each item PASS/FAIL after running it.
 | Edit | Select arrow and drag endpoint handles | Arrow start/end handles move independently | |
 | Edit | Select number marker and adjust style panel | Filled/outlined/light styles plus size/color/opacity update and export correctly | |
 | Edit | Click comment tool or press 1, then drag a target box | A target rectangle, arrow and editable text comment are created as one annotation group | |
-| Edit | Select a comment annotation | Target rectangle corners, arrow endpoints and text origin show editable handles; moving the group keeps all three parts together | |
+| Edit | Immediately drag the comment target, a resize handle or an arrow endpoint while the text cursor is active | The first drag works directly; it is not consumed by ending text input and the empty comment remains available | |
+| Edit | Select a comment annotation | Target rectangle shows eight resize handles, arrow endpoints remain draggable, and text shows a lightweight selection boundary | |
 | Edit | Drag the tail handle of a comment arrow | The comment text moves with the arrow tail and keeps its spacing from the arrow | |
 | Edit | Drag a selected comment target border | Only the target box moves; the arrow head reattaches and the text stays fixed | |
 | Edit | Drag selected comment text | Text and arrow tail move together; the target stays fixed | |

@@ -22,6 +22,22 @@ enum CalloutHitRegion: Equatable {
     case text
 }
 
+enum TextPointerDownResolution: Equatable {
+    case noActiveEditor
+    case commitAndConsume
+    case commitAndContinue
+}
+
+enum AnnotationInteractionPolicy {
+    static func pointerDownResolution(
+        hasActiveTextEditor: Bool,
+        isEditingCallout: Bool
+    ) -> TextPointerDownResolution {
+        guard hasActiveTextEditor else { return .noActiveEditor }
+        return isEditingCallout ? .commitAndContinue : .commitAndConsume
+    }
+}
+
 enum AnnotationGeometry {
     static let canvasMargin: CGFloat = 2
 
@@ -160,7 +176,7 @@ enum AnnotationGeometry {
         if textFrame.insetBy(dx: -10, dy: -8).contains(point) {
             return .text
         }
-        if rectangleBorderContains(point, rect: targetRect, lineWidth: lineWidth) {
+        if targetRect.insetBy(dx: -max(6, lineWidth), dy: -max(6, lineWidth)).contains(point) {
             return .targetBorder
         }
         if arrowContains(point, start: arrowStart, end: arrowEnd, lineWidth: lineWidth) {

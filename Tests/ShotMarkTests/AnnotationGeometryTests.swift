@@ -3,6 +3,30 @@ import XCTest
 @testable import ShotMark
 
 final class AnnotationGeometryTests: XCTestCase {
+    func testCalloutTextCommitContinuesTheSamePointerInteraction() {
+        XCTAssertEqual(
+            AnnotationInteractionPolicy.pointerDownResolution(
+                hasActiveTextEditor: true,
+                isEditingCallout: true
+            ),
+            .commitAndContinue
+        )
+        XCTAssertEqual(
+            AnnotationInteractionPolicy.pointerDownResolution(
+                hasActiveTextEditor: true,
+                isEditingCallout: false
+            ),
+            .commitAndConsume
+        )
+        XCTAssertEqual(
+            AnnotationInteractionPolicy.pointerDownResolution(
+                hasActiveTextEditor: false,
+                isEditingCallout: false
+            ),
+            .noActiveEditor
+        )
+    }
+
     func testNearestPointForInteriorDragAlwaysSnapsToRectangleBorder() {
         let rect = CGRect(x: 100, y: 80, width: 200, height: 120)
         let point = AnnotationGeometry.nearestPointOnBorder(
@@ -73,6 +97,17 @@ final class AnnotationGeometryTests: XCTestCase {
         XCTAssertEqual(
             AnnotationGeometry.calloutHitRegion(
                 at: CGPoint(x: 42, y: 90),
+                targetRect: target,
+                arrowStart: arrowStart,
+                arrowEnd: arrowEnd,
+                textFrame: textFrame,
+                lineWidth: 4
+            ),
+            .targetBorder
+        )
+        XCTAssertEqual(
+            AnnotationGeometry.calloutHitRegion(
+                at: CGPoint(x: 100, y: 90),
                 targetRect: target,
                 arrowStart: arrowStart,
                 arrowEnd: arrowEnd,

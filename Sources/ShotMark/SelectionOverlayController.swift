@@ -194,7 +194,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private enum AnnotationRectHandle {
-        case topLeft, topRight, bottomLeft, bottomRight
+        case topLeft, top, topRight, right, bottomRight, bottom, bottomLeft, left
     }
 
     private enum ArrowEndpoint {
@@ -505,7 +505,6 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             isMagnifierVisible = false
             magnifierPoint = nil
         }
-        window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
         if ocrPanelController != nil {
             closeTransientPanels()
@@ -520,12 +519,24 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             return
         }
 
-        if activeTextView != nil {
+        switch AnnotationInteractionPolicy.pointerDownResolution(
+            hasActiveTextEditor: activeTextView != nil,
+            isEditingCallout: activeCalloutTextEditIndex != nil
+        ) {
+        case .commitAndContinue:
+            if activeTextView != nil {
+                commitActiveText()
+            }
+            shouldIgnoreNextMouseDownAfterTextEndEditing = false
+            window?.makeFirstResponder(self)
+        case .commitAndConsume:
             commitActiveText()
             shouldIgnoreNextMouseDownAfterTextEndEditing = false
             window?.makeFirstResponder(self)
             needsDisplay = true
             return
+        case .noActiveEditor:
+            window?.makeFirstResponder(self)
         }
 
         if let selectionRect {
@@ -3252,21 +3263,11 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         let calloutTextEditIndex = activeCalloutTextEditIndex
         activeCalloutTextEditIndex = nil
         activeCalloutOriginalAnnotation = nil
-        let calloutWasJustCreated = activeCalloutWasJustCreated
         activeCalloutWasJustCreated = false
         activeTextIsEditingExisting = false
         textView.delegate = nil
         textView.removeFromSuperview()
         if let calloutTextEditIndex {
-            if value.isEmpty, calloutWasJustCreated {
-                if annotations.indices.contains(calloutTextEditIndex) {
-                    annotations.remove(at: calloutTextEditIndex)
-                }
-                _ = undoStack.popLast()
-                selectedAnnotationIndex = nil
-                needsDisplay = true
-                return
-            }
             updateCalloutText(at: calloutTextEditIndex, value: value, origin: resolvedOrigin)
             selectedAnnotationIndex = calloutTextEditIndex
             needsDisplay = true
@@ -3335,7 +3336,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         guard annotations.indices.contains(index) else { return }
         guard case .callout(let targetRect, _, _, _, _, let color, let lineWidth, let fontSize) = annotations[index] else { return }
         let textSize = value.isEmpty
-            ? calloutPlaceholderTextSize
+            ? AnnotationTextLayout.size(for: " ", fontSize: fontSize)
             : AnnotationTextLayout.size(for: value, fontSize: fontSize)
         let connector = AnnotationGeometry.calloutConnector(
             targetRect: targetRect,
@@ -3654,21 +3655,21 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                 return .resizingAnnotation(index: index, handle: handle)
             }
         case .arrow(let start, let end, _, _):
-            if distance(relative, start) <= 10 {
+            if distance(relative, start) <= 14 {
                 return .movingArrowEndpoint(index: index, endpoint: .start)
             }
-            if distance(relative, end) <= 10 {
+            if distance(relative, end) <= 14 {
                 return .movingArrowEndpoint(index: index, endpoint: .end)
             }
         case .callout(let targetRect, let arrowStart, let arrowEnd, _, _, _, _, _):
-            if let handle = annotationRectangleHandleHit(at: relative, rect: targetRect) {
-                return .resizingAnnotation(index: index, handle: handle)
-            }
-            if distance(relative, arrowStart) <= 10 {
+            if distance(relative, arrowStart) <= 14 {
                 return .movingArrowEndpoint(index: index, endpoint: .start)
             }
-            if distance(relative, arrowEnd) <= 10 {
+            if distance(relative, arrowEnd) <= 14 {
                 return .movingArrowEndpoint(index: index, endpoint: .end)
+            }
+            if let handle = annotationRectangleHandleHit(at: relative, rect: targetRect) {
+                return .resizingAnnotation(index: index, handle: handle)
             }
         case .freehand, .highlighter, .numberMarker, .text:
             break
@@ -3925,7 +3926,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             return
         }
         if preservesAspectRatio, rect.height > 0 {
-            let fixedCorner: CGPoint
+            let fixedCorner: CGPoint?
             switch handle {
             case .topLeft:
                 fixedCorner = CGPoint(x: rect.maxX, y: rect.maxY)
@@ -3935,15 +3936,19 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                 fixedCorner = CGPoint(x: rect.maxX, y: rect.minY)
             case .bottomRight:
                 fixedCorner = CGPoint(x: rect.minX, y: rect.minY)
+            case .top, .right, .bottom, .left:
+                fixedCorner = nil
             }
-            let nextRect = AnnotationConstraintGeometry.aspectConstrainedRect(
-                fixedCorner: fixedCorner,
-                movingCorner: point,
-                aspectRatio: rect.width / rect.height,
-                inside: CGRect(origin: .zero, size: selectionRect?.size ?? bounds.size)
-            )
-            replaceResizableAnnotation(at: index, with: nextRect)
-            return
+            if let fixedCorner {
+                let nextRect = AnnotationConstraintGeometry.aspectConstrainedRect(
+                    fixedCorner: fixedCorner,
+                    movingCorner: point,
+                    aspectRatio: rect.width / rect.height,
+                    inside: CGRect(origin: .zero, size: selectionRect?.size ?? bounds.size)
+                )
+                replaceResizableAnnotation(at: index, with: nextRect)
+                return
+            }
         }
 
         var minX = rect.minX
@@ -3954,15 +3959,23 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         case .topLeft:
             minX = point.x
             minY = point.y
+        case .top:
+            minY = point.y
         case .topRight:
             maxX = point.x
             minY = point.y
+        case .right:
+            maxX = point.x
         case .bottomLeft:
             minX = point.x
             maxY = point.y
         case .bottomRight:
             maxX = point.x
             maxY = point.y
+        case .bottom:
+            maxY = point.y
+        case .left:
+            minX = point.x
         }
         let nextRect = CGRect(x: min(minX, maxX), y: min(minY, maxY), width: abs(maxX - minX), height: abs(maxY - minY))
         replaceResizableAnnotation(at: index, with: nextRect)
@@ -4126,19 +4139,27 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private func annotationRectangleHandleHit(at point: CGPoint, rect: CGRect) -> AnnotationRectHandle? {
         let handles: [(AnnotationRectHandle, CGPoint)] = [
             (.topLeft, CGPoint(x: rect.minX, y: rect.minY)),
+            (.top, CGPoint(x: rect.midX, y: rect.minY)),
             (.topRight, CGPoint(x: rect.maxX, y: rect.minY)),
+            (.right, CGPoint(x: rect.maxX, y: rect.midY)),
+            (.bottomRight, CGPoint(x: rect.maxX, y: rect.maxY)),
+            (.bottom, CGPoint(x: rect.midX, y: rect.maxY)),
             (.bottomLeft, CGPoint(x: rect.minX, y: rect.maxY)),
-            (.bottomRight, CGPoint(x: rect.maxX, y: rect.maxY))
+            (.left, CGPoint(x: rect.minX, y: rect.midY))
         ]
-        return handles.first { distance(point, $0.1) <= 10 }?.0
+        return handles.first { distance(point, $0.1) <= 14 }?.0
     }
 
     private func annotationRectangleHandlePoints(rect: CGRect) -> [CGPoint] {
         [
             CGPoint(x: rect.minX, y: rect.minY),
+            CGPoint(x: rect.midX, y: rect.minY),
             CGPoint(x: rect.maxX, y: rect.minY),
+            CGPoint(x: rect.maxX, y: rect.midY),
+            CGPoint(x: rect.maxX, y: rect.maxY),
+            CGPoint(x: rect.midX, y: rect.maxY),
             CGPoint(x: rect.minX, y: rect.maxY),
-            CGPoint(x: rect.maxX, y: rect.maxY)
+            CGPoint(x: rect.minX, y: rect.midY)
         ]
     }
 
