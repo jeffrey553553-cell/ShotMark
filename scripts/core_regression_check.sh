@@ -196,23 +196,13 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "drawWindowCandidateDebugOverlay" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "点击窗口快速选择" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "窗口识别校准" Sources/ShotMark/AppDelegate.swift Sources/ShotMark/SettingsWindowController.swift
-  rg -q "CaptureHistoryStore" Sources/ShotMark/ScreenshotCoordinator.swift Sources/ShotMark/EditorWindowController.swift Sources/ShotMark/AppDelegate.swift
-  rg -q "QuickAccessWindowController" Sources/ShotMark/ScreenshotCoordinator.swift
-  rg -q "截图历史" Sources/ShotMark/AppDelegate.swift Sources/ShotMark/CaptureHistoryWindowController.swift
-  rg -q "shotMarkHistoryDidChange" Sources/ShotMark/CaptureHistoryStore.swift Sources/ShotMark/CaptureHistoryWindowController.swift
-  rg -q "testDeletingHistoryNeverDeletesExternalExport" Tests/ShotMarkTests/CaptureHistoryStoreTests.swift
-  rg -q "testQuickAccessCardRendersThumbnailAndActions" Tests/ShotMarkTests/CaptureHistoryUITests.swift
-  rg -q "testHistoryWindowRendersStoredRecord" Tests/ShotMarkTests/CaptureHistoryUITests.swift
 '
 
-run_step "Configurable export static checks" bash -c '
-  rg -q "enum ImageExportFormat" Sources/ShotMark/ExportNaming.swift
-  rg -q "case png" Sources/ShotMark/ExportNaming.swift
-  rg -q "case jpeg" Sources/ShotMark/ExportNaming.swift
-  rg -q "case heic" Sources/ShotMark/ExportNaming.swift
-  rg -q "case tiff" Sources/ShotMark/ExportNaming.swift
-  rg -q "uniqueURL" Sources/ShotMark/ExportNaming.swift
-  rg -q "imagePayload" Sources/ShotMark/ExportService.swift
+run_step "Fixed PNG export static checks" bash -c '
+  rg -q "AppSettings.defaultSaveDirectory" Sources/ShotMark/ExportService.swift
+  rg -q "UTType.png.identifier" Sources/ShotMark/ExportService.swift
+  rg -q "exportPNGData" Sources/ShotMark/ScreenshotCoordinator.swift Sources/ShotMark/EditorWindowController.swift Sources/ShotMark/PinnedScreenshotWindowController.swift
+  ! rg -q "CaptureHistory|QuickAccess|CaptureDrag|CaptureSharing|ImageExportFormat|ExportNaming|PostCaptureActions" Sources Tests
 '
 
 SCREEN_INFO="$(system_profiler SPDisplaysDataType 2>/dev/null || true)"
@@ -236,7 +226,7 @@ Generated: $TIMESTAMP
 - DMG verify: PASS
 - DMG install layout verify: PASS
 - P1 editing and recording static checks: PASS
-- Configurable export static checks: PASS
+- Fixed PNG export static checks: PASS
 
 ## Environment Snapshot
 

@@ -1,10 +1,11 @@
 import AppKit
 import ImageIO
+import UniformTypeIdentifiers
 import XCTest
 @testable import ShotMark
 
 final class ExportServiceTests: XCTestCase {
-    func testEveryAdvertisedImageFormatProducesDecodablePixels() throws {
+    func testRenderedExportIsPNGWithExpectedPixelSize() throws {
         let capture = try XCTUnwrap(DemoCaptureFactory.makeCapture())
         let state = EditorState(capture: capture)
         state.annotations = [
@@ -15,50 +16,34 @@ final class ExportServiceTests: XCTestCase {
                 filled: false
             )
         ]
-        let service = ExportService()
+        let data = try ExportService().pngData(for: state)
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(data as CFData, nil))
+        let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
 
-        for format in ImageExportFormat.allCases {
-            let payload = try service.imagePayload(
-                for: state,
-                format: format,
-                quality: 0.82
-            )
-            let source = try XCTUnwrap(CGImageSourceCreateWithData(payload.fileData as CFData, nil))
-            let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
-
-            XCTAssertEqual(
-                CGImageSourceGetType(source) as String?,
-                format.uniformType.identifier,
-                "Unexpected encoded type for \(format.title)"
-            )
-            XCTAssertEqual(image.width, capture.image.width)
-            XCTAssertEqual(image.height, capture.image.height)
-            XCTAssertGreaterThan(payload.fileData.count, 100)
-        }
+        XCTAssertEqual(CGImageSourceGetType(source) as String?, UTType.png.identifier)
+        XCTAssertEqual(image.width, capture.image.width)
+        XCTAssertEqual(image.height, capture.image.height)
+        XCTAssertGreaterThan(data.count, 100)
     }
 
-    func testConfiguredPayloadAlwaysKeepsPNGHistoryCopy() throws {
-        let capture = try XCTUnwrap(DemoCaptureFactory.makeCapture())
-        let payload = try ExportService().imagePayload(
-            for: EditorState(capture: capture),
-            format: .jpeg,
-            quality: 0.7
-        )
+    func testDefaultImageURLsUseDownloadsAndPNG() {
+        let date = Date(timeIntervalSince1970: 1_788_000_000)
+        let screenshotURL = ExportService.defaultSaveURL(createdAt: date)
+        let longScreenshotURL = ExportService.defaultLongScreenshotURL(createdAt: date)
 
-        let source = try XCTUnwrap(CGImageSourceCreateWithData(payload.pngData as CFData, nil))
-        XCTAssertEqual(CGImageSourceGetType(source) as String?, ImageExportFormat.png.uniformType.identifier)
-        XCTAssertEqual(payload.fileFormat, .jpeg)
+        XCTAssertEqual(screenshotURL.deletingLastPathComponent(), AppSettings.defaultSaveDirectory)
+        XCTAssertEqual(longScreenshotURL.deletingLastPathComponent(), AppSettings.defaultSaveDirectory)
+        XCTAssertEqual(screenshotURL.pathExtension, "png")
+        XCTAssertEqual(longScreenshotURL.pathExtension, "png")
+        XCTAssertTrue(screenshotURL.lastPathComponent.hasPrefix("Screenshot "))
+        XCTAssertTrue(longScreenshotURL.lastPathComponent.hasPrefix("Long Screenshot "))
     }
 
-    func testPinnedPNGCanBeTranscodedToEverySaveFormat() throws {
-        let capture = try XCTUnwrap(DemoCaptureFactory.makeCapture())
-        let service = ExportService()
-        let png = try service.pngData(for: EditorState(capture: capture))
+    func testDefaultRecordingURLUsesDownloadsAndMP4() {
+        let url = ExportService.defaultRecordingURL(createdAt: Date(timeIntervalSince1970: 1_788_000_000))
 
-        for format in ImageExportFormat.allCases {
-            let data = try service.transcodePNGData(png, to: format, quality: 0.8)
-            let source = try XCTUnwrap(CGImageSourceCreateWithData(data as CFData, nil))
-            XCTAssertEqual(CGImageSourceGetType(source) as String?, format.uniformType.identifier)
-        }
+        XCTAssertEqual(url.deletingLastPathComponent(), AppSettings.defaultSaveDirectory)
+        XCTAssertEqual(url.pathExtension, "mp4")
+        XCTAssertTrue(url.lastPathComponent.hasPrefix("Recording "))
     }
 }

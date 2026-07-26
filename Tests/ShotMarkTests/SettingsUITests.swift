@@ -5,14 +5,14 @@ import XCTest
 
 @MainActor
 final class SettingsUITests: XCTestCase {
-    func testDarkSettingsWindowRendersExportAndPermissionSections() throws {
+    func testDarkSettingsWindowRendersShortcutAndPermissionSections() throws {
         try renderSettings(
             appearanceName: .darkAqua,
             snapshotPath: "/tmp/shotmark-settings-dark.png"
         )
     }
 
-    func testLightSettingsWindowRendersExportAndPermissionSections() throws {
+    func testLightSettingsWindowRendersShortcutAndPermissionSections() throws {
         try renderSettings(
             appearanceName: .aqua,
             snapshotPath: "/tmp/shotmark-settings-light.png"
@@ -43,7 +43,7 @@ final class SettingsUITests: XCTestCase {
         let bitmap = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
         view.cacheDisplay(in: view.bounds, to: bitmap)
         XCTAssertGreaterThan(bitmap.pixelsWide, 500)
-        XCTAssertGreaterThan(bitmap.pixelsHigh, 650)
+        XCTAssertGreaterThan(bitmap.pixelsHigh, 500)
 
         if ProcessInfo.processInfo.environment["SHOTMARK_WRITE_UI_SNAPSHOTS"] == "1" {
             let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))

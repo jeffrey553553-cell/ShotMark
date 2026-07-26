@@ -24,80 +24,56 @@ enum ExportServiceError: LocalizedError {
     }
 }
 
-struct ExportImagePayload {
-    let pngData: Data
-    let fileData: Data
-    let fileFormat: ImageExportFormat
-}
-
 final class ExportService {
     static func defaultSaveURL(createdAt: Date) -> URL {
-        configuredURL(
-            createdAt: createdAt,
-            kind: .screenshot,
-            fileExtension: AppSettings.shared.imageExportFormat.fileExtension
-        )
+        uniqueURL(prefix: "Screenshot", createdAt: createdAt, fileExtension: "png")
     }
 
     static func defaultRecordingURL(createdAt: Date) -> URL {
-        configuredURL(createdAt: createdAt, kind: .recording, fileExtension: "mp4")
+        uniqueURL(prefix: "Recording", createdAt: createdAt, fileExtension: "mp4")
     }
 
     static func defaultLongScreenshotURL(createdAt: Date) -> URL {
-        configuredURL(
-            createdAt: createdAt,
-            kind: .longScreenshot,
-            fileExtension: AppSettings.shared.imageExportFormat.fileExtension
-        )
+        uniqueURL(prefix: "Long Screenshot", createdAt: createdAt, fileExtension: "png")
     }
 
     static func saveConfirmation(for url: URL) -> String {
         "已保存到 \(url.deletingLastPathComponent().lastPathComponent)"
     }
 
-    private static func configuredURL(
+    private static func uniqueURL(
+        prefix: String,
         createdAt: Date,
-        kind: ExportMediaKind,
         fileExtension: String
     ) -> URL {
-        ExportNaming.uniqueURL(
-            directory: AppSettings.shared.saveDirectory,
-            template: AppSettings.shared.filenameTemplate,
-            kind: kind,
-            createdAt: createdAt,
-            fileExtension: fileExtension
-        )
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
+        let baseName = "\(prefix) \(formatter.string(from: createdAt))"
+        let directory = AppSettings.defaultSaveDirectory
+        var candidate = directory
+            .appendingPathComponent(baseName)
+            .appendingPathExtension(fileExtension)
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: candidate.path) {
+            candidate = directory
+                .appendingPathComponent("\(baseName) \(suffix)")
+                .appendingPathExtension(fileExtension)
+            suffix += 1
+        }
+        return candidate
     }
 
     func export(state: EditorState, to destination: ExportDestination) throws {
-        switch destination {
-        case .clipboard:
-            try exportPNGData(pngData(for: state), to: destination)
-        case .file:
-            let payload = try imagePayload(for: state)
-            try exportImageData(
-                payload.fileData,
-                format: payload.fileFormat,
-                to: destination
-            )
-        }
+        try exportPNGData(pngData(for: state), to: destination)
     }
 
     func exportPNGData(_ data: Data, to destination: ExportDestination) throws {
-        try exportImageData(data, format: .png, to: destination)
-    }
-
-    func exportImageData(
-        _ data: Data,
-        format: ImageExportFormat,
-        to destination: ExportDestination
-    ) throws {
         switch destination {
         case .clipboard:
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
-            let pasteboardType = NSPasteboard.PasteboardType(format.uniformType.identifier)
-            guard pasteboard.setData(data, forType: pasteboardType) else {
+            guard pasteboard.setData(data, forType: .png) else {
                 throw ExportServiceError.clipboardFailed
             }
         case .file(let url):
@@ -108,44 +84,7 @@ final class ExportService {
 
     func pngData(for state: EditorState) throws -> Data {
         let bitmap = try renderedBitmap(for: state)
-        return try encodedData(bitmap: bitmap, format: .png, quality: 1)
-    }
-
-    func imagePayload(
-        for state: EditorState,
-        format: ImageExportFormat = AppSettings.shared.imageExportFormat,
-        quality: Double = AppSettings.shared.imageExportQuality
-    ) throws -> ExportImagePayload {
-        let bitmap = try renderedBitmap(for: state)
-        let pngData = try encodedData(bitmap: bitmap, format: .png, quality: 1)
-        let fileData = format == .png
-            ? pngData
-            : try encodedData(bitmap: bitmap, format: format, quality: quality)
-        return ExportImagePayload(
-            pngData: pngData,
-            fileData: fileData,
-            fileFormat: format
-        )
-    }
-
-    func transcodePNGData(
-        _ pngData: Data,
-        to format: ImageExportFormat = AppSettings.shared.imageExportFormat,
-        quality: Double = AppSettings.shared.imageExportQuality
-    ) throws -> Data {
-        guard format != .png else { return pngData }
-        guard
-            let source = CGImageSourceCreateWithData(pngData as CFData, nil),
-            let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
-        else {
-            throw ExportServiceError.imageDecodingFailed
-        }
-        return try encodedData(
-            image: image,
-            format: format,
-            quality: quality,
-            dpi: 72
-        )
+        return try encodedPNGData(bitmap: bitmap)
     }
 
     private func renderedBitmap(for state: EditorState) throws -> NSBitmapImageRep {
@@ -189,13 +128,9 @@ final class ExportService {
         return rep
     }
 
-    private func encodedData(
-        bitmap: NSBitmapImageRep,
-        format: ImageExportFormat,
-        quality: Double
-    ) throws -> Data {
+    private func encodedPNGData(bitmap: NSBitmapImageRep) throws -> Data {
         guard let image = bitmap.cgImage else {
-            throw ExportServiceError.imageEncodingFailed(format: format.title)
+            throw ExportServiceError.imageEncodingFailed(format: "PNG")
         }
         let horizontalDPI = bitmap.size.width > 0
             ? CGFloat(bitmap.pixelsWide) / bitmap.size.width * 72
@@ -203,40 +138,24 @@ final class ExportService {
         let verticalDPI = bitmap.size.height > 0
             ? CGFloat(bitmap.pixelsHigh) / bitmap.size.height * 72
             : 72
-        return try encodedData(
-            image: image,
-            format: format,
-            quality: quality,
-            dpi: min(horizontalDPI, verticalDPI)
-        )
-    }
-
-    private func encodedData(
-        image: CGImage,
-        format: ImageExportFormat,
-        quality: Double,
-        dpi: CGFloat
-    ) throws -> Data {
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
             data,
-            format.uniformType.identifier as CFString,
+            UTType.png.identifier as CFString,
             1,
             nil
         ) else {
-            throw ExportServiceError.imageEncodingFailed(format: format.title)
+            throw ExportServiceError.imageEncodingFailed(format: "PNG")
         }
 
-        var properties: [CFString: Any] = [
+        let dpi = min(horizontalDPI, verticalDPI)
+        let properties: [CFString: Any] = [
             kCGImagePropertyDPIWidth: dpi,
             kCGImagePropertyDPIHeight: dpi
         ]
-        if format.supportsQualityAdjustment {
-            properties[kCGImageDestinationLossyCompressionQuality] = min(1, max(0.3, quality))
-        }
         CGImageDestinationAddImage(destination, image, properties as CFDictionary)
         guard CGImageDestinationFinalize(destination) else {
-            throw ExportServiceError.imageEncodingFailed(format: format.title)
+            throw ExportServiceError.imageEncodingFailed(format: "PNG")
         }
         return data as Data
     }

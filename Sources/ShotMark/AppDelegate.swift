@@ -15,7 +15,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hotKeyService: HotKeyService?
     private var coordinator: ScreenshotCoordinator?
     private var settingsWindowController: SettingsWindowController?
-    private var historyWindowController: CaptureHistoryWindowController?
     private var shortcutObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -60,7 +59,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         )
         recordingPauseItem.isHidden = true
         menu.addItem(recordingPauseItem)
-        menu.addItem(NSMenuItem(title: "截图历史...", action: #selector(openHistory), keyEquivalent: ""))
         let pinnedItem = NSMenuItem(title: "钉图（0）", action: nil, keyEquivalent: "")
         let pinnedMenu = NSMenu()
         let showPinnedItem = NSMenuItem(title: "显示全部钉图", action: #selector(showAllPinnedScreenshots), keyEquivalent: "")
@@ -120,15 +118,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openDemo() {
         coordinator?.showDemo()
-    }
-
-    @objc private func openHistory() {
-        if historyWindowController == nil {
-            historyWindowController = CaptureHistoryWindowController()
-        }
-        historyWindowController?.showWindow(nil)
-        historyWindowController?.window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc private func showAllPinnedScreenshots() {

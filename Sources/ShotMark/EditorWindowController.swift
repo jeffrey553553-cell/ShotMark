@@ -8,8 +8,6 @@ final class EditorWindowController: NSWindowController {
     private let defaultSaveURL: (Date) -> URL
     private var ocrPanelController: OCRResultPanelController?
     private let editorBorderWidth: CGFloat = 4
-    private let historyStore = CaptureHistoryStore.shared
-    private let quickAccessController = QuickAccessWindowController.shared
 
     init(capture: CaptureResult, defaultSaveURL: @escaping (Date) -> URL = ExportService.defaultSaveURL) {
         state = EditorState(capture: capture)
@@ -125,7 +123,7 @@ final class EditorWindowController: NSWindowController {
             let exportService = ExportService()
             let data = try exportService.pngData(for: state)
             try exportService.exportPNGData(data, to: .clipboard)
-            showResult(data: data, externalURL: nil, message: "已复制到剪切板")
+            toolbarController.showToast("已复制到剪切板")
         } catch {
             showError(title: "复制失败", message: error.localizedDescription)
         }
@@ -135,54 +133,11 @@ final class EditorWindowController: NSWindowController {
         do {
             let url = defaultSaveURL(state.capture.createdAt)
             let exportService = ExportService()
-            let payload = try exportService.imagePayload(for: state)
-            try exportService.exportImageData(
-                payload.fileData,
-                format: payload.fileFormat,
-                to: .file(url)
-            )
-            let followUp = PostCaptureActions.copyImageAfterSavingIfNeeded(
-                pngData: payload.pngData
-            ) { data in
-                try exportService.exportPNGData(data, to: .clipboard)
-            }
-            showResult(
-                data: payload.pngData,
-                externalURL: url,
-                message: PostCaptureActions.saveConfirmation(
-                    for: url,
-                    followUpResult: followUp
-                )
-            )
+            let data = try exportService.pngData(for: state)
+            try exportService.exportPNGData(data, to: .file(url))
+            toolbarController.showToast(ExportService.saveConfirmation(for: url))
         } catch {
             showError(title: "保存失败", message: error.localizedDescription)
-        }
-    }
-
-    private func showResult(data: Data, externalURL: URL?, message: String) {
-        guard let record = try? historyStore.addImage(
-            data: data,
-            kind: .screenshot,
-            createdAt: state.capture.createdAt,
-            pixelWidth: state.capture.image.width,
-            pixelHeight: state.capture.image.height,
-            externalURL: externalURL
-        ) else {
-            toolbarController.showToast(message)
-            return
-        }
-        let targetScreen = NSScreen.screens.first {
-            $0.frame.intersects(state.capture.selectionRectInScreen)
-        }
-        if AppSettings.shared.showsQuickAccess {
-            quickAccessController.show(
-                record: record,
-                store: historyStore,
-                message: message,
-                screen: targetScreen
-            )
-        } else {
-            toolbarController.showToast(message)
         }
     }
 

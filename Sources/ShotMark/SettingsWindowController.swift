@@ -13,9 +13,9 @@ final class SettingsWindowController: NSWindowController {
         let hosting = NSHostingController(rootView: root)
         let window = NSWindow(contentViewController: hosting)
         window.title = "ShotMark 设置"
-        window.setContentSize(CGSize(width: 560, height: 720))
+        window.setContentSize(CGSize(width: 560, height: 580))
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.minSize = CGSize(width: 520, height: 560)
+        window.minSize = CGSize(width: 520, height: 500)
         window.center()
         super.init(window: window)
     }
@@ -43,12 +43,6 @@ struct SettingsView: View {
     @State private var shortcutMessage = "点击修改后按下新的截图快捷键。"
     @State private var shortcutMessageIsError = false
     @State private var shortcutRecorderMonitor: Any?
-    @State private var imageExportFormat = AppSettings.shared.imageExportFormat
-    @State private var imageExportQuality = AppSettings.shared.imageExportQuality
-    @State private var saveDirectory = AppSettings.shared.saveDirectory
-    @State private var filenameTemplate = AppSettings.shared.filenameTemplate
-    @State private var copyImageAfterSaving = AppSettings.shared.copyImageAfterSaving
-    @State private var showsQuickAccess = AppSettings.shared.showsQuickAccess
 
     var body: some View {
         ScrollView {
@@ -60,15 +54,12 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         shortcutSection
                         Text("保存：Space")
+                        Text("图片固定保存为 PNG，目录为 ~/Downloads")
                         Text("录制：顶部控制条或状态栏可暂停、继续和停止；\(shortcut.displayName) 停止")
                     }
                     .font(.system(size: 13))
                     .padding(.vertical, 4)
                 }
-
-                exportSection
-
-                postCaptureSection
 
                 SettingsSection(title: "权限") {
                     VStack(alignment: .leading, spacing: 12) {
@@ -152,201 +143,6 @@ struct SettingsView: View {
         }
     }
 
-    private var exportSection: some View {
-        SettingsSection(title: "保存") {
-            VStack(alignment: .leading, spacing: 13) {
-                HStack {
-                    Text("图片格式")
-                    Spacer()
-                    HStack(spacing: 2) {
-                        ForEach(ImageExportFormat.allCases) { format in
-                            Button {
-                                imageExportFormat = format
-                                AppSettings.shared.imageExportFormat = format
-                            } label: {
-                                Text(format.title)
-                                    .font(.system(size: 11.5, weight: .semibold))
-                                    .frame(width: 54, height: 26)
-                                    .foregroundStyle(
-                                        imageExportFormat == format
-                                            ? Color.white
-                                            : Color.primary.opacity(0.76)
-                                    )
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .fill(
-                                                imageExportFormat == format
-                                                    ? Color.accentColor.opacity(0.86)
-                                                    : Color.clear
-                                            )
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(3)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.primary.opacity(0.06))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.primary.opacity(0.10), lineWidth: 1)
-                    )
-                }
-
-                if imageExportFormat.supportsQualityAdjustment {
-                    HStack {
-                        Text("\(imageExportFormat.title) 质量")
-                        Spacer()
-                        Slider(value: $imageExportQuality, in: 0.3...1)
-                            .frame(width: 190)
-                            .onChange(of: imageExportQuality) { _, quality in
-                                AppSettings.shared.imageExportQuality = quality
-                            }
-                        Text("\(Int((imageExportQuality * 100).rounded()))%")
-                            .font(.system(size: 12, design: .monospaced))
-                            .frame(width: 38, alignment: .trailing)
-                    }
-                }
-
-                Divider()
-
-                HStack(alignment: .center) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("保存目录")
-                        Text(displayPath(saveDirectory))
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                    Spacer()
-                    Button("选择…", action: chooseSaveDirectory)
-                    Button("Downloads") {
-                        AppSettings.shared.resetSaveDirectory()
-                        saveDirectory = AppSettings.shared.saveDirectory
-                    }
-                    .disabled(saveDirectory.standardizedFileURL == AppSettings.defaultSaveDirectory.standardizedFileURL)
-                }
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 7) {
-                    HStack {
-                        Text("文件名模板")
-                        Spacer()
-                        TextField("", text: $filenameTemplate)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 12, design: .monospaced))
-                            .frame(width: 300)
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 7)
-                            .background(
-                                RoundedRectangle(cornerRadius: 7)
-                                    .fill(Color.primary.opacity(0.07))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 7)
-                                    .stroke(Color.primary.opacity(0.12), lineWidth: 1)
-                            )
-                            .onChange(of: filenameTemplate) { _, template in
-                                AppSettings.shared.filenameTemplate = template
-                            }
-                    }
-                    Text("占位符：{type}  {date}  {time}  {random}")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                    Text("示例：\(filenamePreview)")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-            }
-            .font(.system(size: 13))
-            .padding(.vertical, 4)
-        }
-    }
-
-    private var filenamePreview: String {
-        ExportNaming.filename(
-            template: filenameTemplate,
-            kind: .screenshot,
-            createdAt: Date(timeIntervalSince1970: 1_788_000_000),
-            fileExtension: imageExportFormat.fileExtension,
-            randomToken: "a1b2c3"
-        )
-    }
-
-    private var postCaptureSection: some View {
-        SettingsSection(title: "完成后") {
-            VStack(alignment: .leading, spacing: 13) {
-                settingsToggleRow(
-                    title: "保存图片后同时复制",
-                    detail: "按 Space 保存普通截图或长截图时，同时把 PNG 图像放入剪切板。",
-                    isOn: $copyImageAfterSaving
-                )
-                .onChange(of: copyImageAfterSaving) { _, value in
-                    AppSettings.shared.copyImageAfterSaving = value
-                }
-
-                Divider()
-
-                settingsToggleRow(
-                    title: "显示快速访问",
-                    detail: "截图或录屏完成后显示缩略图和复制、拖出、分享等快捷操作。",
-                    isOn: $showsQuickAccess
-                )
-                .onChange(of: showsQuickAccess) { _, value in
-                    AppSettings.shared.showsQuickAccess = value
-                }
-            }
-            .padding(.vertical, 4)
-        }
-    }
-
-    private func settingsToggleRow(
-        title: String,
-        detail: String,
-        isOn: Binding<Bool>
-    ) -> some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 13))
-                Text(detail)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 12)
-            Toggle("", isOn: isOn)
-                .labelsHidden()
-                .toggleStyle(.switch)
-        }
-    }
-
-    private func chooseSaveDirectory() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.directoryURL = saveDirectory
-        panel.prompt = "使用此文件夹"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        AppSettings.shared.saveDirectory = url
-        saveDirectory = AppSettings.shared.saveDirectory
-    }
-
-    private func displayPath(_ url: URL) -> String {
-        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).standardizedFileURL.path
-        let path = url.standardizedFileURL.path
-        guard path.hasPrefix(home) else { return path }
-        return "~" + path.dropFirst(home.count)
-    }
-
     private var shortcutSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
@@ -412,12 +208,6 @@ struct SettingsView: View {
         accessibilityAccess = PermissionService.hasAccessibilityAccess
         microphoneAccess = PermissionService.hasMicrophoneAccess
         shortcut = AppSettings.shared.shortcut
-        imageExportFormat = AppSettings.shared.imageExportFormat
-        imageExportQuality = AppSettings.shared.imageExportQuality
-        saveDirectory = AppSettings.shared.saveDirectory
-        filenameTemplate = AppSettings.shared.filenameTemplate
-        copyImageAfterSaving = AppSettings.shared.copyImageAfterSaving
-        showsQuickAccess = AppSettings.shared.showsQuickAccess
     }
 
     private func startShortcutRecording() {

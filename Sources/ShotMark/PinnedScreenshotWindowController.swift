@@ -268,20 +268,8 @@ final class PinnedScreenshotWindowController: NSWindowController, NSWindowDelega
         do {
             let url = ExportService.defaultSaveURL(createdAt: createdAt)
             let exportService = ExportService()
-            let format = AppSettings.shared.imageExportFormat
-            let data = try exportService.transcodePNGData(pngData, to: format)
-            try exportService.exportImageData(data, format: format, to: .file(url))
-            let followUp = PostCaptureActions.copyImageAfterSavingIfNeeded(
-                pngData: pngData
-            ) { data in
-                try exportService.exportPNGData(data, to: .clipboard)
-            }
-            ToastWindowController.show(
-                message: PostCaptureActions.saveConfirmation(
-                    for: url,
-                    followUpResult: followUp
-                )
-            )
+            try exportService.exportPNGData(pngData, to: .file(url))
+            ToastWindowController.show(message: ExportService.saveConfirmation(for: url))
         } catch {
             showExportError(error)
         }
@@ -299,7 +287,7 @@ final class PinnedScreenshotWindowController: NSWindowController, NSWindowDelega
         let menu = NSMenu()
         menu.addItem(menuItem(title: "复制", action: #selector(copyMenuAction), keyEquivalent: "c"))
         menu.addItem(menuItem(
-            title: "保存到 \(AppSettings.shared.saveDirectory.lastPathComponent)",
+            title: "保存到 Downloads",
             action: #selector(saveMenuAction),
             keyEquivalent: "s"
         ))
