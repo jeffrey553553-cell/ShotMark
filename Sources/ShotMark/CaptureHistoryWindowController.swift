@@ -122,6 +122,11 @@ private final class CaptureHistoryViewModel: ObservableObject {
         store.resolvedURL(for: record) != nil
     }
 
+    func dragItemProvider(for record: CaptureHistoryRecord) -> NSItemProvider {
+        (try? CaptureDragItemProvider.shared.itemProvider(for: record, store: store))
+            ?? NSItemProvider()
+    }
+
     func copy(_ record: CaptureHistoryRecord) {
         perform {
             try CaptureHistoryActions.copy(record, store: store)
@@ -245,15 +250,7 @@ private struct CaptureHistoryRow: View {
     var body: some View {
         let isAvailable = viewModel.isAvailable(record)
         HStack(spacing: 14) {
-            Image(nsImage: viewModel.thumbnail(for: record))
-                .resizable()
-                .scaledToFit()
-                .frame(width: 104, height: 64)
-                .background(Color(nsColor: .windowBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .onAppear {
-                    viewModel.requestVideoThumbnail(for: record)
-                }
+            historyThumbnail(isAvailable: isAvailable)
 
             VStack(alignment: .leading, spacing: 5) {
                 Text(record.displayName)
@@ -275,6 +272,47 @@ private struct CaptureHistoryRow: View {
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
             viewModel.open(record)
+        }
+    }
+
+    private func historyThumbnail(isAvailable: Bool) -> some View {
+        let thumbnail = Image(nsImage: viewModel.thumbnail(for: record))
+            .resizable()
+            .scaledToFit()
+            .frame(width: 104, height: 64)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(alignment: .bottomTrailing) {
+                if isAvailable {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .padding(4)
+                        .background(.black.opacity(0.52))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .padding(4)
+                        .allowsHitTesting(false)
+                }
+            }
+            .onAppear {
+                viewModel.requestVideoThumbnail(for: record)
+            }
+            .help(isAvailable ? "拖到其他 App" : "文件已移动或删除")
+
+        return Group {
+            if isAvailable {
+                thumbnail.onDrag {
+                    viewModel.dragItemProvider(for: record)
+                } preview: {
+                    Image(nsImage: viewModel.thumbnail(for: record))
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 120, maxHeight: 80)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+            } else {
+                thumbnail
+            }
         }
     }
 

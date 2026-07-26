@@ -69,7 +69,19 @@ final class QuickAccessWindowController: NSObject {
         view.detailLabel.stringValue = detailText(for: record)
         view.thumbnailView.image = thumbnail(for: record, store: store)
         view.thumbnailView.imageScaling = .scaleProportionallyUpOrDown
-        view.dragURLProvider = { store.resolvedURL(for: record) }
+        view.dragURLProvider = {
+            try? CaptureDragItemProvider.shared.dragURL(for: record, store: store)
+        }
+        view.onDragStarted = { [weak self] in
+            self?.pauseDismissTimer()
+        }
+        view.onDragEnded = { [weak self] succeeded in
+            if succeeded {
+                self?.dismiss()
+            } else {
+                self?.scheduleDismiss()
+            }
+        }
         view.thumbnailView.toolTip = "拖到其他 App"
         if record.mediaType == .video, let url = store.resolvedURL(for: record) {
             CaptureVideoThumbnailService.shared.loadThumbnail(for: url) { [weak self] image in
@@ -202,6 +214,8 @@ private final class QuickAccessContentView: NSVisualEffectView, NSDraggingSource
     let closeButton = NSButton()
     var onMouseEntered: (() -> Void)?
     var onMouseExited: (() -> Void)?
+    var onDragStarted: (() -> Void)?
+    var onDragEnded: ((Bool) -> Void)?
     var dragURLProvider: (() -> URL?)?
     private var trackingAreaReference: NSTrackingArea?
     private var dragStartPoint: CGPoint?
@@ -314,9 +328,21 @@ private final class QuickAccessContentView: NSVisualEffectView, NSDraggingSource
             return
         }
         self.dragStartPoint = nil
+        onDragStarted?()
         let item = NSDraggingItem(pasteboardWriter: url as NSURL)
-        item.setDraggingFrame(thumbnailView.frame, contents: thumbnailView.image)
-        beginDraggingSession(with: [item], event: event, source: self)
+        let previewSize = dragPreviewSize(for: thumbnailView.image)
+        let currentPoint = convert(event.locationInWindow, from: nil)
+        item.setDraggingFrame(
+            CGRect(
+                x: currentPoint.x - previewSize.width / 2,
+                y: currentPoint.y - previewSize.height / 2,
+                width: previewSize.width,
+                height: previewSize.height
+            ),
+            contents: thumbnailView.image
+        )
+        let session = beginDraggingSession(with: [item], event: event, source: self)
+        session.animatesToStartingPositionsOnCancelOrFail = true
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -332,5 +358,25 @@ private final class QuickAccessContentView: NSVisualEffectView, NSDraggingSource
 
     func ignoreModifierKeys(for session: NSDraggingSession) -> Bool {
         true
+    }
+
+    func draggingSession(
+        _ session: NSDraggingSession,
+        endedAt screenPoint: NSPoint,
+        operation: NSDragOperation
+    ) {
+        onDragEnded?(operation != [])
+    }
+
+    private func dragPreviewSize(for image: NSImage?) -> CGSize {
+        let maximum = CGSize(width: 120, height: 80)
+        guard let image, image.size.width > 0, image.size.height > 0 else {
+            return maximum
+        }
+        let scale = min(maximum.width / image.size.width, maximum.height / image.size.height)
+        return CGSize(
+            width: max(36, image.size.width * scale),
+            height: max(28, image.size.height * scale)
+        )
     }
 }
