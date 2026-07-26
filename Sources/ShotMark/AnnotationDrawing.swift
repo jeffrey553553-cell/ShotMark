@@ -38,8 +38,14 @@ enum AnnotationDrawing {
                 drawFreehand(points: points, color: color, lineWidth: lineWidth)
             case .highlighter(let points, let color, let lineWidth):
                 drawHighlighter(points: points, color: color, lineWidth: lineWidth)
-            case .numberMarker(let center, let number, let color, let markerSize):
-                drawNumberMarker(center: center, number: number, color: color, markerSize: markerSize)
+            case .numberMarker(let center, let number, let color, let markerSize, let appearance):
+                drawNumberMarker(
+                    center: center,
+                    number: number,
+                    color: color,
+                    markerSize: markerSize,
+                    appearance: appearance
+                )
             case .text(let origin, let value, let color, let fontSize):
                 drawText(origin: origin, value: value, color: color, fontSize: fontSize)
             case .mosaic(let rect, let blockSize):
@@ -134,16 +140,50 @@ enum AnnotationDrawing {
         path.fill()
     }
 
-    private static func drawNumberMarker(center: CGPoint, number: Int, color: NSColor, markerSize: CGFloat) {
+    private static func drawNumberMarker(
+        center: CGPoint,
+        number: Int,
+        color: NSColor,
+        markerSize: CGFloat,
+        appearance: NumberMarkerAppearance
+    ) {
         let radius = max(8, markerSize)
         let rect = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
-        color.setFill()
-        NSBezierPath(ovalIn: rect).fill()
+        let path = NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1))
+        let textColor: NSColor
+
+        switch appearance {
+        case .filled:
+            color.setFill()
+            path.fill()
+            textColor = .white
+        case .outlined:
+            color.withAlphaComponent(0.08).setFill()
+            path.fill()
+            color.setStroke()
+            path.lineWidth = max(2, radius * 0.14)
+            path.stroke()
+            textColor = color
+        case .light:
+            NSGraphicsContext.saveGraphicsState()
+            let shadow = NSShadow()
+            shadow.shadowColor = NSColor.black.withAlphaComponent(0.24)
+            shadow.shadowBlurRadius = max(2, radius * 0.22)
+            shadow.shadowOffset = CGSize(width: 0, height: -1)
+            shadow.set()
+            NSColor.white.withAlphaComponent(0.94).setFill()
+            path.fill()
+            NSGraphicsContext.restoreGraphicsState()
+            color.withAlphaComponent(0.72).setStroke()
+            path.lineWidth = max(1.25, radius * 0.08)
+            path.stroke()
+            textColor = color
+        }
 
         let text = "\(number)"
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: max(10, radius * 1.08), weight: .bold),
-            .foregroundColor: NSColor.white
+            .foregroundColor: textColor
         ]
         let size = text.size(withAttributes: attributes)
         text.draw(at: CGPoint(x: center.x - size.width / 2, y: center.y - size.height / 2), withAttributes: attributes)

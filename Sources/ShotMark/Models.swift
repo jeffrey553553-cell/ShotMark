@@ -119,13 +119,25 @@ enum AnnotationTool: String, CaseIterable {
     case callout
 }
 
+enum NumberMarkerAppearance: String, CaseIterable {
+    case filled
+    case outlined
+    case light
+}
+
 enum Annotation {
     case rectangle(rect: CGRect, color: NSColor, lineWidth: CGFloat, filled: Bool)
     case ellipse(rect: CGRect, color: NSColor, lineWidth: CGFloat, filled: Bool)
     case arrow(start: CGPoint, end: CGPoint, color: NSColor, lineWidth: CGFloat)
     case freehand(points: [CGPoint], color: NSColor, lineWidth: CGFloat)
     case highlighter(points: [CGPoint], color: NSColor, lineWidth: CGFloat)
-    case numberMarker(center: CGPoint, number: Int, color: NSColor, markerSize: CGFloat)
+    case numberMarker(
+        center: CGPoint,
+        number: Int,
+        color: NSColor,
+        markerSize: CGFloat,
+        appearance: NumberMarkerAppearance
+    )
     case text(origin: CGPoint, value: String, color: NSColor, fontSize: CGFloat)
     case mosaic(rect: CGRect, blockSize: CGFloat)
     case callout(

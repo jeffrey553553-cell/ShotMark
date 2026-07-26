@@ -67,6 +67,12 @@ private enum LongScreenshotHotKeyAction {
     case cancel
 }
 
+private struct LongScreenshotAlignmentRetryContext {
+    let expectedDeltaPixels: Int?
+    let expectedDirection: LongScreenshotStitchDirection?
+    let scrollDirectionSign: Int?
+}
+
 private final class LongScreenshotHotKeyService {
     var onAction: ((LongScreenshotHotKeyAction) -> Void)?
 
@@ -150,6 +156,7 @@ final class LongScreenshotSessionController {
     private let stitcher = LongScreenshotStitcher()
     private let frameSource = LongScreenshotFrameSource()
     private let frameRing = LongScreenshotFrameRing()
+    private let retryPolicy = LongScreenshotRetryPolicy()
     private let selection: CaptureSelection
     private var captures: [CaptureResult] = []
     private var stitchedImageCache: CGImage?
@@ -179,9 +186,7 @@ final class LongScreenshotSessionController {
     private var alignmentRetryCount = 0
 
     private let scrollCaptureInterval: TimeInterval = 0.095
-    private let trailingCaptureDelay: TimeInterval = 0.14
-    private let alignmentRetryDelay: TimeInterval = 0.09
-    private let maximumAlignmentRetryCount = 2
+    private let trailingCaptureDelay: TimeInterval = 0.18
     private let scrollDirectionThreshold: CGFloat = 0.1
 
     init(selection: CaptureSelection) {
@@ -388,7 +393,7 @@ final class LongScreenshotSessionController {
         DispatchQueue.main.asyncAfter(deadline: .now() + trailingCaptureDelay, execute: trailingWorkItem)
     }
 
-    private func captureFrame() {
+    private func captureFrame(retryContext: LongScreenshotAlignmentRetryContext? = nil) {
         guard !finishAfterCapture else { return }
         if isCapturing {
             needsCaptureAfterCurrent = true
@@ -397,16 +402,21 @@ final class LongScreenshotSessionController {
 
         isCapturing = true
         needsCaptureAfterCurrent = false
-        let expectedDeltaPixels = pendingExpectedScrollDeltaPixels > 0 ? pendingExpectedScrollDeltaPixels : nil
-        let scrollDirectionSign = lastScrollDirectionSign
-        let expectedDirection = scrollDirectionSign.flatMap { stitchDirectionByScrollSign[$0] }
-        pendingExpectedScrollDeltaPixels = 0
+        let expectedDeltaPixels = retryContext?.expectedDeltaPixels
+            ?? (pendingExpectedScrollDeltaPixels > 0 ? pendingExpectedScrollDeltaPixels : nil)
+        let scrollDirectionSign = retryContext?.scrollDirectionSign ?? lastScrollDirectionSign
+        let expectedDirection = retryContext?.expectedDirection
+            ?? scrollDirectionSign.flatMap { stitchDirectionByScrollSign[$0] }
+        if retryContext == nil {
+            pendingExpectedScrollDeltaPixels = 0
+        }
         updateControlView(status: "正在采集...")
 
         if commitLatestStreamFrame(
             expectedDeltaPixels: expectedDeltaPixels,
             expectedDirection: expectedDirection,
-            scrollDirectionSign: scrollDirectionSign
+            scrollDirectionSign: scrollDirectionSign,
+            isAlignmentRetry: retryContext != nil
         ) {
             finishCaptureTurn()
             return
@@ -428,7 +438,8 @@ final class LongScreenshotSessionController {
                             expectedDeltaPixels: expectedDeltaPixels,
                             expectedDirection: expectedDirection,
                             scrollDirectionSign: scrollDirectionSign,
-                            sequenceNumber: nil
+                            sequenceNumber: nil,
+                            isAlignmentRetry: retryContext != nil
                         )
                     case .failure(let error):
                         self.cleanup()
@@ -445,7 +456,8 @@ final class LongScreenshotSessionController {
     private func commitLatestStreamFrame(
         expectedDeltaPixels: Int?,
         expectedDirection: LongScreenshotStitchDirection?,
-        scrollDirectionSign: Int?
+        scrollDirectionSign: Int?,
+        isAlignmentRetry: Bool
     ) -> Bool {
         guard isStreamCaptureEnabled, isStreamSourceReady else { return false }
         guard let frame = frameRing.latestFrame(after: frameRing.lastCommittedSequenceNumber) else { return false }
@@ -455,7 +467,8 @@ final class LongScreenshotSessionController {
             expectedDeltaPixels: expectedDeltaPixels,
             expectedDirection: expectedDirection,
             scrollDirectionSign: scrollDirectionSign,
-            sequenceNumber: frame.sequenceNumber
+            sequenceNumber: frame.sequenceNumber,
+            isAlignmentRetry: isAlignmentRetry
         )
         return true
     }
@@ -466,7 +479,8 @@ final class LongScreenshotSessionController {
         expectedDeltaPixels: Int?,
         expectedDirection: LongScreenshotStitchDirection?,
         scrollDirectionSign: Int?,
-        sequenceNumber: Int?
+        sequenceNumber: Int?,
+        isAlignmentRetry: Bool
     ) {
         let update = stitcher.append(
             image,
@@ -478,7 +492,17 @@ final class LongScreenshotSessionController {
         if let update {
             switch update.outcome {
             case .ignoredAlignmentFailed:
-                scheduleAlignmentRetry()
+                scheduleAlignmentRetry(context: LongScreenshotAlignmentRetryContext(
+                    expectedDeltaPixels: expectedDeltaPixels,
+                    expectedDirection: expectedDirection,
+                    scrollDirectionSign: scrollDirectionSign
+                ))
+            case .ignoredNoMovement where isAlignmentRetry:
+                scheduleAlignmentRetry(context: LongScreenshotAlignmentRetryContext(
+                    expectedDeltaPixels: expectedDeltaPixels,
+                    expectedDirection: expectedDirection,
+                    scrollDirectionSign: scrollDirectionSign
+                ))
             case .initialized, .appended, .ignoredNoMovement, .ignoredCoveredContent:
                 alignmentRetryWorkItem?.cancel()
                 alignmentRetryWorkItem = nil
@@ -508,19 +532,27 @@ final class LongScreenshotSessionController {
         }
     }
 
-    private func scheduleAlignmentRetry() {
-        guard !finishAfterCapture, alignmentRetryCount < maximumAlignmentRetryCount else { return }
+    private func scheduleAlignmentRetry(context: LongScreenshotAlignmentRetryContext) {
+        guard !finishAfterCapture else { return }
         alignmentRetryWorkItem?.cancel()
-        alignmentRetryCount += 1
+        let nextAttempt = alignmentRetryCount + 1
+        guard let delay = retryPolicy.delay(forAttempt: nextAttempt) else {
+            updateControlView(status: "暂未对齐，继续缓慢滚动")
+            updatePreview(status: "等待新的重叠内容")
+            return
+        }
+        alignmentRetryCount = nextAttempt
         let workItem = DispatchWorkItem { [weak self] in
             guard let self, !self.finishAfterCapture else { return }
             self.alignmentRetryWorkItem = nil
-            self.updateControlView(status: "正在稳定画面并重试...")
-            self.updatePreview(status: "自动修复拼接")
-            self.captureFrame()
+            self.updateControlView(
+                status: "正在稳定画面并重试 \(self.alignmentRetryCount)/\(self.retryPolicy.maximumRetryCount)"
+            )
+            self.updatePreview(status: "自动重新对齐")
+            self.captureFrame(retryContext: context)
         }
         alignmentRetryWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + alignmentRetryDelay, execute: workItem)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
     private func finishCaptureTurn() {

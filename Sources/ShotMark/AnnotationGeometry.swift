@@ -135,7 +135,7 @@ enum AnnotationGeometry {
         case .freehand(let points, _, let lineWidth),
              .highlighter(let points, _, let lineWidth):
             return AnnotationPathGeometry.bounds(points: points, lineWidth: lineWidth)
-        case .numberMarker(let center, _, _, let markerSize):
+        case .numberMarker(let center, _, _, let markerSize, _):
             let radius = max(8, markerSize)
             return CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
         case .text(let origin, let value, _, let fontSize):

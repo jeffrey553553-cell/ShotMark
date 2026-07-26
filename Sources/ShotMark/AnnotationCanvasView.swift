@@ -153,7 +153,13 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         case .mosaic:
             activeDrag = .drawingMosaic(start: point, current: point)
         case .numberMarker:
-            state.add(.numberMarker(center: point, number: state.nextMarkerNumber, color: .systemRed, markerSize: 13))
+            state.add(.numberMarker(
+                center: point,
+                number: state.nextMarkerNumber,
+                color: .systemRed,
+                markerSize: 13,
+                appearance: .filled
+            ))
             state.nextMarkerNumber += 1
             needsDisplay = true
             onStateChanged?()
@@ -381,7 +387,7 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
                 || distance(point, end) <= 10
         case .freehand(let points, _, let lineWidth), .highlighter(let points, _, let lineWidth):
             return AnnotationPathGeometry.contains(point, points: points, lineWidth: lineWidth)
-        case .numberMarker(let center, _, _, let markerSize):
+        case .numberMarker(let center, _, _, let markerSize, _):
             return distance(point, center) <= max(16, markerSize + 4)
         case .text(let origin, let value, _, let fontSize):
             let size = value.size(withAttributes: [.font: NSFont.systemFont(ofSize: fontSize, weight: .semibold)])
@@ -456,12 +462,13 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
                 color: color,
                 lineWidth: lineWidth
             )
-        case .numberMarker(let center, let number, let color, let markerSize):
+        case .numberMarker(let center, let number, let color, let markerSize, let appearance):
             state.annotations[index] = .numberMarker(
                 center: CGPoint(x: center.x + appliedDelta.x, y: center.y + appliedDelta.y),
                 number: number,
                 color: color,
-                markerSize: markerSize
+                markerSize: markerSize,
+                appearance: appearance
             )
         case .text(let origin, let value, let color, let fontSize):
             state.annotations[index] = .text(origin: CGPoint(x: origin.x + appliedDelta.x, y: origin.y + appliedDelta.y), value: value, color: color, fontSize: fontSize)
@@ -590,7 +597,7 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         case .arrow(let start, let end, _, _):
             drawHandle(at: start)
             drawHandle(at: end)
-        case .numberMarker(let center, _, _, _):
+        case .numberMarker(let center, _, _, _, _):
             drawHandle(at: center)
         case .text(let origin, _, _, _):
             drawHandle(at: origin)

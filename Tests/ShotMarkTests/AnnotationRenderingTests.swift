@@ -36,8 +36,28 @@ final class AnnotationRenderingTests: XCTestCase {
         let annotations: [Annotation] = [
             .rectangle(rect: CGRect(x: 65, y: 65, width: 220, height: 120), color: .systemRed, lineWidth: 4, filled: false),
             .arrow(start: CGPoint(x: 90, y: 260), end: CGPoint(x: 285, y: 350), color: .systemOrange, lineWidth: 5),
-            .numberMarker(center: CGPoint(x: 130, y: 470), number: 3, color: .systemBlue, markerSize: 16),
-            .text(origin: CGPoint(x: 180, y: 455), value: "重点信息\n支持多行评论", color: .white, fontSize: 20),
+            .numberMarker(
+                center: CGPoint(x: 95, y: 470),
+                number: 1,
+                color: .systemBlue,
+                markerSize: 16,
+                appearance: .filled
+            ),
+            .numberMarker(
+                center: CGPoint(x: 145, y: 470),
+                number: 2,
+                color: .systemBlue,
+                markerSize: 16,
+                appearance: .outlined
+            ),
+            .numberMarker(
+                center: CGPoint(x: 195, y: 470),
+                number: 3,
+                color: .systemBlue,
+                markerSize: 16,
+                appearance: .light
+            ),
+            .text(origin: CGPoint(x: 245, y: 455), value: "重点信息\n支持多行评论", color: .white, fontSize: 20),
             .mosaic(rect: CGRect(x: 650, y: 70, width: 230, height: 100), blockSize: 12),
             .callout(
                 targetRect: target,

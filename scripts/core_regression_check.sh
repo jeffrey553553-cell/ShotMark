@@ -100,7 +100,7 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "private func undoEdit\\(" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "private func redoEdit\\(" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "private func deleteSelectedAnnotation\\(" Sources/ShotMark/SelectionOverlayController.swift
-  rg -q "case numberMarker\\(center: CGPoint, number: Int, color: NSColor, markerSize: CGFloat\\)" Sources/ShotMark/Models.swift
+  rg -q "appearance: NumberMarkerAppearance" Sources/ShotMark/Models.swift
   rg -q "private var numberMarkerStyle" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "return \"6\"" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "return \"7\"" Sources/ShotMark/SelectionOverlayController.swift
@@ -187,6 +187,10 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "testCalloutLayoutKeepsTextVisibleAndArrowAttached" Tests/ShotMarkTests/AnnotationGeometryTests.swift
   rg -q "testTextEditorExpandsLeftWhenItReachesSelectionEdge" Tests/ShotMarkTests/AnnotationGeometryTests.swift
   rg -q "testAnnotationShowcaseRendersVisiblePixels" Tests/ShotMarkTests/AnnotationRenderingTests.swift
+  rg -q "NumberMarkerAppearance" Sources/ShotMark/Models.swift Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "testStrengthProducesContinuousIncreasingObscuration" Tests/ShotMarkTests/MosaicRendererTests.swift
+  rg -q "LongScreenshotRetryPolicy" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "testDefaultRetryDelaysIncreaseToAllowDynamicContentToSettle" Tests/ShotMarkTests/LongScreenshotRetryPolicyTests.swift
   rg -q "WindowDetectionService" Sources/ShotMark/WindowDetectionService.swift Sources/ShotMark/SelectionOverlayController.swift
   rg -q "SCShareableContent" Sources/ShotMark/WindowDetectionService.swift
   rg -q "CGWindowListCopyWindowInfo" Sources/ShotMark/WindowDetectionService.swift
@@ -295,12 +299,13 @@ Mark each item PASS/FAIL after running it.
 | Long screenshot | Scroll down, then scroll upward repeatedly | Preview does not keep appending reversed/duplicate content | |
 | Long screenshot | Reverse direction through already captured content | Preview height stays unchanged while traversing covered content and resumes only after reaching new content | |
 | Long screenshot | Start near page bottom, scroll upward | New upper content is prepended above the starting frame | |
+| Long screenshot | Scroll through a lazy-loading or animated page | Automatic retries preserve direction/distance context and recover after the page settles | |
 | Edit | Draw rectangle/arrow/text/mosaic, then Cmd+Z/Cmd+Shift+Z | Undo and redo restore the previous annotation state | |
 | Edit | Select an annotation and press Delete | The selected annotation is removed only after selection | |
 | Edit | Select rectangle/mosaic and drag corner handles | The object resizes without moving unrelated annotations | |
 | Edit | Select arrow, increase thickness, then draw | Arrow line and arrowhead remain visible at thick sizes | |
 | Edit | Select arrow and drag endpoint handles | Arrow start/end handles move independently | |
-| Edit | Select number marker and adjust style panel | Marker size/color/opacity update and export correctly | |
+| Edit | Select number marker and adjust style panel | Filled/outlined/light styles plus size/color/opacity update and export correctly | |
 | Edit | Click comment tool or press 1, then drag a target box | A target rectangle, arrow and editable text comment are created as one annotation group | |
 | Edit | Select a comment annotation | Target rectangle corners, arrow endpoints and text origin show editable handles; moving the group keeps all three parts together | |
 | Edit | Drag the tail handle of a comment arrow | The comment text moves with the arrow tail and keeps its spacing from the arrow | |
@@ -308,7 +313,7 @@ Mark each item PASS/FAIL after running it.
 | Edit | Draw normal and comment arrows | Arrows render with a thin tail, heavier head and no plain-line arrow regression | |
 | Edit | Type text annotation continuously, press Return to create a new line, then click outside | Text stays anchored while typing, tail newlines do not shift the block, and it does not jump after focus leaves | |
 | Edit | Type a long text annotation without pressing Return | Text input expands horizontally instead of auto-wrapping; committed text matches the input layout | |
-| Edit | Select mosaic and adjust style panel strength | Mosaic blur strength changes; no color controls are shown | |
+| Edit | Select mosaic and adjust style panel strength | Live preview and export use the same subtle-to-strong blur scale without a border | |
 
 ## Notes
 
