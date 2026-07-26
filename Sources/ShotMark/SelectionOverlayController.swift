@@ -643,6 +643,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         guard !isInteractionLocked else { return }
         let point = convert(event.locationInWindow, from: nil)
         let relative = relativePoint(point)
+        let drawingPoint = clampedAnnotationPoint(relative)
 
         switch dragMode {
         case .pendingInitialSelection(let start, _):
@@ -663,30 +664,30 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             setSelectionRect(clamped(resized(originalRect, handle: handle, to: point)), keepingAnnotationsStationary: true)
         case .drawingRectangle(let start, _):
             let current = event.modifierFlags.contains(.shift)
-                ? AnnotationConstraintGeometry.squareEndpoint(from: start, to: relative)
-                : relative
+                ? clampedAnnotationPoint(AnnotationConstraintGeometry.squareEndpoint(from: start, to: drawingPoint))
+                : drawingPoint
             dragMode = .drawingRectangle(start: start, current: current)
         case .drawingEllipse(let start, _):
             let current = event.modifierFlags.contains(.shift)
-                ? AnnotationConstraintGeometry.squareEndpoint(from: start, to: relative)
-                : relative
+                ? clampedAnnotationPoint(AnnotationConstraintGeometry.squareEndpoint(from: start, to: drawingPoint))
+                : drawingPoint
             dragMode = .drawingEllipse(start: start, current: current)
         case .drawingMosaic(let start, _):
-            dragMode = .drawingMosaic(start: start, current: relative)
+            dragMode = .drawingMosaic(start: start, current: drawingPoint)
             requestMosaicPreviewCaptureIfNeeded()
         case .drawingArrow(let start, _):
             let current = event.modifierFlags.contains(.shift)
-                ? AnnotationConstraintGeometry.snappedLineEndpoint(from: start, to: relative)
-                : relative
+                ? clampedAnnotationPoint(AnnotationConstraintGeometry.snappedLineEndpoint(from: start, to: drawingPoint))
+                : drawingPoint
             dragMode = .drawingArrow(start: start, current: current)
         case .drawingFreehand(var points):
-            appendPathPoint(relative, to: &points)
+            appendPathPoint(drawingPoint, to: &points)
             dragMode = .drawingFreehand(points: points)
         case .drawingHighlighter(var points):
-            appendPathPoint(relative, to: &points)
+            appendPathPoint(drawingPoint, to: &points)
             dragMode = .drawingHighlighter(points: points)
         case .drawingCallout(let start, _):
-            dragMode = .drawingCallout(start: start, current: relative)
+            dragMode = .drawingCallout(start: start, current: drawingPoint)
         case .movingAnnotation(let index, let lastPoint):
             if let start = pendingTextEditStart, distance(relative, start) > 3 {
                 pendingTextEditDidMove = true
@@ -711,7 +712,9 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     override func mouseUp(with event: NSEvent) {
         guard !isInteractionLocked else { return }
-        let point = relativePoint(convert(event.locationInWindow, from: nil))
+        let point = clampedAnnotationPoint(
+            relativePoint(convert(event.locationInWindow, from: nil))
+        )
         let textEditIndex = pendingTextEditIndex
         let shouldBeginTextEdit = textEditIndex != nil && !pendingTextEditDidMove
 
@@ -975,7 +978,11 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private func addCallout(targetRect: CGRect) {
         guard let selectionRect else { return }
         registerUndo()
-        let layout = calloutLayout(for: targetRect, in: CGRect(origin: .zero, size: selectionRect.size))
+        let layout = AnnotationGeometry.calloutLayout(
+            for: targetRect,
+            in: CGRect(origin: .zero, size: selectionRect.size),
+            textSize: CGSize(width: max(120, textInputMinSize.width), height: textInputMinSize.height)
+        )
         let annotation = Annotation.callout(
             targetRect: targetRect,
             arrowStart: layout.arrowStart,
@@ -990,52 +997,6 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         selectedAnnotationIndex = annotations.count - 1
         selectedTool = .callout
         beginCalloutTextEdit(at: annotations.count - 1, registersUndo: false)
-    }
-
-    private func calloutLayout(for targetRect: CGRect, in bounds: CGRect) -> (arrowStart: CGPoint, arrowEnd: CGPoint, textOrigin: CGPoint) {
-        let preferredTextSize = CGSize(width: max(120, textInputMinSize.width), height: textInputMinSize.height)
-        let textGap: CGFloat = 56
-        let arrowTextGap: CGFloat = 24
-
-        let placements: [(origin: CGPoint, arrowStart: CGPoint)] = [
-            (
-                CGPoint(x: targetRect.maxX + textGap, y: targetRect.maxY + textGap),
-                CGPoint(x: targetRect.maxX + textGap - arrowTextGap, y: targetRect.maxY + textGap + preferredTextSize.height * 0.36)
-            ),
-            (
-                CGPoint(x: targetRect.minX - textGap - preferredTextSize.width, y: targetRect.maxY + textGap),
-                CGPoint(x: targetRect.minX - textGap + arrowTextGap, y: targetRect.maxY + textGap + preferredTextSize.height * 0.36)
-            ),
-            (
-                CGPoint(x: targetRect.maxX + textGap, y: targetRect.minY - textGap - preferredTextSize.height),
-                CGPoint(x: targetRect.maxX + textGap - arrowTextGap, y: targetRect.minY - textGap + preferredTextSize.height * 0.64)
-            ),
-            (
-                CGPoint(x: targetRect.minX - textGap - preferredTextSize.width, y: targetRect.minY - textGap - preferredTextSize.height),
-                CGPoint(x: targetRect.minX - textGap + arrowTextGap, y: targetRect.minY - textGap + preferredTextSize.height * 0.64)
-            ),
-            (
-                CGPoint(x: targetRect.maxX + textGap + 12, y: targetRect.midY - preferredTextSize.height / 2 + 26),
-                CGPoint(x: targetRect.maxX + textGap - arrowTextGap, y: targetRect.midY + 18)
-            ),
-            (
-                CGPoint(x: targetRect.minX - textGap - 12 - preferredTextSize.width, y: targetRect.midY - preferredTextSize.height / 2 + 26),
-                CGPoint(x: targetRect.minX - textGap + arrowTextGap, y: targetRect.midY + 18)
-            )
-        ]
-
-        let chosen = placements.first { placement in
-            bounds.insetBy(dx: 8, dy: 8).contains(CGRect(origin: placement.origin, size: preferredTextSize))
-        } ?? placements[0]
-
-        let textOrigin = CGPoint(
-            x: min(max(chosen.origin.x, bounds.minX + 8), bounds.maxX - preferredTextSize.width - 8),
-            y: min(max(chosen.origin.y, bounds.minY + 8), bounds.maxY - preferredTextSize.height - 8)
-        )
-        let arrowDelta = CGPoint(x: chosen.arrowStart.x - chosen.origin.x, y: chosen.arrowStart.y - chosen.origin.y)
-        let arrowStart = CGPoint(x: textOrigin.x + arrowDelta.x, y: textOrigin.y + arrowDelta.y)
-        let arrowEnd = nearestPoint(on: targetRect, to: arrowStart)
-        return (arrowStart, arrowEnd, textOrigin)
     }
 
     private func add(_ annotation: Annotation) {
@@ -2905,8 +2866,19 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             fontSize: textStyle.size
         )
         var frame = textView.frame
-        let maxWidth = max(80, bounds.maxX - frame.minX - 12)
-        frame.size.width = min(maxWidth, max(textInputMinSize.width, ceil(used.width) + textInputPadding.width * 2))
+        if let selectionRect {
+            let preferredMinX = selectionRect.minX
+                + (activeTextOrigin?.x ?? 0)
+                - textInputPadding.width
+            let horizontal = AnnotationGeometry.fittedHorizontalEditorFrame(
+                preferredMinX: preferredMinX,
+                desiredWidth: ceil(used.width) + textInputPadding.width * 2,
+                minimumWidth: min(textInputMinSize.width, selectionRect.width),
+                in: selectionRect
+            )
+            frame.origin.x = horizontal.minX
+            frame.size.width = horizontal.width
+        }
         frame.size.height = max(textInputMinSize.height, ceil(used.height) + textInputPadding.height * 2)
         if let activeTextTopY {
             frame.origin.y = activeTextTopY + textInputPadding.height - frame.height
@@ -3249,49 +3221,63 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         return abs(normalizedDistance - 1) <= tolerance
     }
 
-    private func moveAnnotation(at index: Int, by delta: CGPoint) {
+    private func moveAnnotation(
+        at index: Int,
+        by delta: CGPoint,
+        constrainsToSelection: Bool = true
+    ) {
         guard annotations.indices.contains(index) else { return }
+        let appliedDelta: CGPoint
+        if constrainsToSelection, let selectionRect {
+            appliedDelta = AnnotationGeometry.clampedTranslation(
+                for: AnnotationGeometry.visualBounds(of: annotations[index]),
+                requested: delta,
+                within: CGRect(origin: .zero, size: selectionRect.size)
+            )
+        } else {
+            appliedDelta = delta
+        }
         switch annotations[index] {
         case .rectangle(let rect, let color, let lineWidth, let filled):
-            annotations[index] = .rectangle(rect: rect.offsetBy(dx: delta.x, dy: delta.y), color: color, lineWidth: lineWidth, filled: filled)
+            annotations[index] = .rectangle(rect: rect.offsetBy(dx: appliedDelta.x, dy: appliedDelta.y), color: color, lineWidth: lineWidth, filled: filled)
         case .ellipse(let rect, let color, let lineWidth, let filled):
-            annotations[index] = .ellipse(rect: rect.offsetBy(dx: delta.x, dy: delta.y), color: color, lineWidth: lineWidth, filled: filled)
+            annotations[index] = .ellipse(rect: rect.offsetBy(dx: appliedDelta.x, dy: appliedDelta.y), color: color, lineWidth: lineWidth, filled: filled)
         case .arrow(let start, let end, let color, let lineWidth):
             annotations[index] = .arrow(
-                start: CGPoint(x: start.x + delta.x, y: start.y + delta.y),
-                end: CGPoint(x: end.x + delta.x, y: end.y + delta.y),
+                start: CGPoint(x: start.x + appliedDelta.x, y: start.y + appliedDelta.y),
+                end: CGPoint(x: end.x + appliedDelta.x, y: end.y + appliedDelta.y),
                 color: color,
                 lineWidth: lineWidth
             )
         case .freehand(let points, let color, let lineWidth):
             annotations[index] = .freehand(
-                points: AnnotationPathGeometry.translated(points, by: delta),
+                points: AnnotationPathGeometry.translated(points, by: appliedDelta),
                 color: color,
                 lineWidth: lineWidth
             )
         case .highlighter(let points, let color, let lineWidth):
             annotations[index] = .highlighter(
-                points: AnnotationPathGeometry.translated(points, by: delta),
+                points: AnnotationPathGeometry.translated(points, by: appliedDelta),
                 color: color,
                 lineWidth: lineWidth
             )
         case .numberMarker(let center, let number, let color, let markerSize):
             annotations[index] = .numberMarker(
-                center: CGPoint(x: center.x + delta.x, y: center.y + delta.y),
+                center: CGPoint(x: center.x + appliedDelta.x, y: center.y + appliedDelta.y),
                 number: number,
                 color: color,
                 markerSize: markerSize
             )
         case .text(let origin, let value, let color, let fontSize):
-            annotations[index] = .text(origin: CGPoint(x: origin.x + delta.x, y: origin.y + delta.y), value: value, color: color, fontSize: fontSize)
+            annotations[index] = .text(origin: CGPoint(x: origin.x + appliedDelta.x, y: origin.y + appliedDelta.y), value: value, color: color, fontSize: fontSize)
         case .mosaic(let rect, let blockSize):
-            annotations[index] = .mosaic(rect: rect.offsetBy(dx: delta.x, dy: delta.y), blockSize: blockSize)
+            annotations[index] = .mosaic(rect: rect.offsetBy(dx: appliedDelta.x, dy: appliedDelta.y), blockSize: blockSize)
         case .callout(let targetRect, let arrowStart, let arrowEnd, let textOrigin, let text, let color, let lineWidth, let fontSize):
             annotations[index] = .callout(
-                targetRect: targetRect.offsetBy(dx: delta.x, dy: delta.y),
-                arrowStart: CGPoint(x: arrowStart.x + delta.x, y: arrowStart.y + delta.y),
-                arrowEnd: CGPoint(x: arrowEnd.x + delta.x, y: arrowEnd.y + delta.y),
-                textOrigin: CGPoint(x: textOrigin.x + delta.x, y: textOrigin.y + delta.y),
+                targetRect: targetRect.offsetBy(dx: appliedDelta.x, dy: appliedDelta.y),
+                arrowStart: CGPoint(x: arrowStart.x + appliedDelta.x, y: arrowStart.y + appliedDelta.y),
+                arrowEnd: CGPoint(x: arrowEnd.x + appliedDelta.x, y: arrowEnd.y + appliedDelta.y),
+                textOrigin: CGPoint(x: textOrigin.x + appliedDelta.x, y: textOrigin.y + appliedDelta.y),
                 text: text,
                 color: color,
                 lineWidth: lineWidth,
@@ -3303,7 +3289,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private func moveAllAnnotations(by delta: CGPoint) {
         guard delta.x != 0 || delta.y != 0 else { return }
         for index in annotations.indices {
-            moveAnnotation(at: index, by: delta)
+            moveAnnotation(at: index, by: delta, constrainsToSelection: false)
         }
     }
 
@@ -3387,7 +3373,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             annotations[index] = .callout(
                 targetRect: nextRect,
                 arrowStart: arrowStart,
-                arrowEnd: nearestPoint(on: nextRect, to: arrowStart),
+                arrowEnd: AnnotationGeometry.nearestPointOnBorder(of: nextRect, to: arrowStart),
                 textOrigin: textOrigin,
                 text: text,
                 color: color,
@@ -3401,21 +3387,36 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     private func moveArrowEndpoint(at index: Int, endpoint: ArrowEndpoint, to point: CGPoint) {
         guard annotations.indices.contains(index) else { return }
+        let annotationBounds = CGRect(
+            origin: .zero,
+            size: selectionRect?.size ?? bounds.size
+        )
+        let clampedPoint = AnnotationGeometry.clampedPoint(point, to: annotationBounds)
         switch annotations[index] {
         case .arrow(let start, let end, let color, let lineWidth):
             switch endpoint {
             case .start:
-                annotations[index] = .arrow(start: point, end: end, color: color, lineWidth: lineWidth)
+                annotations[index] = .arrow(start: clampedPoint, end: end, color: color, lineWidth: lineWidth)
             case .end:
-                annotations[index] = .arrow(start: start, end: point, color: color, lineWidth: lineWidth)
+                annotations[index] = .arrow(start: start, end: clampedPoint, color: color, lineWidth: lineWidth)
             }
         case .callout(let targetRect, let arrowStart, let arrowEnd, let textOrigin, let text, let color, let lineWidth, let fontSize):
             switch endpoint {
             case .start:
-                let delta = CGPoint(x: point.x - arrowStart.x, y: point.y - arrowStart.y)
+                let textSize = text.isEmpty
+                    ? CGSize(width: max(120, textInputMinSize.width), height: textInputMinSize.height)
+                    : AnnotationTextLayout.size(for: text, fontSize: fontSize)
+                let movingBounds = CGRect(origin: textOrigin, size: textSize)
+                    .union(CGRect(x: arrowStart.x - 1, y: arrowStart.y - 1, width: 2, height: 2))
+                let requestedDelta = CGPoint(x: clampedPoint.x - arrowStart.x, y: clampedPoint.y - arrowStart.y)
+                let delta = AnnotationGeometry.clampedTranslation(
+                    for: movingBounds,
+                    requested: requestedDelta,
+                    within: annotationBounds
+                )
                 annotations[index] = .callout(
                     targetRect: targetRect,
-                    arrowStart: point,
+                    arrowStart: CGPoint(x: arrowStart.x + delta.x, y: arrowStart.y + delta.y),
                     arrowEnd: arrowEnd,
                     textOrigin: CGPoint(x: textOrigin.x + delta.x, y: textOrigin.y + delta.y),
                     text: text,
@@ -3424,7 +3425,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                     fontSize: fontSize
                 )
             case .end:
-                annotations[index] = .callout(targetRect: targetRect, arrowStart: arrowStart, arrowEnd: nearestPoint(on: targetRect, to: point), textOrigin: textOrigin, text: text, color: color, lineWidth: lineWidth, fontSize: fontSize)
+                annotations[index] = .callout(targetRect: targetRect, arrowStart: arrowStart, arrowEnd: AnnotationGeometry.nearestPointOnBorder(of: targetRect, to: clampedPoint), textOrigin: textOrigin, text: text, color: color, lineWidth: lineWidth, fontSize: fontSize)
             }
         default:
             return
@@ -3548,21 +3549,13 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y))
     }
 
-    private func nearestPoint(on rect: CGRect, to point: CGPoint) -> CGPoint {
-        let clamped = CGPoint(
-            x: min(max(point.x, rect.minX), rect.maxX),
-            y: min(max(point.y, rect.minY), rect.maxY)
+    private func clampedAnnotationPoint(_ point: CGPoint) -> CGPoint {
+        guard let selectionRect else { return point }
+        return AnnotationGeometry.clampedPoint(
+            point,
+            to: CGRect(origin: .zero, size: selectionRect.size),
+            margin: 0
         )
-        if rect.contains(point) {
-            let distances: [(CGFloat, CGPoint)] = [
-                (abs(point.x - rect.minX), CGPoint(x: rect.minX, y: point.y)),
-                (abs(point.x - rect.maxX), CGPoint(x: rect.maxX, y: point.y)),
-                (abs(point.y - rect.minY), CGPoint(x: point.x, y: rect.minY)),
-                (abs(point.y - rect.maxY), CGPoint(x: point.x, y: rect.maxY))
-            ]
-            return distances.min { $0.0 < $1.0 }?.1 ?? clamped
-        }
-        return clamped
     }
 
     private func setSelectionRect(_ nextRect: CGRect, keepingAnnotationsStationary: Bool) {

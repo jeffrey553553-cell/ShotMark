@@ -94,9 +94,9 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -Uq "case \\.number:\\n[[:space:]]*return \"4\"" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "tailHalfWidth" Sources/ShotMark/AnnotationDrawing.swift
   rg -q "neckHalfWidth" Sources/ShotMark/AnnotationDrawing.swift
-  rg -q "arrowTextGap" Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
-  rg -q "let textGap: CGFloat = 56" Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
-  rg -q "point\\.x - arrowStart\\.x" Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
+  rg -q "let placementGap: CGFloat = 68" Sources/ShotMark/AnnotationGeometry.swift
+  rg -q "let textClearance: CGFloat = 22" Sources/ShotMark/AnnotationGeometry.swift
+  rg -q "clampedPoint\\.x - arrowStart\\.x" Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
   rg -q "private func undoEdit\\(" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "private func redoEdit\\(" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "private func deleteSelectedAnnotation\\(" Sources/ShotMark/SelectionOverlayController.swift
@@ -182,6 +182,11 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "containerSize = CGSize" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "annotationRectangleBorderContains" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "rectangleBorderContains" Sources/ShotMark/AnnotationCanvasView.swift
+  rg -q "AnnotationGeometry.calloutLayout" Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
+  rg -q "clampedTranslation" Sources/ShotMark/AnnotationGeometry.swift
+  rg -q "testCalloutLayoutKeepsTextVisibleAndArrowAttached" Tests/ShotMarkTests/AnnotationGeometryTests.swift
+  rg -q "testTextEditorExpandsLeftWhenItReachesSelectionEdge" Tests/ShotMarkTests/AnnotationGeometryTests.swift
+  rg -q "testAnnotationShowcaseRendersVisiblePixels" Tests/ShotMarkTests/AnnotationRenderingTests.swift
   rg -q "WindowDetectionService" Sources/ShotMark/WindowDetectionService.swift Sources/ShotMark/SelectionOverlayController.swift
   rg -q "SCShareableContent" Sources/ShotMark/WindowDetectionService.swift
   rg -q "CGWindowListCopyWindowInfo" Sources/ShotMark/WindowDetectionService.swift
