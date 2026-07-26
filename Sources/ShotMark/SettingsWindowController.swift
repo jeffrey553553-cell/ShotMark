@@ -13,14 +13,20 @@ final class SettingsWindowController: NSWindowController {
         let hosting = NSHostingController(rootView: root)
         let window = NSWindow(contentViewController: hosting)
         window.title = "ShotMark 设置"
-        window.setContentSize(CGSize(width: 520, height: 500))
-        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.setContentSize(CGSize(width: 560, height: 720))
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+        window.minSize = CGSize(width: 520, height: 560)
         window.center()
         super.init(window: window)
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    override func showWindow(_ sender: Any?) {
+        super.showWindow(sender)
+        window?.makeFirstResponder(nil)
     }
 }
 
@@ -37,96 +43,256 @@ struct SettingsView: View {
     @State private var shortcutMessage = "点击修改后按下新的截图快捷键。"
     @State private var shortcutMessageIsError = false
     @State private var shortcutRecorderMonitor: Any?
+    @State private var imageExportFormat = AppSettings.shared.imageExportFormat
+    @State private var imageExportQuality = AppSettings.shared.imageExportQuality
+    @State private var saveDirectory = AppSettings.shared.saveDirectory
+    @State private var filenameTemplate = AppSettings.shared.filenameTemplate
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("ShotMark")
-                .font(.title2.bold())
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("ShotMark")
+                    .font(.title2.bold())
 
-            VStack(alignment: .leading, spacing: 8) {
-                shortcutSection
-                Text("保存快捷键：Space")
-                Text("录制控制：顶部控制条或状态栏可暂停、继续和停止；\(shortcut.displayName) 停止")
-                Text("默认保存目录：Downloads")
-            }
-            .font(.system(size: 13))
+                SettingsSection(title: "快捷键") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        shortcutSection
+                        Text("保存：Space")
+                        Text("录制：顶部控制条或状态栏可暂停、继续和停止；\(shortcut.displayName) 停止")
+                    }
+                    .font(.system(size: 13))
+                    .padding(.vertical, 4)
+                }
 
-            Divider()
+                exportSection
 
-            Text("权限修改后，请退出并重新打开 ShotMark。macOS 会把屏幕录制权限缓存到当前运行中的 App。")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                SettingsSection(title: "权限") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("权限修改后，请退出并重新打开 ShotMark。macOS 会把屏幕录制权限缓存到当前运行中的 App。")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
 
-            permissionRow(
-                title: "屏幕录制权限",
-                isGranted: screenRecordingAccess,
-                isChecking: isCheckingScreenRecording,
-                actionTitle: "请求权限"
-            ) {
-                PermissionService.requestScreenRecordingAccess()
-                refresh()
-            }
+                        permissionRow(
+                            title: "屏幕录制权限",
+                            isGranted: screenRecordingAccess,
+                            isChecking: isCheckingScreenRecording,
+                            actionTitle: "请求权限"
+                        ) {
+                            PermissionService.requestScreenRecordingAccess()
+                            refresh()
+                        }
 
-            permissionRow(
-                title: "辅助功能权限（窗口识别校准）",
-                isGranted: accessibilityAccess,
-                isChecking: false,
-                actionTitle: "请求权限"
-            ) {
-                PermissionService.requestAccessibilityAccess()
-                refresh()
-            }
-            Text("未开启时仍可截图；开启后智能选区会用系统窗口位置做二次校准。")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                        permissionRow(
+                            title: "辅助功能权限（窗口识别校准）",
+                            isGranted: accessibilityAccess,
+                            isChecking: false,
+                            actionTitle: "请求权限"
+                        ) {
+                            PermissionService.requestAccessibilityAccess()
+                            refresh()
+                        }
+                        Text("未开启时仍可截图；开启后智能选区会用系统窗口位置做二次校准。")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
 
-            permissionRow(
-                title: "麦克风权限",
-                isGranted: microphoneAccess,
-                isChecking: false,
-                actionTitle: "请求权限"
-            ) {
-                PermissionService.requestMicrophoneAccess { _ in
-                    DispatchQueue.main.async {
+                        permissionRow(
+                            title: "麦克风权限",
+                            isGranted: microphoneAccess,
+                            isChecking: false,
+                            actionTitle: "请求权限"
+                        ) {
+                            PermissionService.requestMicrophoneAccess { _ in
+                                DispatchQueue.main.async {
+                                    refresh()
+                                }
+                            }
+                        }
+
+                        HStack(spacing: 10) {
+                            Button("屏幕录制设置") {
+                                PermissionService.openScreenRecordingSettings()
+                            }
+
+                            Button("辅助功能设置") {
+                                PermissionService.openAccessibilitySettings()
+                            }
+
+                            Button("麦克风设置") {
+                                PermissionService.openMicrophoneSettings()
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                HStack(spacing: 10) {
+                    Button("重新检查权限") {
                         refresh()
+                    }
+
+                    Button("退出 ShotMark") {
+                        NSApp.terminate(nil)
                     }
                 }
             }
-
-            HStack(spacing: 10) {
-                Button("打开屏幕录制设置") {
-                    PermissionService.openScreenRecordingSettings()
-                }
-
-                Button("打开辅助功能设置") {
-                    PermissionService.openAccessibilitySettings()
-                }
-
-                Button("打开麦克风设置") {
-                    PermissionService.openMicrophoneSettings()
-                }
-            }
-
-            HStack(spacing: 10) {
-                Button("重新检查") {
-                    refresh()
-                }
-
-                Button("退出 ShotMark") {
-                    NSApp.terminate(nil)
-                }
-            }
-
-            Spacer()
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .buttonStyle(SettingsSubtleButtonStyle())
         }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
         .onAppear(perform: refresh)
         .onDisappear {
             stopShortcutRecording(reactivateHotKey: true)
         }
+    }
+
+    private var exportSection: some View {
+        SettingsSection(title: "保存") {
+            VStack(alignment: .leading, spacing: 13) {
+                HStack {
+                    Text("图片格式")
+                    Spacer()
+                    HStack(spacing: 2) {
+                        ForEach(ImageExportFormat.allCases) { format in
+                            Button {
+                                imageExportFormat = format
+                                AppSettings.shared.imageExportFormat = format
+                            } label: {
+                                Text(format.title)
+                                    .font(.system(size: 11.5, weight: .semibold))
+                                    .frame(width: 54, height: 26)
+                                    .foregroundStyle(
+                                        imageExportFormat == format
+                                            ? Color.white
+                                            : Color.primary.opacity(0.76)
+                                    )
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(
+                                                imageExportFormat == format
+                                                    ? Color.accentColor.opacity(0.86)
+                                                    : Color.clear
+                                            )
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.primary.opacity(0.06))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                    )
+                }
+
+                if imageExportFormat.supportsQualityAdjustment {
+                    HStack {
+                        Text("\(imageExportFormat.title) 质量")
+                        Spacer()
+                        Slider(value: $imageExportQuality, in: 0.3...1)
+                            .frame(width: 190)
+                            .onChange(of: imageExportQuality) { _, quality in
+                                AppSettings.shared.imageExportQuality = quality
+                            }
+                        Text("\(Int((imageExportQuality * 100).rounded()))%")
+                            .font(.system(size: 12, design: .monospaced))
+                            .frame(width: 38, alignment: .trailing)
+                    }
+                }
+
+                Divider()
+
+                HStack(alignment: .center) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("保存目录")
+                        Text(displayPath(saveDirectory))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer()
+                    Button("选择…", action: chooseSaveDirectory)
+                    Button("Downloads") {
+                        AppSettings.shared.resetSaveDirectory()
+                        saveDirectory = AppSettings.shared.saveDirectory
+                    }
+                    .disabled(saveDirectory.standardizedFileURL == AppSettings.defaultSaveDirectory.standardizedFileURL)
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack {
+                        Text("文件名模板")
+                        Spacer()
+                        TextField("", text: $filenameTemplate)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12, design: .monospaced))
+                            .frame(width: 300)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7)
+                                    .fill(Color.primary.opacity(0.07))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 7)
+                                    .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+                            )
+                            .onChange(of: filenameTemplate) { _, template in
+                                AppSettings.shared.filenameTemplate = template
+                            }
+                    }
+                    Text("占位符：{type}  {date}  {time}  {random}")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Text("示例：\(filenamePreview)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .font(.system(size: 13))
+            .padding(.vertical, 4)
+        }
+    }
+
+    private var filenamePreview: String {
+        ExportNaming.filename(
+            template: filenameTemplate,
+            kind: .screenshot,
+            createdAt: Date(timeIntervalSince1970: 1_788_000_000),
+            fileExtension: imageExportFormat.fileExtension,
+            randomToken: "a1b2c3"
+        )
+    }
+
+    private func chooseSaveDirectory() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = saveDirectory
+        panel.prompt = "使用此文件夹"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        AppSettings.shared.saveDirectory = url
+        saveDirectory = AppSettings.shared.saveDirectory
+    }
+
+    private func displayPath(_ url: URL) -> String {
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).standardizedFileURL.path
+        let path = url.standardizedFileURL.path
+        guard path.hasPrefix(home) else { return path }
+        return "~" + path.dropFirst(home.count)
     }
 
     private var shortcutSection: some View {
@@ -194,6 +360,10 @@ struct SettingsView: View {
         accessibilityAccess = PermissionService.hasAccessibilityAccess
         microphoneAccess = PermissionService.hasMicrophoneAccess
         shortcut = AppSettings.shared.shortcut
+        imageExportFormat = AppSettings.shared.imageExportFormat
+        imageExportQuality = AppSettings.shared.imageExportQuality
+        saveDirectory = AppSettings.shared.saveDirectory
+        filenameTemplate = AppSettings.shared.filenameTemplate
     }
 
     private func startShortcutRecording() {
@@ -262,5 +432,60 @@ struct SettingsView: View {
             shortcutMessageIsError = true
             onShortcutRecordingStateChange(true)
         }
+    }
+}
+
+private struct SettingsSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.leading, 2)
+
+            content
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.primary.opacity(0.055))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.primary.opacity(0.10), lineWidth: 1)
+                )
+        }
+    }
+}
+
+private struct SettingsSubtleButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(
+                isEnabled
+                    ? Color.primary.opacity(0.86)
+                    : Color.secondary.opacity(0.48)
+            )
+            .padding(.horizontal, 11)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(
+                        Color.primary.opacity(
+                            configuration.isPressed ? 0.13 : 0.07
+                        )
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(Color.primary.opacity(isEnabled ? 0.12 : 0.06), lineWidth: 1)
+            )
+            .contentShape(Rectangle())
     }
 }

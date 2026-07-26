@@ -40,6 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         if CommandLine.arguments.contains("--demo") {
             coordinator.showDemo()
+        } else if CommandLine.arguments.contains("--settings-preview") {
+            openSettings()
         }
     }
 

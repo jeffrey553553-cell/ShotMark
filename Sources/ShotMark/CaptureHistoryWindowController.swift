@@ -148,7 +148,7 @@ private final class CaptureHistoryViewModel: ObservableObject {
         guard !records.isEmpty else { return }
         let alert = NSAlert()
         alert.messageText = "清空截图历史？"
-        alert.informativeText = "只会删除 ShotMark 管理的历史副本，不会删除 Downloads 中已保存的截图和录屏。"
+        alert.informativeText = "只会删除 ShotMark 管理的历史副本，不会删除本地目录中已保存的截图和录屏。"
         alert.alertStyle = .warning
         alert.addButton(withTitle: "清空历史")
         alert.addButton(withTitle: "取消")

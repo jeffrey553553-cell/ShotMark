@@ -1,58 +1,103 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import ImageIO
 import UniformTypeIdentifiers
 
 enum ExportServiceError: LocalizedError {
     case bitmapContextFailed
-    case pngEncodingFailed
+    case imageEncodingFailed(format: String)
+    case imageDecodingFailed
     case clipboardFailed
 
     var errorDescription: String? {
         switch self {
         case .bitmapContextFailed:
             return "无法创建图片渲染上下文。"
-        case .pngEncodingFailed:
-            return "PNG 编码失败。"
+        case .imageEncodingFailed(let format):
+            return "\(format) 编码失败。"
+        case .imageDecodingFailed:
+            return "无法读取图片数据。"
         case .clipboardFailed:
             return "写入剪切板失败。"
         }
     }
 }
 
+struct ExportImagePayload {
+    let pngData: Data
+    let fileData: Data
+    let fileFormat: ImageExportFormat
+}
+
 final class ExportService {
     static func defaultSaveURL(createdAt: Date) -> URL {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
-        let filename = "Screenshot \(formatter.string(from: createdAt)).png"
-        return AppSettings.shared.saveDirectory.appendingPathComponent(filename)
+        configuredURL(
+            createdAt: createdAt,
+            kind: .screenshot,
+            fileExtension: AppSettings.shared.imageExportFormat.fileExtension
+        )
     }
 
     static func defaultRecordingURL(createdAt: Date) -> URL {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
-        let filename = "Recording \(formatter.string(from: createdAt)).mp4"
-        return AppSettings.shared.saveDirectory.appendingPathComponent(filename)
+        configuredURL(createdAt: createdAt, kind: .recording, fileExtension: "mp4")
     }
 
     static func defaultLongScreenshotURL(createdAt: Date) -> URL {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
-        let filename = "Long Screenshot \(formatter.string(from: createdAt)).png"
-        return AppSettings.shared.saveDirectory.appendingPathComponent(filename)
+        configuredURL(
+            createdAt: createdAt,
+            kind: .longScreenshot,
+            fileExtension: AppSettings.shared.imageExportFormat.fileExtension
+        )
+    }
+
+    static func saveConfirmation(for url: URL) -> String {
+        "已保存到 \(url.deletingLastPathComponent().lastPathComponent)"
+    }
+
+    private static func configuredURL(
+        createdAt: Date,
+        kind: ExportMediaKind,
+        fileExtension: String
+    ) -> URL {
+        ExportNaming.uniqueURL(
+            directory: AppSettings.shared.saveDirectory,
+            template: AppSettings.shared.filenameTemplate,
+            kind: kind,
+            createdAt: createdAt,
+            fileExtension: fileExtension
+        )
     }
 
     func export(state: EditorState, to destination: ExportDestination) throws {
-        let data = try pngData(for: state)
-        try exportPNGData(data, to: destination)
+        switch destination {
+        case .clipboard:
+            try exportPNGData(pngData(for: state), to: destination)
+        case .file:
+            let payload = try imagePayload(for: state)
+            try exportImageData(
+                payload.fileData,
+                format: payload.fileFormat,
+                to: destination
+            )
+        }
     }
 
     func exportPNGData(_ data: Data, to destination: ExportDestination) throws {
+        try exportImageData(data, format: .png, to: destination)
+    }
+
+    func exportImageData(
+        _ data: Data,
+        format: ImageExportFormat,
+        to destination: ExportDestination
+    ) throws {
         switch destination {
         case .clipboard:
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
-            guard pasteboard.setData(data, forType: .png) else {
+            let pasteboardType = NSPasteboard.PasteboardType(format.uniformType.identifier)
+            guard pasteboard.setData(data, forType: pasteboardType) else {
                 throw ExportServiceError.clipboardFailed
             }
         case .file(let url):
@@ -62,6 +107,48 @@ final class ExportService {
     }
 
     func pngData(for state: EditorState) throws -> Data {
+        let bitmap = try renderedBitmap(for: state)
+        return try encodedData(bitmap: bitmap, format: .png, quality: 1)
+    }
+
+    func imagePayload(
+        for state: EditorState,
+        format: ImageExportFormat = AppSettings.shared.imageExportFormat,
+        quality: Double = AppSettings.shared.imageExportQuality
+    ) throws -> ExportImagePayload {
+        let bitmap = try renderedBitmap(for: state)
+        let pngData = try encodedData(bitmap: bitmap, format: .png, quality: 1)
+        let fileData = format == .png
+            ? pngData
+            : try encodedData(bitmap: bitmap, format: format, quality: quality)
+        return ExportImagePayload(
+            pngData: pngData,
+            fileData: fileData,
+            fileFormat: format
+        )
+    }
+
+    func transcodePNGData(
+        _ pngData: Data,
+        to format: ImageExportFormat = AppSettings.shared.imageExportFormat,
+        quality: Double = AppSettings.shared.imageExportQuality
+    ) throws -> Data {
+        guard format != .png else { return pngData }
+        guard
+            let source = CGImageSourceCreateWithData(pngData as CFData, nil),
+            let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else {
+            throw ExportServiceError.imageDecodingFailed
+        }
+        return try encodedData(
+            image: image,
+            format: format,
+            quality: quality,
+            dpi: 72
+        )
+    }
+
+    private func renderedBitmap(for state: EditorState) throws -> NSBitmapImageRep {
         let image = state.capture.image
         let pointSize = state.capture.imagePointSize
         guard let rep = NSBitmapImageRep(
@@ -99,10 +186,59 @@ final class ExportService {
         context.flushGraphics()
         NSGraphicsContext.restoreGraphicsState()
 
-        guard let data = rep.representation(using: .png, properties: [:]) else {
-            throw ExportServiceError.pngEncodingFailed
+        return rep
+    }
+
+    private func encodedData(
+        bitmap: NSBitmapImageRep,
+        format: ImageExportFormat,
+        quality: Double
+    ) throws -> Data {
+        guard let image = bitmap.cgImage else {
+            throw ExportServiceError.imageEncodingFailed(format: format.title)
         }
-        return data
+        let horizontalDPI = bitmap.size.width > 0
+            ? CGFloat(bitmap.pixelsWide) / bitmap.size.width * 72
+            : 72
+        let verticalDPI = bitmap.size.height > 0
+            ? CGFloat(bitmap.pixelsHigh) / bitmap.size.height * 72
+            : 72
+        return try encodedData(
+            image: image,
+            format: format,
+            quality: quality,
+            dpi: min(horizontalDPI, verticalDPI)
+        )
+    }
+
+    private func encodedData(
+        image: CGImage,
+        format: ImageExportFormat,
+        quality: Double,
+        dpi: CGFloat
+    ) throws -> Data {
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data,
+            format.uniformType.identifier as CFString,
+            1,
+            nil
+        ) else {
+            throw ExportServiceError.imageEncodingFailed(format: format.title)
+        }
+
+        var properties: [CFString: Any] = [
+            kCGImagePropertyDPIWidth: dpi,
+            kCGImagePropertyDPIHeight: dpi
+        ]
+        if format.supportsQualityAdjustment {
+            properties[kCGImageDestinationLossyCompressionQuality] = min(1, max(0.3, quality))
+        }
+        CGImageDestinationAddImage(destination, image, properties as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
+            throw ExportServiceError.imageEncodingFailed(format: format.title)
+        }
+        return data as Data
     }
 
     private func applyMosaicAnnotations(_ annotations: [Annotation], to image: CGImage, pointSize: CGSize) {

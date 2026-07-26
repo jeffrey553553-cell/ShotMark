@@ -20,19 +20,22 @@ enum CaptureHistoryActions {
         _ record: CaptureHistoryRecord,
         store: CaptureHistoryStore = .shared
     ) throws {
-        guard let url = store.resolvedURL(for: record) else {
-            throw CaptureHistoryActionError.fileMissing
-        }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
 
         switch record.mediaType {
         case .image:
+            guard let url = store.resolvedURL(for: record, preferExternal: false) else {
+                throw CaptureHistoryActionError.fileMissing
+            }
             let data = try Data(contentsOf: url)
             guard pasteboard.setData(data, forType: .png) else {
                 throw CaptureHistoryActionError.clipboardFailed
             }
         case .video:
+            guard let url = store.resolvedURL(for: record) else {
+                throw CaptureHistoryActionError.fileMissing
+            }
             guard pasteboard.writeObjects([url as NSURL]) else {
                 throw CaptureHistoryActionError.clipboardFailed
             }

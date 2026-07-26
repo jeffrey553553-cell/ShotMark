@@ -196,18 +196,80 @@ extension Notification.Name {
 final class AppSettings {
     static let shared = AppSettings()
 
-    let saveDirectory: URL
-    let imageFormat: String
     let hidesDockIcon: Bool
     private let defaults = UserDefaults.standard
     private let shortcutKey = "shotmark.captureShortcut"
     private let recordingShowsMouseClicksKey = "shotmark.recordingShowsMouseClicks"
+    private let imageExportFormatKey = "shotmark.imageExportFormat"
+    private let imageExportQualityKey = "shotmark.imageExportQuality"
+    private let saveDirectoryKey = "shotmark.saveDirectory"
+    private let filenameTemplateKey = "shotmark.filenameTemplate"
 
     private init() {
-        saveDirectory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads")
-        imageFormat = "png"
         hidesDockIcon = true
+    }
+
+    static var defaultSaveDirectory: URL {
+        FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads")
+    }
+
+    var imageExportFormat: ImageExportFormat {
+        get {
+            guard
+                let rawValue = defaults.string(forKey: imageExportFormatKey),
+                let format = ImageExportFormat(rawValue: rawValue)
+            else {
+                return .png
+            }
+            return format
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: imageExportFormatKey)
+        }
+    }
+
+    var imageExportQuality: Double {
+        get {
+            guard defaults.object(forKey: imageExportQualityKey) != nil else {
+                return 0.9
+            }
+            return min(1, max(0.3, defaults.double(forKey: imageExportQualityKey)))
+        }
+        set {
+            defaults.set(min(1, max(0.3, newValue)), forKey: imageExportQualityKey)
+        }
+    }
+
+    var saveDirectory: URL {
+        get {
+            guard let path = defaults.string(forKey: saveDirectoryKey), !path.isEmpty else {
+                return Self.defaultSaveDirectory
+            }
+            return URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+        }
+        set {
+            defaults.set(newValue.standardizedFileURL.path, forKey: saveDirectoryKey)
+        }
+    }
+
+    var filenameTemplate: String {
+        get {
+            let template = defaults.string(forKey: filenameTemplateKey)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return template.isEmpty ? ExportNaming.defaultTemplate : template
+        }
+        set {
+            let template = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            defaults.set(
+                template.isEmpty ? ExportNaming.defaultTemplate : template,
+                forKey: filenameTemplateKey
+            )
+        }
+    }
+
+    func resetSaveDirectory() {
+        defaults.removeObject(forKey: saveDirectoryKey)
     }
 
     var shortcut: GlobalShortcut {

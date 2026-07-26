@@ -171,14 +171,18 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
         case .saveToFile:
             do {
                 let url = ExportService.defaultSaveURL(createdAt: capture.createdAt)
-                let data = try exportService.pngData(for: state)
-                try exportService.exportPNGData(data, to: .file(url))
+                let payload = try exportService.imagePayload(for: state)
+                try exportService.exportImageData(
+                    payload.fileData,
+                    format: payload.fileFormat,
+                    to: .file(url)
+                )
                 showImageResult(
-                    data: data,
+                    data: payload.pngData,
                     capture: capture,
                     kind: .screenshot,
                     externalURL: url,
-                    message: "已保存到 Downloads"
+                    message: ExportService.saveConfirmation(for: url)
                 )
             } catch {
                 showError(error)
@@ -187,7 +191,7 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
             do {
                 let data = try exportService.pngData(for: state)
                 guard let image = NSImage(data: data) else {
-                    throw ExportServiceError.pngEncodingFailed
+                    throw ExportServiceError.imageDecodingFailed
                 }
                 image.size = capture.imagePointSize
 
@@ -235,9 +239,9 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
                 let state = EditorState(capture: capture)
                 do {
                     let exportService = ExportService()
-                    let data = try exportService.pngData(for: state)
                     switch action {
                     case .copyToClipboard:
+                        let data = try exportService.pngData(for: state)
                         try exportService.exportPNGData(data, to: .clipboard)
                         self.showImageResult(
                             data: data,
@@ -248,13 +252,18 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
                         )
                     case .saveToFile:
                         let url = ExportService.defaultLongScreenshotURL(createdAt: capture.createdAt)
-                        try exportService.exportPNGData(data, to: .file(url))
+                        let payload = try exportService.imagePayload(for: state)
+                        try exportService.exportImageData(
+                            payload.fileData,
+                            format: payload.fileFormat,
+                            to: .file(url)
+                        )
                         self.showImageResult(
-                            data: data,
+                            data: payload.pngData,
                             capture: capture,
                             kind: .longScreenshot,
                             externalURL: url,
-                            message: "长截图已保存到 Downloads"
+                            message: ExportService.saveConfirmation(for: url)
                         )
                     }
                 } catch {
@@ -426,11 +435,11 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
                         self.quickAccessController.show(
                             record: record,
                             store: self.historyStore,
-                            message: "录屏已保存到 Downloads",
+                            message: ExportService.saveConfirmation(for: url),
                             screen: resultScreen
                         )
                     } catch {
-                        ToastWindowController.show(message: "录屏已保存到 Downloads")
+                        ToastWindowController.show(message: ExportService.saveConfirmation(for: url))
                     }
                     self.recordingResultScreen = nil
                     self.recordingCreatedAt = nil

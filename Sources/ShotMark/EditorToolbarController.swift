@@ -91,7 +91,7 @@ final class EditorToolbarController: NSWindowController {
         addDivider()
         addActionButton(title: "OCR", help: "OCR 识别", action: #selector(ocrPressed))
         addActionButton(title: "复制", help: "复制图片", action: #selector(copyPressed))
-        addActionButton(title: "保存", help: "保存到 Downloads，快捷键 Space", action: #selector(savePressed))
+        addActionButton(title: "保存", help: "保存到设置目录，快捷键 Space", action: #selector(savePressed))
         addActionButton(title: "×", help: "关闭", action: #selector(closePressed))
 
         toastLabel.font = .systemFont(ofSize: 12, weight: .medium)

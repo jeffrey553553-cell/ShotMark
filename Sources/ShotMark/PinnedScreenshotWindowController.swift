@@ -267,8 +267,11 @@ final class PinnedScreenshotWindowController: NSWindowController, NSWindowDelega
     private func saveImage() {
         do {
             let url = ExportService.defaultSaveURL(createdAt: createdAt)
-            try ExportService().exportPNGData(pngData, to: .file(url))
-            ToastWindowController.show(message: "钉图已保存到 Downloads")
+            let exportService = ExportService()
+            let format = AppSettings.shared.imageExportFormat
+            let data = try exportService.transcodePNGData(pngData, to: format)
+            try exportService.exportImageData(data, format: format, to: .file(url))
+            ToastWindowController.show(message: ExportService.saveConfirmation(for: url))
         } catch {
             showExportError(error)
         }
@@ -285,7 +288,11 @@ final class PinnedScreenshotWindowController: NSWindowController, NSWindowDelega
     private func showContextMenu(at point: CGPoint) {
         let menu = NSMenu()
         menu.addItem(menuItem(title: "复制", action: #selector(copyMenuAction), keyEquivalent: "c"))
-        menu.addItem(menuItem(title: "保存到 Downloads", action: #selector(saveMenuAction), keyEquivalent: "s"))
+        menu.addItem(menuItem(
+            title: "保存到 \(AppSettings.shared.saveDirectory.lastPathComponent)",
+            action: #selector(saveMenuAction),
+            keyEquivalent: "s"
+        ))
         menu.addItem(.separator())
 
         let zoomMenu = NSMenu()

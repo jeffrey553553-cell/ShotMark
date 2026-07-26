@@ -135,9 +135,17 @@ final class EditorWindowController: NSWindowController {
         do {
             let url = defaultSaveURL(state.capture.createdAt)
             let exportService = ExportService()
-            let data = try exportService.pngData(for: state)
-            try exportService.exportPNGData(data, to: .file(url))
-            showResult(data: data, externalURL: url, message: "已保存到 Downloads")
+            let payload = try exportService.imagePayload(for: state)
+            try exportService.exportImageData(
+                payload.fileData,
+                format: payload.fileFormat,
+                to: .file(url)
+            )
+            showResult(
+                data: payload.pngData,
+                externalURL: url,
+                message: ExportService.saveConfirmation(for: url)
+            )
         } catch {
             showError(title: "保存失败", message: error.localizedDescription)
         }
