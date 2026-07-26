@@ -127,6 +127,10 @@ private final class CaptureHistoryViewModel: ObservableObject {
             ?? NSItemProvider()
     }
 
+    func sharingItems(for record: CaptureHistoryRecord) throws -> [Any] {
+        try CaptureSharingService.items(for: record, store: store)
+    }
+
     func copy(_ record: CaptureHistoryRecord) {
         perform {
             try CaptureHistoryActions.copy(record, store: store)
@@ -267,6 +271,12 @@ private struct CaptureHistoryRow: View {
             actionButton("doc.on.doc", help: "复制", disabled: !isAvailable) { viewModel.copy(record) }
             actionButton("arrow.up.forward.app", help: "打开", disabled: !isAvailable) { viewModel.open(record) }
             actionButton("folder", help: "在 Finder 中显示", disabled: !isAvailable) { viewModel.reveal(record) }
+            CaptureHistoryShareButton(
+                record: record,
+                viewModel: viewModel,
+                isEnabled: isAvailable
+            )
+            .frame(width: 24, height: 24)
             actionButton("trash", help: "从历史记录移除") { viewModel.remove(record) }
         }
         .contentShape(Rectangle())
@@ -347,6 +357,88 @@ private struct CaptureHistoryRow: View {
         .buttonStyle(.borderless)
         .help(help)
         .disabled(disabled)
+    }
+}
+
+private struct CaptureHistoryShareButton: NSViewRepresentable {
+    let record: CaptureHistoryRecord
+    let viewModel: CaptureHistoryViewModel
+    let isEnabled: Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeNSView(context: Context) -> CaptureShareAnchorButton {
+        let button = CaptureShareAnchorButton()
+        button.isBordered = false
+        button.imagePosition = .imageOnly
+        button.toolTip = "分享"
+        button.image = NSImage(
+            systemSymbolName: "square.and.arrow.up",
+            accessibilityDescription: "分享"
+        )?.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(pointSize: 12.5, weight: .regular)
+        )
+        button.contentTintColor = .secondaryLabelColor
+        button.onMouseDown = { [weak coordinator = context.coordinator] button in
+            coordinator?.present(from: button)
+        }
+        button.target = context.coordinator
+        button.action = #selector(Coordinator.performShare(_:))
+        return button
+    }
+
+    func updateNSView(_ button: CaptureShareAnchorButton, context: Context) {
+        context.coordinator.parent = self
+        button.isEnabled = isEnabled
+    }
+
+    final class Coordinator: NSObject {
+        var parent: CaptureHistoryShareButton
+        private let presenter = CaptureSharePresenter()
+
+        init(parent: CaptureHistoryShareButton) {
+            self.parent = parent
+        }
+
+        @objc func performShare(_ sender: NSButton) {
+            present(from: sender)
+        }
+
+        func present(from view: NSView) {
+            do {
+                let items = try parent.viewModel.sharingItems(for: parent.record)
+                presenter.present(
+                    items: items,
+                    relativeTo: view.bounds,
+                    of: view,
+                    preferredEdge: .minY
+                )
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "分享失败"
+                alert.informativeText = error.localizedDescription
+                alert.alertStyle = .warning
+                alert.runModal()
+            }
+        }
+    }
+}
+
+private final class CaptureShareAnchorButton: NSButton {
+    var onMouseDown: ((NSButton) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled else {
+            super.mouseDown(with: event)
+            return
+        }
+        highlight(true)
+        onMouseDown?(self)
+        DispatchQueue.main.async { [weak self] in
+            self?.highlight(false)
+        }
     }
 }
 

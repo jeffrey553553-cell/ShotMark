@@ -9,6 +9,19 @@ final class QuickAccessWindowController: NSObject {
     private var dismissTimer: Timer?
     private var record: CaptureHistoryRecord?
     private var store: CaptureHistoryStore?
+    private let sharePresenter = CaptureSharePresenter()
+
+    override init() {
+        super.init()
+        sharePresenter.onVisibilityChanged = { [weak self] isVisible in
+            guard let self, self.panel != nil else { return }
+            if isVisible {
+                self.pauseDismissTimer()
+            } else {
+                self.scheduleDismiss()
+            }
+        }
+    }
 
     func show(
         record: CaptureHistoryRecord,
@@ -57,6 +70,7 @@ final class QuickAccessWindowController: NSObject {
         contentView = nil
         record = nil
         store = nil
+        sharePresenter.close()
     }
 
     private func configure(
@@ -93,6 +107,7 @@ final class QuickAccessWindowController: NSObject {
         configureButton(view.copyButton, symbol: "doc.on.doc", help: "复制", action: #selector(copyItem))
         configureButton(view.openButton, symbol: "arrow.up.forward.app", help: "打开", action: #selector(openItem))
         configureButton(view.revealButton, symbol: "folder", help: "在 Finder 中显示", action: #selector(revealItem))
+        configureButton(view.shareButton, symbol: "square.and.arrow.up", help: "分享", action: #selector(shareItem))
         configureButton(view.removeButton, symbol: "trash", help: "从历史记录移除", action: #selector(removeItem))
         configureButton(view.closeButton, symbol: "xmark", help: "关闭", action: #selector(closeCard))
     }
@@ -177,6 +192,21 @@ final class QuickAccessWindowController: NSObject {
         }
     }
 
+    @objc private func shareItem() {
+        guard let record, let store, let button = contentView?.shareButton else { return }
+        do {
+            let items = try CaptureSharingService.items(for: record, store: store)
+            sharePresenter.present(
+                items: items,
+                relativeTo: button.bounds,
+                of: button,
+                preferredEdge: .minY
+            )
+        } catch {
+            showActionError(error)
+        }
+    }
+
     @objc private func removeItem() {
         guard let record, let store else { return }
         do {
@@ -210,6 +240,7 @@ private final class QuickAccessContentView: NSVisualEffectView, NSDraggingSource
     let copyButton = NSButton()
     let openButton = NSButton()
     let revealButton = NSButton()
+    let shareButton = NSButton()
     let removeButton = NSButton()
     let closeButton = NSButton()
     var onMouseEntered: (() -> Void)?
@@ -243,12 +274,12 @@ private final class QuickAccessContentView: NSVisualEffectView, NSDraggingSource
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.lineBreakMode = .byTruncatingTail
 
-        [thumbnailView, titleLabel, detailLabel, copyButton, openButton, revealButton, removeButton, closeButton].forEach {
+        [thumbnailView, titleLabel, detailLabel, copyButton, openButton, revealButton, shareButton, removeButton, closeButton].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             addSubview($0)
         }
 
-        let actionButtons = [copyButton, openButton, revealButton, removeButton]
+        let actionButtons = [copyButton, openButton, revealButton, shareButton, removeButton]
         for button in actionButtons {
             NSLayoutConstraint.activate([
                 button.widthAnchor.constraint(equalToConstant: 28),
@@ -282,7 +313,9 @@ private final class QuickAccessContentView: NSVisualEffectView, NSDraggingSource
             openButton.centerYAnchor.constraint(equalTo: copyButton.centerYAnchor),
             revealButton.leadingAnchor.constraint(equalTo: openButton.trailingAnchor, constant: 8),
             revealButton.centerYAnchor.constraint(equalTo: copyButton.centerYAnchor),
-            removeButton.leadingAnchor.constraint(equalTo: revealButton.trailingAnchor, constant: 8),
+            shareButton.leadingAnchor.constraint(equalTo: revealButton.trailingAnchor, constant: 8),
+            shareButton.centerYAnchor.constraint(equalTo: copyButton.centerYAnchor),
+            removeButton.leadingAnchor.constraint(equalTo: shareButton.trailingAnchor, constant: 8),
             removeButton.centerYAnchor.constraint(equalTo: copyButton.centerYAnchor)
         ])
     }
