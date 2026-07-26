@@ -36,8 +36,122 @@ final class AnnotationGeometryTests: XCTestCase {
                 layout.arrowEnd.x - layout.arrowStart.x,
                 layout.arrowEnd.y - layout.arrowStart.y
             ),
-            30
+            50
         )
+    }
+
+    func testCalloutConnectorTracksTheCurrentTextFrameWithoutTouchingIt() {
+        let bounds = CGRect(x: 0, y: 0, width: 700, height: 500)
+        let target = CGRect(x: 90, y: 80, width: 130, height: 90)
+        let textFrame = CGRect(x: 360, y: 280, width: 210, height: 48)
+        let connector = AnnotationGeometry.calloutConnector(
+            targetRect: target,
+            textFrame: textFrame,
+            in: bounds
+        )
+        let textEdge = AnnotationGeometry.nearestPointOnBorder(
+            of: textFrame,
+            to: CGPoint(x: target.midX, y: target.midY)
+        )
+
+        XCTAssertEqual(
+            hypot(connector.arrowStart.x - textEdge.x, connector.arrowStart.y - textEdge.y),
+            24,
+            accuracy: 0.001
+        )
+        XCTAssertTrue(isOnBorder(connector.arrowEnd, of: target))
+        XCTAssertFalse(textFrame.contains(connector.arrowStart))
+        XCTAssertTrue(bounds.contains(connector.arrowStart))
+    }
+
+    func testCalloutHitRegionsKeepTargetArrowAndTextIndependent() {
+        let target = CGRect(x: 40, y: 50, width: 120, height: 80)
+        let arrowStart = CGPoint(x: 260, y: 190)
+        let arrowEnd = CGPoint(x: 160, y: 130)
+        let textFrame = CGRect(x: 290, y: 180, width: 160, height: 38)
+
+        XCTAssertEqual(
+            AnnotationGeometry.calloutHitRegion(
+                at: CGPoint(x: 42, y: 90),
+                targetRect: target,
+                arrowStart: arrowStart,
+                arrowEnd: arrowEnd,
+                textFrame: textFrame,
+                lineWidth: 4
+            ),
+            .targetBorder
+        )
+        XCTAssertEqual(
+            AnnotationGeometry.calloutHitRegion(
+                at: CGPoint(x: 210, y: 160),
+                targetRect: target,
+                arrowStart: arrowStart,
+                arrowEnd: arrowEnd,
+                textFrame: textFrame,
+                lineWidth: 4
+            ),
+            .arrow
+        )
+        XCTAssertEqual(
+            AnnotationGeometry.calloutHitRegion(
+                at: CGPoint(x: 330, y: 195),
+                targetRect: target,
+                arrowStart: arrowStart,
+                arrowEnd: arrowEnd,
+                textFrame: textFrame,
+                lineWidth: 4
+            ),
+            .text
+        )
+        XCTAssertNil(
+            AnnotationGeometry.calloutHitRegion(
+                at: CGPoint(x: 250, y: 80),
+                targetRect: target,
+                arrowStart: arrowStart,
+                arrowEnd: arrowEnd,
+                textFrame: textFrame,
+                lineWidth: 4
+            )
+        )
+    }
+
+    func testMovingCalloutTargetLeavesTextSideFixedAndReattachesArrowHead() {
+        let target = CGRect(x: 40, y: 50, width: 120, height: 80)
+        let arrowStart = CGPoint(x: 280, y: 220)
+        let placement = AnnotationGeometry.movedCalloutTarget(
+            targetRect: target,
+            arrowStart: arrowStart,
+            requestedDelta: CGPoint(x: 90, y: 60),
+            within: CGRect(x: 0, y: 0, width: 500, height: 360)
+        )
+
+        XCTAssertEqual(placement.targetRect.origin.x, 130, accuracy: 0.001)
+        XCTAssertEqual(placement.targetRect.origin.y, 110, accuracy: 0.001)
+        XCTAssertTrue(isOnBorder(placement.arrowEnd, of: placement.targetRect))
+    }
+
+    func testMovingCalloutTextKeepsArrowTailBoundAndStopsAtCanvasEdge() {
+        let textFrame = CGRect(x: 260, y: 210, width: 150, height: 40)
+        let arrowStart = CGPoint(x: 235, y: 195)
+        let placement = AnnotationGeometry.movedCalloutText(
+            textFrame: textFrame,
+            arrowStart: arrowStart,
+            requestedDelta: CGPoint(x: 200, y: 200),
+            within: CGRect(x: 0, y: 0, width: 480, height: 320)
+        )
+        let textDelta = CGPoint(
+            x: placement.textOrigin.x - textFrame.minX,
+            y: placement.textOrigin.y - textFrame.minY
+        )
+        let tailDelta = CGPoint(
+            x: placement.arrowStart.x - arrowStart.x,
+            y: placement.arrowStart.y - arrowStart.y
+        )
+
+        XCTAssertEqual(textDelta.x, tailDelta.x, accuracy: 0.001)
+        XCTAssertEqual(textDelta.y, tailDelta.y, accuracy: 0.001)
+        XCTAssertLessThanOrEqual(placement.textOrigin.x + textFrame.width, 478.001)
+        XCTAssertLessThanOrEqual(placement.textOrigin.y + textFrame.height, 318.001)
     }
 
     func testCalloutNearCornerChoosesAnotherAvailableSide() {

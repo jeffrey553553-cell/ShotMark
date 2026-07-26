@@ -6,6 +6,22 @@ struct CalloutLayout: Equatable {
     let textOrigin: CGPoint
 }
 
+struct CalloutTargetPlacement: Equatable {
+    let targetRect: CGRect
+    let arrowEnd: CGPoint
+}
+
+struct CalloutTextPlacement: Equatable {
+    let arrowStart: CGPoint
+    let textOrigin: CGPoint
+}
+
+enum CalloutHitRegion: Equatable {
+    case targetBorder
+    case arrow
+    case text
+}
+
 enum AnnotationGeometry {
     static let canvasMargin: CGFloat = 2
 
@@ -67,7 +83,7 @@ enum AnnotationGeometry {
             width: min(max(1, textSize.width), max(1, safeBounds.width)),
             height: min(max(1, textSize.height), max(1, safeBounds.height))
         )
-        let placementGap: CGFloat = 68
+        let placementGap: CGFloat = 84
         let candidates = [
             CGPoint(x: targetRect.maxX + placementGap, y: targetRect.maxY + placementGap),
             CGPoint(x: targetRect.minX - placementGap - fittedTextSize.width, y: targetRect.maxY + placementGap),
@@ -95,25 +111,104 @@ enum AnnotationGeometry {
         }
         let textOrigin = ranked.min { $0.0 < $1.0 }?.1
             ?? clampOrigin(candidates[0], size: fittedTextSize, to: safeBounds)
-        let textFrame = CGRect(origin: textOrigin, size: fittedTextSize)
-        let textEdge = nearestPointOnBorder(of: textFrame, to: CGPoint(x: targetRect.midX, y: targetRect.midY))
-        let targetDirection = CGVector(
-            dx: targetRect.midX - textEdge.x,
-            dy: targetRect.midY - textEdge.y
+        let connector = calloutConnector(
+            targetRect: targetRect,
+            textFrame: CGRect(origin: textOrigin, size: fittedTextSize),
+            in: bounds
         )
-        let length = max(1, hypot(targetDirection.dx, targetDirection.dy))
-        let textClearance: CGFloat = 22
+        return CalloutLayout(
+            arrowStart: connector.arrowStart,
+            arrowEnd: connector.arrowEnd,
+            textOrigin: textOrigin
+        )
+    }
+
+    static func calloutConnector(
+        targetRect: CGRect,
+        textFrame: CGRect,
+        in bounds: CGRect,
+        textClearance: CGFloat = 24
+    ) -> (arrowStart: CGPoint, arrowEnd: CGPoint) {
+        let targetCenter = CGPoint(x: targetRect.midX, y: targetRect.midY)
+        let textEdge = nearestPointOnBorder(of: textFrame, to: targetCenter)
+        let direction = CGVector(
+            dx: targetCenter.x - textEdge.x,
+            dy: targetCenter.y - textEdge.y
+        )
+        let length = max(1, hypot(direction.dx, direction.dy))
         let arrowStart = clampedPoint(
             CGPoint(
-                x: textEdge.x + targetDirection.dx / length * textClearance,
-                y: textEdge.y + targetDirection.dy / length * textClearance
+                x: textEdge.x + direction.dx / length * textClearance,
+                y: textEdge.y + direction.dy / length * textClearance
             ),
             to: bounds
         )
-        return CalloutLayout(
-            arrowStart: arrowStart,
-            arrowEnd: nearestPointOnBorder(of: targetRect, to: arrowStart),
-            textOrigin: textOrigin
+        return (
+            arrowStart,
+            nearestPointOnBorder(of: targetRect, to: arrowStart)
+        )
+    }
+
+    static func calloutHitRegion(
+        at point: CGPoint,
+        targetRect: CGRect,
+        arrowStart: CGPoint,
+        arrowEnd: CGPoint,
+        textFrame: CGRect,
+        lineWidth: CGFloat
+    ) -> CalloutHitRegion? {
+        if textFrame.insetBy(dx: -10, dy: -8).contains(point) {
+            return .text
+        }
+        if rectangleBorderContains(point, rect: targetRect, lineWidth: lineWidth) {
+            return .targetBorder
+        }
+        if arrowContains(point, start: arrowStart, end: arrowEnd, lineWidth: lineWidth) {
+            return .arrow
+        }
+        return nil
+    }
+
+    static func movedCalloutTarget(
+        targetRect: CGRect,
+        arrowStart: CGPoint,
+        requestedDelta: CGPoint,
+        within bounds: CGRect
+    ) -> CalloutTargetPlacement {
+        let appliedDelta = clampedTranslation(
+            for: targetRect,
+            requested: requestedDelta,
+            within: bounds
+        )
+        let nextTarget = targetRect.offsetBy(dx: appliedDelta.x, dy: appliedDelta.y)
+        return CalloutTargetPlacement(
+            targetRect: nextTarget,
+            arrowEnd: nearestPointOnBorder(of: nextTarget, to: arrowStart)
+        )
+    }
+
+    static func movedCalloutText(
+        textFrame: CGRect,
+        arrowStart: CGPoint,
+        requestedDelta: CGPoint,
+        within bounds: CGRect
+    ) -> CalloutTextPlacement {
+        let movingBounds = textFrame
+            .union(CGRect(x: arrowStart.x - 1, y: arrowStart.y - 1, width: 2, height: 2))
+        let appliedDelta = clampedTranslation(
+            for: movingBounds,
+            requested: requestedDelta,
+            within: bounds
+        )
+        return CalloutTextPlacement(
+            arrowStart: CGPoint(
+                x: arrowStart.x + appliedDelta.x,
+                y: arrowStart.y + appliedDelta.y
+            ),
+            textOrigin: CGPoint(
+                x: textFrame.minX + appliedDelta.x,
+                y: textFrame.minY + appliedDelta.y
+            )
         )
     }
 
@@ -193,9 +288,14 @@ enum AnnotationGeometry {
             let textSize = text.isEmpty
                 ? emptyCalloutTextSize
                 : AnnotationTextLayout.size(for: text, fontSize: fontSize)
-            return rectangleBorderContains(point, rect: targetRect, lineWidth: lineWidth)
-                || arrowContains(point, start: arrowStart, end: arrowEnd, lineWidth: lineWidth)
-                || CGRect(origin: textOrigin, size: textSize).insetBy(dx: -10, dy: -8).contains(point)
+            return calloutHitRegion(
+                at: point,
+                targetRect: targetRect,
+                arrowStart: arrowStart,
+                arrowEnd: arrowEnd,
+                textFrame: CGRect(origin: textOrigin, size: textSize),
+                lineWidth: lineWidth
+            ) != nil
         }
     }
 

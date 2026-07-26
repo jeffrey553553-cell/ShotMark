@@ -51,11 +51,21 @@ enum AnnotationDrawing {
             case .mosaic(let rect, let blockSize):
                 MosaicRenderer.drawGlassPlaceholder(rect: rect, blockSize: blockSize)
             case .callout(let targetRect, let arrowStart, let arrowEnd, let textOrigin, let text, let color, let lineWidth, let fontSize):
-                drawRectangle(rect: targetRect, color: color, lineWidth: lineWidth, filled: false)
+                drawCalloutTarget(rect: targetRect, color: color, lineWidth: lineWidth)
                 drawArrow(start: arrowStart, end: arrowEnd, color: color, lineWidth: lineWidth)
                 drawText(origin: textOrigin, value: text, color: color, fontSize: fontSize)
             }
         }
+    }
+
+    private static func drawCalloutTarget(rect: CGRect, color: NSColor, lineWidth: CGFloat) {
+        color.setStroke()
+        let radius = min(6, max(3, min(rect.width, rect.height) * 0.08))
+        let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
+        path.lineWidth = max(1.5, lineWidth * 0.78)
+        path.lineCapStyle = .round
+        path.lineJoinStyle = .round
+        path.stroke()
     }
 
     private static func drawRectangle(rect: CGRect, color: NSColor, lineWidth: CGFloat, filled: Bool) {

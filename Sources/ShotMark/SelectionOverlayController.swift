@@ -202,7 +202,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private enum StyleControl {
-        case size, opacity
+        case size, opacity, calloutLineWidth
     }
 
     private struct EditSnapshot {
@@ -232,6 +232,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         case drawingHighlighter(points: [CGPoint])
         case drawingCallout(anchor: CGPoint, current: CGPoint, fromCenter: Bool, constrainedSquare: Bool)
         case movingAnnotation(index: Int, lastPoint: CGPoint)
+        case movingCalloutTarget(index: Int, lastPoint: CGPoint)
+        case movingCalloutText(index: Int, lastPoint: CGPoint)
         case resizingAnnotation(index: Int, handle: AnnotationRectHandle)
         case movingArrowEndpoint(index: Int, endpoint: ArrowEndpoint)
         case adjustingStyle(control: StyleControl)
@@ -310,6 +312,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private var activeTextOrigin: CGPoint?
     private var activeTextTopY: CGFloat?
     private var activeCalloutTextEditIndex: Int?
+    private var activeCalloutOriginalAnnotation: Annotation?
+    private var activeCalloutWasJustCreated = false
     private var ocrPanelController: OCRResultPanelController?
     private var ocrDismissEventMonitor: Any?
     private var isOCRBusy = false
@@ -381,6 +385,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private var numberMarkerStyle = ToolStyle(color: .systemRed, size: 13, opacity: 1)
     private var textStyle = ToolStyle(color: .systemRed, size: 18, opacity: 1)
     private let textInputMinSize = CGSize(width: 80, height: 28)
+    private let calloutPlaceholderTextSize = CGSize(width: 96, height: 28)
     private let textInputPadding = CGSize(width: 6, height: 4)
     private let styleColors: [NSColor] = [
         .systemRed,
@@ -563,7 +568,11 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                     registerUndo()
                     pendingTextEditIndex = selectedAnnotationIndex
                     pendingTextEditStart = relative
-                    dragMode = .movingAnnotation(index: selectedAnnotationIndex, lastPoint: relative)
+                    if case .callout = annotations[selectedAnnotationIndex] {
+                        dragMode = .movingCalloutText(index: selectedAnnotationIndex, lastPoint: relative)
+                    } else {
+                        dragMode = .movingAnnotation(index: selectedAnnotationIndex, lastPoint: relative)
+                    }
                     return
                 }
 
@@ -625,10 +634,37 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
         if let button = hoveredToolbarButton(at: mousePoint, selectionRect: selectionRect) {
             setHoveredButton(button)
+            NSCursor.pointingHand.set()
         } else {
             scheduleHoveredButtonClear()
+            updateCanvasCursor(at: mousePoint, selectionRect: selectionRect)
         }
         needsDisplay = true
+    }
+
+    private func updateCanvasCursor(at point: CGPoint, selectionRect: CGRect) {
+        guard selectionRect.contains(point) else {
+            NSCursor.arrow.set()
+            return
+        }
+        let relative = relativePoint(point)
+        if
+            let selectedAnnotationIndex,
+            annotations.indices.contains(selectedAnnotationIndex),
+            selectedEditableTextAnnotationContains(relative)
+        {
+            NSCursor.iBeam.set()
+            return
+        }
+        if annotations.indices.reversed().contains(where: { annotation(at: $0, contains: relative) }) {
+            NSCursor.openHand.set()
+            return
+        }
+        if selectedTool != nil {
+            NSCursor.crosshair.set()
+        } else {
+            NSCursor.openHand.set()
+        }
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -729,6 +765,15 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             }
             moveAnnotation(at: index, by: CGPoint(x: relative.x - lastPoint.x, y: relative.y - lastPoint.y))
             dragMode = .movingAnnotation(index: index, lastPoint: relative)
+        case .movingCalloutTarget(let index, let lastPoint):
+            moveCalloutTarget(at: index, by: CGPoint(x: relative.x - lastPoint.x, y: relative.y - lastPoint.y))
+            dragMode = .movingCalloutTarget(index: index, lastPoint: relative)
+        case .movingCalloutText(let index, let lastPoint):
+            if let start = pendingTextEditStart, distance(relative, start) > 3 {
+                pendingTextEditDidMove = true
+            }
+            moveCalloutText(at: index, by: CGPoint(x: relative.x - lastPoint.x, y: relative.y - lastPoint.y))
+            dragMode = .movingCalloutText(index: index, lastPoint: relative)
         case .resizingAnnotation(let index, let handle):
             resizeAnnotationRectangle(
                 at: index,
@@ -823,7 +868,9 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             if rect.width > 8, rect.height > 8 {
                 addCallout(targetRect: rect)
             }
-        case .drawingSelection, .movingSelection, .resizingSelection, .movingAnnotation, .resizingAnnotation, .movingArrowEndpoint, .adjustingStyle, nil:
+        case .drawingSelection, .movingSelection, .resizingSelection, .movingAnnotation,
+             .movingCalloutTarget, .movingCalloutText, .resizingAnnotation,
+             .movingArrowEndpoint, .adjustingStyle, nil:
             break
         }
 
@@ -934,7 +981,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         case .pendingInitialSelection, .drawingSelection, .resizingSelection:
             return true
         case .movingSelection, .drawingRectangle, .drawingEllipse, .drawingMosaic, .drawingArrow,
-             .drawingFreehand, .drawingHighlighter, .drawingCallout, .movingAnnotation, .resizingAnnotation,
+             .drawingFreehand, .drawingHighlighter, .drawingCallout, .movingAnnotation,
+             .movingCalloutTarget, .movingCalloutText, .resizingAnnotation,
              .movingArrowEndpoint, .adjustingStyle, nil:
             return false
         }
@@ -1078,7 +1126,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         let layout = AnnotationGeometry.calloutLayout(
             for: targetRect,
             in: CGRect(origin: .zero, size: selectionRect.size),
-            textSize: CGSize(width: max(120, textInputMinSize.width), height: textInputMinSize.height)
+            textSize: calloutPlaceholderTextSize
         )
         let annotation = Annotation.callout(
             targetRect: targetRect,
@@ -1093,7 +1141,11 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         annotations.append(annotation)
         selectedAnnotationIndex = annotations.count - 1
         selectedTool = .callout
-        beginCalloutTextEdit(at: annotations.count - 1, registersUndo: false)
+        beginCalloutTextEdit(
+            at: annotations.count - 1,
+            registersUndo: false,
+            wasJustCreated: true
+        )
     }
 
     private func add(_ annotation: Annotation) {
@@ -1256,8 +1308,9 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         transform.translateX(by: selectionRect.minX, yBy: selectionRect.minY)
         transform.concat()
 
-        drawMosaicAnnotations(annotations, in: selectionRect.size)
-        AnnotationDrawing.draw(annotations.filter { !$0.isMosaic }, in: selectionRect.size)
+        let drawableAnnotations = annotationsForDrawing()
+        drawMosaicAnnotations(drawableAnnotations, in: selectionRect.size)
+        AnnotationDrawing.draw(drawableAnnotations.filter { !$0.isMosaic }, in: selectionRect.size)
         drawSelectedAnnotationHandles()
 
         switch dragMode {
@@ -1315,11 +1368,41 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             drawResizableAnnotationMeasurement(at: index, inside: selectionRect.size)
         case .movingArrowEndpoint(let index, _):
             drawArrowAnnotationMeasurement(at: index, inside: selectionRect.size)
-        case .drawingSelection, .movingSelection, .resizingSelection, .movingAnnotation, .adjustingStyle, nil:
+        case .drawingSelection, .movingSelection, .resizingSelection, .movingAnnotation,
+             .movingCalloutTarget, .movingCalloutText, .adjustingStyle, nil:
             break
         }
 
         NSGraphicsContext.restoreGraphicsState()
+    }
+
+    private func annotationsForDrawing() -> [Annotation] {
+        guard let activeCalloutTextEditIndex else { return annotations }
+        return annotations.enumerated().map { index, annotation in
+            guard index == activeCalloutTextEditIndex else { return annotation }
+            guard case .callout(
+                let targetRect,
+                let arrowStart,
+                let arrowEnd,
+                let textOrigin,
+                _,
+                let color,
+                let lineWidth,
+                let fontSize
+            ) = annotation else {
+                return annotation
+            }
+            return .callout(
+                targetRect: targetRect,
+                arrowStart: arrowStart,
+                arrowEnd: arrowEnd,
+                textOrigin: textOrigin,
+                text: "",
+                color: color,
+                lineWidth: lineWidth,
+                fontSize: fontSize
+            )
+        }
     }
 
     private func drawMosaicAnnotations(_ annotations: [Annotation], in pointSize: CGSize) {
@@ -1436,7 +1519,9 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             .foregroundColor: NSColor.white.withAlphaComponent(0.90)
         ]
 
-        let sizeLabel = tool == .text ? "字号" : (tool == .mosaic ? "强度" : "大小")
+        let sizeLabel = tool == .text || tool == .callout
+            ? "字号"
+            : (tool == .mosaic ? "强度" : "大小")
         sizeLabel.draw(at: CGPoint(x: panel.minX + 14, y: panel.maxY - 26), withAttributes: labelAttributes)
         "\(Int(round(style.size)))".draw(at: CGPoint(x: panel.maxX - 38, y: panel.maxY - 26), withAttributes: valueAttributes)
         drawSlider(in: sliderFrame(.size, in: panel), value: style.size, range: styleSizeRange(for: tool))
@@ -1449,7 +1534,18 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         "\(Int(round(style.opacity * 100)))".draw(at: CGPoint(x: panel.maxX - 42, y: panel.maxY - 54), withAttributes: valueAttributes)
         drawSlider(in: sliderFrame(.opacity, in: panel), value: style.opacity, range: 0.1...1)
 
-        if tool == .rectangle || tool == .ellipse {
+        if tool == .callout {
+            "线宽".draw(at: CGPoint(x: panel.minX + 14, y: panel.maxY - 82), withAttributes: labelAttributes)
+            "\(Int(round(arrowStyle.size)))".draw(
+                at: CGPoint(x: panel.maxX - 38, y: panel.maxY - 82),
+                withAttributes: valueAttributes
+            )
+            drawSlider(
+                in: sliderFrame(.calloutLineWidth, in: panel),
+                value: arrowStyle.size,
+                range: 2...10
+            )
+        } else if tool == .rectangle || tool == .ellipse {
             "填充".draw(at: CGPoint(x: panel.minX + 14, y: panel.maxY - 84), withAttributes: labelAttributes)
             drawFillToggle(in: fillToggleFrame(in: panel), isOn: style.filled)
         } else if tool == .numberMarker {
@@ -1666,6 +1762,16 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             return true
         }
 
+        if tool == .callout,
+           sliderFrame(.calloutLineWidth, in: panel).insetBy(dx: -10, dy: -12).contains(point) {
+            if selectedAnnotationIndex != nil {
+                registerUndo()
+            }
+            updateStyle(control: .calloutLineWidth, at: point)
+            dragMode = .adjustingStyle(control: .calloutLineWidth)
+            return true
+        }
+
         if (tool == .rectangle || tool == .ellipse), fillToggleFrame(in: panel).insetBy(dx: -8, dy: -8).contains(point) {
             if selectedAnnotationIndex != nil {
                 registerUndo()
@@ -1737,7 +1843,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         let height: CGFloat
         if tool == .mosaic {
             height = 58
-        } else if tool == .rectangle || tool == .ellipse || tool == .numberMarker {
+        } else if tool == .rectangle || tool == .ellipse || tool == .numberMarker || tool == .callout {
             height = 130
         } else {
             height = 104
@@ -1769,6 +1875,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             return CGRect(x: panel.minX + 74, y: panel.maxY - 23, width: 160, height: 12)
         case .opacity:
             return CGRect(x: panel.minX + 74, y: panel.maxY - 51, width: 160, height: 12)
+        case .calloutLineWidth:
+            return CGRect(x: panel.minX + 74, y: panel.maxY - 79, width: 160, height: 12)
         }
     }
 
@@ -2928,8 +3036,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             numberMarkerStyle = style
         case .callout:
             textStyle = style
-            arrowStyle = ToolStyle(color: style.color, size: max(2, min(arrowStyle.size, 8)), opacity: style.opacity)
-            rectangleStyle = ToolStyle(color: style.color, size: max(2, min(rectangleStyle.size, 6)), opacity: style.opacity)
+            arrowStyle = ToolStyle(color: style.color, size: max(2, min(arrowStyle.size, 10)), opacity: style.opacity)
+            rectangleStyle = ToolStyle(color: style.color, size: max(2, min(rectangleStyle.size, 10)), opacity: style.opacity)
         case .mosaic:
             mosaicBlockSize = style.size
         }
@@ -2975,6 +3083,13 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             let slider = sliderFrame(.opacity, in: panel)
             let progress = min(1, max(0, (point.x - slider.minX) / slider.width))
             style.opacity = max(0.1, round(progress * 100) / 100)
+        case .calloutLineWidth:
+            guard tool == .callout else { return }
+            let slider = sliderFrame(.calloutLineWidth, in: panel)
+            let progress = min(1, max(0, (point.x - slider.minX) / slider.width))
+            let lineWidth = round(2 + 8 * progress)
+            arrowStyle.size = lineWidth
+            rectangleStyle.size = lineWidth
         }
         setCurrentStyle(style, for: tool)
         applyCurrentStyleToSelectedAnnotation()
@@ -3033,7 +3148,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         case .text:
             beginTextEdit(at: index)
         case .callout:
-            beginCalloutTextEdit(at: index)
+            beginCalloutTextEdit(at: index, registersUndo: false)
         default:
             break
         }
@@ -3050,17 +3165,32 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         needsDisplay = true
     }
 
-    private func beginCalloutTextEdit(at index: Int, registersUndo: Bool = true) {
+    private func beginCalloutTextEdit(
+        at index: Int,
+        registersUndo: Bool = true,
+        wasJustCreated: Bool = false
+    ) {
         guard annotations.indices.contains(index) else { return }
         guard case .callout(_, _, _, let textOrigin, let text, let color, _, let fontSize) = annotations[index] else { return }
         if registersUndo {
             registerUndo()
         }
+        let originalAnnotation = annotations[index]
         selectedAnnotationIndex = index
         selectedTool = .callout
         textStyle = style(from: color, size: fontSize)
         beginTextEntry(at: textOrigin, initialText: text, editingExisting: true)
         activeCalloutTextEditIndex = index
+        activeCalloutOriginalAnnotation = originalAnnotation
+        activeCalloutWasJustCreated = wasJustCreated
+        updateCalloutConnector(
+            at: index,
+            textOrigin: textOrigin,
+            textSize: AnnotationTextLayout.size(
+                for: text.isEmpty ? " " : text,
+                fontSize: fontSize
+            )
+        )
         needsDisplay = true
     }
 
@@ -3121,10 +3251,22 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         activeTextTopY = nil
         let calloutTextEditIndex = activeCalloutTextEditIndex
         activeCalloutTextEditIndex = nil
+        activeCalloutOriginalAnnotation = nil
+        let calloutWasJustCreated = activeCalloutWasJustCreated
+        activeCalloutWasJustCreated = false
         activeTextIsEditingExisting = false
         textView.delegate = nil
         textView.removeFromSuperview()
         if let calloutTextEditIndex {
+            if value.isEmpty, calloutWasJustCreated {
+                if annotations.indices.contains(calloutTextEditIndex) {
+                    annotations.remove(at: calloutTextEditIndex)
+                }
+                _ = undoStack.popLast()
+                selectedAnnotationIndex = nil
+                needsDisplay = true
+                return
+            }
             updateCalloutText(at: calloutTextEditIndex, value: value, origin: resolvedOrigin)
             selectedAnnotationIndex = calloutTextEditIndex
             needsDisplay = true
@@ -3164,6 +3306,17 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             frame.origin.y = activeTextTopY + textInputPadding.height - frame.height
         }
         textView.frame = frame
+        if
+            let index = activeCalloutTextEditIndex,
+            let origin = currentTextAnnotationOrigin(for: textView, committedValue: textView.string)
+        {
+            updateCalloutConnector(
+                at: index,
+                textOrigin: origin,
+                textSize: used
+            )
+        }
+        needsDisplay = true
     }
 
     private func currentTextAnnotationOrigin(for textView: NSTextView, committedValue: String) -> CGPoint? {
@@ -3180,17 +3333,97 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     private func updateCalloutText(at index: Int, value: String, origin: CGPoint) {
         guard annotations.indices.contains(index) else { return }
-        guard case .callout(let targetRect, let arrowStart, let arrowEnd, _, _, let color, let lineWidth, let fontSize) = annotations[index] else { return }
+        guard case .callout(let targetRect, _, _, _, _, let color, let lineWidth, let fontSize) = annotations[index] else { return }
+        let textSize = value.isEmpty
+            ? calloutPlaceholderTextSize
+            : AnnotationTextLayout.size(for: value, fontSize: fontSize)
+        let connector = AnnotationGeometry.calloutConnector(
+            targetRect: targetRect,
+            textFrame: CGRect(origin: origin, size: textSize),
+            in: CGRect(origin: .zero, size: selectionRect?.size ?? bounds.size)
+        )
         annotations[index] = .callout(
             targetRect: targetRect,
-            arrowStart: arrowStart,
-            arrowEnd: arrowEnd,
+            arrowStart: connector.arrowStart,
+            arrowEnd: connector.arrowEnd,
             textOrigin: origin,
             text: value,
             color: color,
             lineWidth: lineWidth,
             fontSize: fontSize
         )
+    }
+
+    private func updateCalloutConnector(at index: Int, textOrigin: CGPoint, textSize: CGSize) {
+        guard annotations.indices.contains(index) else { return }
+        guard case .callout(
+            let targetRect,
+            _,
+            _,
+            _,
+            let text,
+            let color,
+            let lineWidth,
+            let fontSize
+        ) = annotations[index] else {
+            return
+        }
+        let connector = AnnotationGeometry.calloutConnector(
+            targetRect: targetRect,
+            textFrame: CGRect(origin: textOrigin, size: textSize),
+            in: CGRect(origin: .zero, size: selectionRect?.size ?? bounds.size)
+        )
+        annotations[index] = .callout(
+            targetRect: targetRect,
+            arrowStart: connector.arrowStart,
+            arrowEnd: connector.arrowEnd,
+            textOrigin: textOrigin,
+            text: text,
+            color: color,
+            lineWidth: lineWidth,
+            fontSize: fontSize
+        )
+    }
+
+    private func cancelActiveCalloutTextEdit() {
+        guard let textView = activeTextView, let index = activeCalloutTextEditIndex else { return }
+        activeTextView = nil
+        activeTextOrigin = nil
+        activeTextTopY = nil
+        activeCalloutTextEditIndex = nil
+        activeTextIsEditingExisting = false
+        textView.delegate = nil
+        textView.removeFromSuperview()
+
+        if activeCalloutWasJustCreated {
+            if annotations.indices.contains(index) {
+                annotations.remove(at: index)
+            }
+            selectedAnnotationIndex = nil
+        } else if let original = activeCalloutOriginalAnnotation, annotations.indices.contains(index) {
+            annotations[index] = original
+            selectedAnnotationIndex = index
+        }
+        _ = undoStack.popLast()
+        activeCalloutOriginalAnnotation = nil
+        activeCalloutWasJustCreated = false
+        window?.makeFirstResponder(self)
+        needsDisplay = true
+    }
+
+    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)),
+           activeCalloutTextEditIndex != nil {
+            cancelActiveCalloutTextEdit()
+            return true
+        }
+        if commandSelector == #selector(NSResponder.insertNewline(_:)),
+           NSApp.currentEvent?.modifierFlags.contains(.command) == true {
+            commitActiveText()
+            window?.makeFirstResponder(self)
+            return true
+        }
+        return false
     }
 
     func textDidEndEditing(_ notification: Notification) {
@@ -3369,10 +3602,46 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             selectedAnnotationIndex = index
             adoptToolAndStyle(from: annotations[index])
             needsDisplay = true
+            if let region = calloutHitRegion(at: point, annotation: annotations[index]) {
+                switch region {
+                case .targetBorder:
+                    return .movingCalloutTarget(index: index, lastPoint: point)
+                case .text:
+                    return .movingCalloutText(index: index, lastPoint: point)
+                case .arrow:
+                    return .movingAnnotation(index: index, lastPoint: point)
+                }
+            }
             return .movingAnnotation(index: index, lastPoint: point)
         }
         selectedAnnotationIndex = nil
         return nil
+    }
+
+    private func calloutHitRegion(at point: CGPoint, annotation: Annotation) -> CalloutHitRegion? {
+        guard case .callout(
+            let targetRect,
+            let arrowStart,
+            let arrowEnd,
+            let textOrigin,
+            let text,
+            _,
+            let lineWidth,
+            let fontSize
+        ) = annotation else {
+            return nil
+        }
+        let textSize = text.isEmpty
+            ? calloutPlaceholderTextSize
+            : AnnotationTextLayout.size(for: text, fontSize: fontSize)
+        return AnnotationGeometry.calloutHitRegion(
+            at: point,
+            targetRect: targetRect,
+            arrowStart: arrowStart,
+            arrowEnd: arrowEnd,
+            textFrame: CGRect(origin: textOrigin, size: textSize),
+            lineWidth: lineWidth
+        )
     }
 
     private func hitSelectedAnnotationHandle(at point: CGPoint, index: Int) -> DragMode? {
@@ -3450,7 +3719,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         AnnotationGeometry.contains(
             point,
             annotation: annotations[index],
-            emptyCalloutTextSize: CGSize(width: max(120, textInputMinSize.width), height: textInputMinSize.height)
+            emptyCalloutTextSize: calloutPlaceholderTextSize
         )
     }
 
@@ -3525,6 +3794,73 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         for index in annotations.indices {
             moveAnnotation(at: index, by: delta, constrainsToSelection: false)
         }
+    }
+
+    private func moveCalloutTarget(at index: Int, by delta: CGPoint) {
+        guard annotations.indices.contains(index), let selectionRect else { return }
+        guard case .callout(
+            let targetRect,
+            let arrowStart,
+            _,
+            let textOrigin,
+            let text,
+            let color,
+            let lineWidth,
+            let fontSize
+        ) = annotations[index] else {
+            return
+        }
+        let placement = AnnotationGeometry.movedCalloutTarget(
+            targetRect: targetRect,
+            arrowStart: arrowStart,
+            requestedDelta: delta,
+            within: CGRect(origin: .zero, size: selectionRect.size)
+        )
+        annotations[index] = .callout(
+            targetRect: placement.targetRect,
+            arrowStart: arrowStart,
+            arrowEnd: placement.arrowEnd,
+            textOrigin: textOrigin,
+            text: text,
+            color: color,
+            lineWidth: lineWidth,
+            fontSize: fontSize
+        )
+    }
+
+    private func moveCalloutText(at index: Int, by delta: CGPoint) {
+        guard annotations.indices.contains(index), let selectionRect else { return }
+        guard case .callout(
+            let targetRect,
+            let arrowStart,
+            let arrowEnd,
+            let textOrigin,
+            let text,
+            let color,
+            let lineWidth,
+            let fontSize
+        ) = annotations[index] else {
+            return
+        }
+        let textSize = text.isEmpty
+            ? calloutPlaceholderTextSize
+            : AnnotationTextLayout.size(for: text, fontSize: fontSize)
+        let placement = AnnotationGeometry.movedCalloutText(
+            textFrame: CGRect(origin: textOrigin, size: textSize),
+            arrowStart: arrowStart,
+            requestedDelta: delta,
+            within: CGRect(origin: .zero, size: selectionRect.size)
+        )
+        annotations[index] = .callout(
+            targetRect: targetRect,
+            arrowStart: placement.arrowStart,
+            arrowEnd: arrowEnd,
+            textOrigin: placement.textOrigin,
+            text: text,
+            color: color,
+            lineWidth: lineWidth,
+            fontSize: fontSize
+        )
     }
 
     private func applyCurrentStyleToSelectedAnnotation() {
@@ -3700,7 +4036,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                     : clampedPoint
                 let constrainedPoint = AnnotationGeometry.clampedPoint(nextPoint, to: annotationBounds)
                 let textSize = text.isEmpty
-                    ? CGSize(width: max(120, textInputMinSize.width), height: textInputMinSize.height)
+                    ? calloutPlaceholderTextSize
                     : AnnotationTextLayout.size(for: text, fontSize: fontSize)
                 let movingBounds = CGRect(origin: textOrigin, size: textSize)
                     .union(CGRect(x: arrowStart.x - 1, y: arrowStart.y - 1, width: 2, height: 2))
@@ -3758,13 +4094,23 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             drawSmallHandle(at: origin)
         case .freehand(let points, _, let lineWidth), .highlighter(let points, _, let lineWidth):
             drawPathSelectionBounds(points: points, lineWidth: lineWidth)
-        case .callout(let targetRect, let arrowStart, let arrowEnd, let textOrigin, _, _, _, _):
+        case .callout(let targetRect, let arrowStart, let arrowEnd, let textOrigin, let text, _, _, let fontSize):
             for point in annotationRectangleHandlePoints(rect: targetRect) {
                 drawSmallHandle(at: point)
             }
             drawSmallHandle(at: arrowStart)
             drawSmallHandle(at: arrowEnd)
-            drawSmallHandle(at: textOrigin)
+            if activeCalloutTextEditIndex != index {
+                let textSize = text.isEmpty
+                    ? calloutPlaceholderTextSize
+                    : AnnotationTextLayout.size(for: text, fontSize: fontSize)
+                let textFrame = CGRect(origin: textOrigin, size: textSize).insetBy(dx: -5, dy: -3)
+                let path = NSBezierPath(roundedRect: textFrame, xRadius: 4, yRadius: 4)
+                NSColor.controlAccentColor.withAlphaComponent(0.55).setStroke()
+                path.lineWidth = 1
+                path.setLineDash([3, 3], count: 2, phase: 0)
+                path.stroke()
+            }
         }
     }
 

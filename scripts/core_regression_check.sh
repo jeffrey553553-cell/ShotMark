@@ -94,8 +94,8 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -Uq "case \\.number:\\n[[:space:]]*return \"4\"" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "tailHalfWidth" Sources/ShotMark/AnnotationDrawing.swift
   rg -q "neckHalfWidth" Sources/ShotMark/AnnotationDrawing.swift
-  rg -q "let placementGap: CGFloat = 68" Sources/ShotMark/AnnotationGeometry.swift
-  rg -q "let textClearance: CGFloat = 22" Sources/ShotMark/AnnotationGeometry.swift
+  rg -q "let placementGap: CGFloat = 84" Sources/ShotMark/AnnotationGeometry.swift
+  rg -q "textClearance: CGFloat = 24" Sources/ShotMark/AnnotationGeometry.swift
   rg -q "snappedLineEndpoint\\(from: arrowEnd" Sources/ShotMark/SelectionOverlayController.swift Sources/ShotMark/AnnotationCanvasView.swift
   rg -q "private func undoEdit\\(" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "private func redoEdit\\(" Sources/ShotMark/SelectionOverlayController.swift
@@ -191,6 +191,14 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "testThickArrowHeadAndShaftAreSelectable" Tests/ShotMarkTests/AnnotationGeometryTests.swift
   rg -q "testBidirectionalMergedPixelsContainEveryContentRowExactlyOnce" Tests/ShotMarkTests/LongScreenshotStitcherTests.swift
   rg -q "testCalloutLayoutKeepsTextVisibleAndArrowAttached" Tests/ShotMarkTests/AnnotationGeometryTests.swift
+  rg -q "testCalloutHitRegionsKeepTargetArrowAndTextIndependent" Tests/ShotMarkTests/AnnotationGeometryTests.swift
+  rg -q "testMovingCalloutTargetLeavesTextSideFixedAndReattachesArrowHead" Tests/ShotMarkTests/AnnotationGeometryTests.swift
+  rg -q "testMovingCalloutTextKeepsArrowTailBoundAndStopsAtCanvasEdge" Tests/ShotMarkTests/AnnotationGeometryTests.swift
+  rg -q "movingCalloutTarget" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "movingCalloutText" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "activeCalloutOriginalAnnotation" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "annotationsForDrawing" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "calloutLineWidth" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "testTextEditorExpandsLeftWhenItReachesSelectionEdge" Tests/ShotMarkTests/AnnotationGeometryTests.swift
   rg -q "testAnnotationShowcaseRendersVisiblePixels" Tests/ShotMarkTests/AnnotationRenderingTests.swift
   rg -q "NumberMarkerAppearance" Sources/ShotMark/Models.swift Sources/ShotMark/SelectionOverlayController.swift
@@ -319,6 +327,14 @@ Mark each item PASS/FAIL after running it.
 | Edit | Click comment tool or press 1, then drag a target box | A target rectangle, arrow and editable text comment are created as one annotation group | |
 | Edit | Select a comment annotation | Target rectangle corners, arrow endpoints and text origin show editable handles; moving the group keeps all three parts together | |
 | Edit | Drag the tail handle of a comment arrow | The comment text moves with the arrow tail and keeps its spacing from the arrow | |
+| Edit | Drag a selected comment target border | Only the target box moves; the arrow head reattaches and the text stays fixed | |
+| Edit | Drag selected comment text | Text and arrow tail move together; the target stays fixed | |
+| Edit | Drag the shaft of a selected comment arrow | Target, arrow and text move as one group | |
+| Edit | Type a long or multiline comment | No duplicate text appears; the arrow remains separated from and attached to the current text bounds | |
+| Edit | Create a comment and press Esc before typing | The whole unfinished comment is removed without leaving an empty target or no-op undo step | |
+| Edit | Edit a comment, then press Esc | The previous text and connector layout are restored | |
+| Edit | Edit a comment and press Cmd+Enter | Editing commits immediately and the comment stays selected | |
+| Edit | Adjust comment style panel | Font size, line width, color and opacity update the selected comment consistently | |
 | Edit | Export a comment annotation | Saved/copied image contains the rectangle, arrow and comment text without editor handles | |
 | Edit | Draw normal and comment arrows | Arrows render with a thin tail, heavier head and no plain-line arrow regression | |
 | Edit | Type text annotation continuously, press Return to create a new line, then click outside | Text stays anchored while typing, tail newlines do not shift the block, and it does not jump after focus leaves | |
