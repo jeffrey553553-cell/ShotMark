@@ -112,6 +112,7 @@ guard let cropped = sourceCG.cropping(to: cropRect) else {
 }
 
 let outputSize = CGSize(width: 1024, height: 1024)
+let artworkSide: CGFloat = 824
 guard
     let outputRep = NSBitmapImageRep(
         bitmapDataPlanes: nil,
@@ -135,13 +136,18 @@ NSGraphicsContext.current = graphicsContext
 NSColor.clear.setFill()
 NSRect(origin: .zero, size: outputSize).fill()
 
-let iconRect = NSRect(origin: .zero, size: outputSize)
-let mask = NSBezierPath(roundedRect: iconRect, xRadius: 218, yRadius: 218)
+let iconRect = NSRect(
+    x: (outputSize.width - artworkSide) / 2,
+    y: (outputSize.height - artworkSide) / 2,
+    width: artworkSide,
+    height: artworkSide
+)
+let mask = NSBezierPath(roundedRect: iconRect, xRadius: 176, yRadius: 176)
 mask.addClip()
 
-NSImage(cgImage: cropped, size: outputSize).draw(
+NSImage(cgImage: cropped, size: iconRect.size).draw(
     in: iconRect,
-    from: NSRect(origin: .zero, size: outputSize),
+    from: NSRect(origin: .zero, size: iconRect.size),
     operation: .sourceOver,
     fraction: 1
 )

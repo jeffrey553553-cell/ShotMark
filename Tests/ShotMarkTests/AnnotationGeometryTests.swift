@@ -27,6 +27,27 @@ final class AnnotationGeometryTests: XCTestCase {
         )
     }
 
+    func testBlankClickDeselectsBeforeTheActiveToolDrawsAgain() {
+        XCTAssertTrue(
+            AnnotationInteractionPolicy.shouldDeselectBeforeDrawing(
+                hasSelectedAnnotation: true,
+                didHitAnnotation: false
+            )
+        )
+        XCTAssertFalse(
+            AnnotationInteractionPolicy.shouldDeselectBeforeDrawing(
+                hasSelectedAnnotation: false,
+                didHitAnnotation: false
+            )
+        )
+        XCTAssertFalse(
+            AnnotationInteractionPolicy.shouldDeselectBeforeDrawing(
+                hasSelectedAnnotation: true,
+                didHitAnnotation: true
+            )
+        )
+    }
+
     func testNearestPointForInteriorDragAlwaysSnapsToRectangleBorder() {
         let rect = CGRect(x: 100, y: 80, width: 200, height: 120)
         let point = AnnotationGeometry.nearestPointOnBorder(

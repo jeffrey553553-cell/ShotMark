@@ -41,6 +41,13 @@ enum AnnotationInteractionPolicy {
         guard hasActiveTextEditor else { return .noActiveEditor }
         return isEditingCallout ? .commitAndContinue : .commitAndConsume
     }
+
+    static func shouldDeselectBeforeDrawing(
+        hasSelectedAnnotation: Bool,
+        didHitAnnotation: Bool
+    ) -> Bool {
+        hasSelectedAnnotation && !didHitAnnotation
+    }
 }
 
 enum AnnotationGeometry {

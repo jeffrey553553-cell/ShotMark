@@ -534,6 +534,10 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
         let command = event.modifierFlags.contains(.command)
         let shift = event.modifierFlags.contains(.shift)
+        if event.keyCode == 53 {
+            handleLayeredEscape()
+            return
+        }
         if command, event.charactersIgnoringModifiers?.lowercased() == "z" {
             shift ? redoEdit() : undoEdit()
             return
@@ -642,6 +646,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
             if selectionRect.contains(point) {
                 let relative = relativePoint(point)
+                let hadSelectedAnnotation = selectedAnnotationIndex != nil
                 pendingTextEditIndex = nil
                 pendingTextEditStart = nil
                 pendingTextEditDidMove = false
@@ -661,6 +666,16 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                 if let drag = hitAnnotation(at: relative) {
                     registerUndo()
                     dragMode = drag
+                    return
+                }
+
+                if AnnotationInteractionPolicy.shouldDeselectBeforeDrawing(
+                    hasSelectedAnnotation: hadSelectedAnnotation,
+                    didHitAnnotation: false
+                ) {
+                    selectedAnnotationIndex = nil
+                    pendingTextEditIndex = nil
+                    needsDisplay = true
                     return
                 }
 
@@ -730,6 +745,18 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             return
         }
         let relative = relativePoint(point)
+        if let selectedAnnotationIndex,
+           let handle = hitSelectedAnnotationHandle(at: point, index: selectedAnnotationIndex) {
+            switch handle {
+            case .resizingAnnotation(_, let rectHandle):
+                cursor(for: rectHandle).set()
+            case .movingArrowEndpoint:
+                NSCursor.crosshair.set()
+            default:
+                NSCursor.openHand.set()
+            }
+            return
+        }
         if
             let selectedAnnotationIndex,
             annotations.indices.contains(selectedAnnotationIndex),
@@ -746,6 +773,19 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             NSCursor.crosshair.set()
         } else {
             NSCursor.openHand.set()
+        }
+    }
+
+    private func cursor(for handle: AnnotationRectHandle) -> NSCursor {
+        switch handle {
+        case .top, .bottom:
+            return .resizeUpDown
+        case .left, .right:
+            return .resizeLeftRight
+        case .topLeft, .bottomRight:
+            return .crosshair
+        case .topRight, .bottomLeft:
+            return .crosshair
         }
     }
 
@@ -2913,6 +2953,27 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         }
     }
 
+    private func handleLayeredEscape() {
+        if ocrPanelController != nil || isRecordingMenuOpen || shortcutMenuButton != nil {
+            closeTransientPanels()
+            shortcutMenuButton = nil
+            needsDisplay = true
+            return
+        }
+        if selectedAnnotationIndex != nil {
+            selectedAnnotationIndex = nil
+            pendingTextEditIndex = nil
+            needsDisplay = true
+            return
+        }
+        if selectedTool != nil {
+            selectedTool = nil
+            needsDisplay = true
+            return
+        }
+        onCancel?()
+    }
+
     private func handleTooltipShortcutClick(at point: CGPoint, selectionRect: CGRect) -> Bool {
         guard
             let hoveredButton,
@@ -3486,9 +3547,13 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        if commandSelector == #selector(NSResponder.cancelOperation(_:)),
-           activeCalloutTextEditIndex != nil {
-            cancelActiveCalloutTextEdit()
+        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            if activeCalloutTextEditIndex != nil {
+                cancelActiveCalloutTextEdit()
+            } else {
+                commitActiveText()
+                window?.makeFirstResponder(self)
+            }
             return true
         }
         if commandSelector == #selector(NSResponder.insertNewline(_:)),
@@ -3688,7 +3753,6 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             }
             return .movingAnnotation(index: index, lastPoint: point)
         }
-        selectedAnnotationIndex = nil
         return nil
     }
 
