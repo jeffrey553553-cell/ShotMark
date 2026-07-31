@@ -231,7 +231,7 @@ final class LongScreenshotStitcher {
     private(set) var acceptedFrameCount = 0
 
     var outputHeight: Int {
-        contentSlices.reduce(0) { $0 + $1.rowCount }
+        contentSlices.reduce(0) { $0 + $1.rowCount } + headerHeight + footerHeight
     }
 
     func reset() {
@@ -332,8 +332,20 @@ final class LongScreenshotStitcher {
         let match = resolved.match
 
         if stitchDirection == .unresolved {
-            headerHeight = topBand
-            footerHeight = bottomBand
+            headerHeight = max(topBand, detectStaticBand(
+                previous: lastRaster,
+                current: raster,
+                fromTop: true,
+                scrollingDelta: match.deltaY,
+                direction: match.direction
+            ))
+            footerHeight = max(bottomBand, detectStaticBand(
+                previous: lastRaster,
+                current: raster,
+                fromTop: false,
+                scrollingDelta: match.deltaY,
+                direction: match.direction
+            ))
             leadingStaticWidth = leftBand
             trailingStaticWidth = rightBand
             bootstrapBaseContent(from: baseRaster)
@@ -405,9 +417,27 @@ final class LongScreenshotStitcher {
 
         var pixels = [UInt8](repeating: 0, count: height * baseRaster.bytesPerRow)
         var destinationRow = 0
+        if headerHeight > 0 {
+            baseRaster.copyRows(
+                startRow: 0,
+                rowCount: headerHeight,
+                into: &pixels,
+                destinationRow: destinationRow
+            )
+            destinationRow += headerHeight
+        }
         for slice in contentSlices {
             slice.raster.copyRows(startRow: slice.startRow, rowCount: slice.rowCount, into: &pixels, destinationRow: destinationRow)
             destinationRow += slice.rowCount
+        }
+        if footerHeight > 0 {
+            let footerRaster = lastRaster ?? baseRaster
+            footerRaster.copyRows(
+                startRow: footerRaster.height - footerHeight,
+                rowCount: footerHeight,
+                into: &pixels,
+                destinationRow: destinationRow
+            )
         }
 
         let data = Data(pixels) as CFData
@@ -545,35 +575,93 @@ final class LongScreenshotStitcher {
         }
     }
 
-    private func detectStaticBand(previous: RasterImage, current: RasterImage, fromTop: Bool) -> Int {
-        let maxBand = min(previous.height / 5, 160)
+    private func detectStaticBand(
+        previous: RasterImage,
+        current: RasterImage,
+        fromTop: Bool,
+        scrollingDelta: Int? = nil,
+        direction: LongScreenshotStitchDirection = .unresolved
+    ) -> Int {
+        let maxBand = min(previous.height / 3, 420)
         let step = max(2, min(8, previous.height / 180))
         let xInset = max(12, previous.width / 20)
         let xStart = xInset
         let xEnd = max(xStart + 1, previous.width - xInset)
-        let columnStride = max(2, (xEnd - xStart) / 48)
         var bandHeight = 0
+        var gapCount = 0
 
         for offset in stride(from: 0, to: maxBand, by: step) {
             let row = fromTop ? offset : previous.height - 1 - offset
-            let difference = previous.blockDifference(
-                comparedTo: current,
-                startRow: row,
-                otherStartRow: row,
+            let difference = robustBlockDifference(
+                previous: previous,
+                current: current,
+                previousRow: row,
+                currentRow: row,
                 rowCount: 1,
                 xStart: xStart,
                 xEnd: xEnd,
-                columnStride: columnStride,
-                rowStride: 1
+                laneCount: 9
             )
-            if difference < 5 {
+            let movingDifference = scrollingDelta.flatMap { delta in
+                movingRowDifference(
+                    previous: previous,
+                    current: current,
+                    row: row,
+                    delta: delta,
+                    direction: direction,
+                    xStart: xStart,
+                    xEnd: xEnd
+                )
+            }
+            let isVisuallyFixed = difference < 6.5
+                || (difference < 18 && movingDifference.map { $0 > difference * 1.3 + 2 } == true)
+            if isVisuallyFixed {
                 bandHeight = offset + step
-            } else if offset > step * 2 {
+                gapCount = 0
+            } else {
+                gapCount += 1
+            }
+            if gapCount >= 3, offset > step * 3 {
                 break
             }
         }
 
         return min(max(0, bandHeight), maxBand)
+    }
+
+    private func movingRowDifference(
+        previous: RasterImage,
+        current: RasterImage,
+        row: Int,
+        delta: Int,
+        direction: LongScreenshotStitchDirection,
+        xStart: Int,
+        xEnd: Int
+    ) -> Double? {
+        let pairs: [(Int, Int)]
+        switch direction {
+        case .downward:
+            pairs = [(row + delta, row), (row, row - delta)]
+        case .upward:
+            pairs = [(row, row + delta), (row - delta, row)]
+        case .unresolved:
+            return nil
+        }
+
+        for (previousRow, currentRow) in pairs
+        where previousRow >= 0 && previousRow < previous.height && currentRow >= 0 && currentRow < current.height {
+            return robustBlockDifference(
+                previous: previous,
+                current: current,
+                previousRow: previousRow,
+                currentRow: currentRow,
+                rowCount: 1,
+                xStart: xStart,
+                xEnd: xEnd,
+                laneCount: 9
+            )
+        }
+        return nil
     }
 
     private func detectStaticSideBand(previous: RasterImage, current: RasterImage, fromLeading: Bool) -> Int {
@@ -860,7 +948,6 @@ final class LongScreenshotStitcher {
         guard overlapHeight > 24 else { return nil }
         guard let xBounds = matchingColumnBounds(width: previous.width, leadingStaticWidth: leadingStaticWidth, trailingStaticWidth: trailingStaticWidth) else { return nil }
 
-        let columnStride = max(2, (xBounds.upperBound - xBounds.lowerBound) / 72)
         let bandCount = min(10, max(6, overlapHeight / 80))
         let bandHeight = max(12, min(28, overlapHeight / max(3, bandCount + 1)))
         var differences: [Double] = []
@@ -881,15 +968,15 @@ final class LongScreenshotStitcher {
             case .unresolved:
                 return nil
             }
-            differences.append(previous.blockDifference(
-                comparedTo: current,
-                startRow: previousRow,
-                otherStartRow: currentRow,
+            differences.append(robustBlockDifference(
+                previous: previous,
+                current: current,
+                previousRow: previousRow,
+                currentRow: currentRow,
                 rowCount: bandHeight,
                 xStart: xBounds.lowerBound,
                 xEnd: xBounds.upperBound,
-                columnStride: columnStride,
-                rowStride: 2
+                laneCount: 10
             ))
         }
 
@@ -913,6 +1000,45 @@ final class LongScreenshotStitcher {
             worstDifference: worst,
             variance: variance
         )
+    }
+
+    private func robustBlockDifference(
+        previous: RasterImage,
+        current: RasterImage,
+        previousRow: Int,
+        currentRow: Int,
+        rowCount: Int,
+        xStart: Int,
+        xEnd: Int,
+        laneCount: Int
+    ) -> Double {
+        let width = xEnd - xStart
+        guard width > 0 else { return 255 }
+        let actualLaneCount = max(1, min(laneCount, width / 8))
+        let laneWidth = max(1, width / actualLaneCount)
+        var laneDifferences: [Double] = []
+        laneDifferences.reserveCapacity(actualLaneCount)
+
+        for lane in 0..<actualLaneCount {
+            let laneStart = xStart + lane * laneWidth
+            let laneEnd = lane == actualLaneCount - 1 ? xEnd : min(xEnd, laneStart + laneWidth)
+            guard laneStart < laneEnd else { continue }
+            laneDifferences.append(previous.blockDifference(
+                comparedTo: current,
+                startRow: previousRow,
+                otherStartRow: currentRow,
+                rowCount: rowCount,
+                xStart: laneStart,
+                xEnd: laneEnd,
+                columnStride: max(1, (laneEnd - laneStart) / 10),
+                rowStride: max(1, min(2, rowCount))
+            ))
+        }
+
+        guard !laneDifferences.isEmpty else { return 255 }
+        let retainedCount = max(1, Int(ceil(Double(laneDifferences.count) * 0.7)))
+        let retained = laneDifferences.sorted().prefix(retainedCount)
+        return retained.reduce(0, +) / Double(retained.count)
     }
 
     private func matchingColumnBounds(width: Int, leadingStaticWidth: Int, trailingStaticWidth: Int) -> ClosedRange<Int>? {

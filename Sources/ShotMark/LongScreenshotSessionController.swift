@@ -90,7 +90,7 @@ private extension LongScreenshotStitchUpdate {
         case .ignoredCoveredContent:
             "已采集区域"
         case .ignoredAlignmentFailed:
-            "等待更清晰的重叠区域"
+            "正在寻找稳定重叠区域"
         }
     }
 }
@@ -202,9 +202,11 @@ final class LongScreenshotSessionController {
     private var throttledScrollCaptureWorkItem: DispatchWorkItem?
     private var trailingScrollCaptureWorkItem: DispatchWorkItem?
     private var alignmentRetryWorkItem: DispatchWorkItem?
+    private var stabilityCaptureWorkItem: DispatchWorkItem?
     private var automaticScrollWorkItem: DispatchWorkItem?
     private var lastScrollCaptureAt = Date.distantPast
     private var pendingExpectedScrollDeltaPixels = 0
+    private var minimumCaptureSequenceNumber: Int?
     private var lastScrollDirectionSign: Int?
     private var stitchDirectionByScrollSign: [Int: LongScreenshotStitchDirection] = [:]
     private var isStreamCaptureEnabled = true
@@ -217,6 +219,7 @@ final class LongScreenshotSessionController {
     private var previewWindow: NSPanel?
     private var previewView: LongScreenshotPreviewView?
     private var alignmentRetryCount = 0
+    private var stabilityRetryCount = 0
     private var captureMode: LongScreenshotCaptureMode = .automatic
     private var automaticStallCount = 0
     private var didStartAutomaticScrolling = false
@@ -229,6 +232,7 @@ final class LongScreenshotSessionController {
     private let automaticScrollInterval: TimeInterval = 0.34
     private let automaticScrollDeltaPoints: Int32 = 56
     private let automaticEventMarker: Int64 = 0x53484F544D41524B
+    private let maximumStabilityRetryCount = 6
 
     init(selection: CaptureSelection) {
         self.selection = selection
@@ -505,6 +509,9 @@ final class LongScreenshotSessionController {
 
     private func scheduleCaptureAfterScroll() {
         guard !finishAfterCapture else { return }
+        if let latestSequence = frameRing.latest?.sequenceNumber {
+            minimumCaptureSequenceNumber = max(minimumCaptureSequenceNumber ?? latestSequence, latestSequence)
+        }
         updateControlView(status: "滚动中采集...")
         updatePreview(status: "滚动中")
 
@@ -554,13 +561,43 @@ final class LongScreenshotSessionController {
             pendingExpectedScrollDeltaPixels = 0
         }
         updateControlView(status: "正在采集...")
+        let streamSequenceFloor = [frameRing.lastCommittedSequenceNumber, minimumCaptureSequenceNumber]
+            .compactMap { $0 }
+            .max()
+
+        if isStreamCaptureEnabled,
+           isStreamSourceReady,
+           frameRing.lastCommittedSequenceNumber != nil,
+           frameRing.latestSettledFrame(after: streamSequenceFloor) == nil,
+           stabilityRetryCount < maximumStabilityRetryCount {
+            stabilityRetryCount += 1
+            isCapturing = false
+            updateControlView(status: "正在等待画面稳定...")
+            updatePreview(status: "滚动停止后自动拼接")
+            let context = LongScreenshotAlignmentRetryContext(
+                expectedDeltaPixels: expectedDeltaPixels,
+                expectedDirection: expectedDirection,
+                scrollDirectionSign: scrollDirectionSign
+            )
+            stabilityCaptureWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.stabilityCaptureWorkItem = nil
+                self.captureFrame(retryContext: context)
+            }
+            stabilityCaptureWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.045, execute: workItem)
+            return
+        }
 
         if commitLatestStreamFrame(
+            after: streamSequenceFloor,
             expectedDeltaPixels: expectedDeltaPixels,
             expectedDirection: expectedDirection,
             scrollDirectionSign: scrollDirectionSign,
             isAlignmentRetry: retryContext != nil
         ) {
+            stabilityRetryCount = 0
             finishCaptureTurn()
             return
         }
@@ -597,13 +634,16 @@ final class LongScreenshotSessionController {
     }
 
     private func commitLatestStreamFrame(
+        after sequenceNumber: Int?,
         expectedDeltaPixels: Int?,
         expectedDirection: LongScreenshotStitchDirection?,
         scrollDirectionSign: Int?,
         isAlignmentRetry: Bool
     ) -> Bool {
         guard isStreamCaptureEnabled, isStreamSourceReady else { return false }
-        guard let frame = frameRing.latestFrame(after: frameRing.lastCommittedSequenceNumber) else { return false }
+        let frame = frameRing.latestSettledFrame(after: sequenceNumber)
+            ?? frameRing.latestFrame(after: sequenceNumber)
+        guard let frame else { return false }
         commitImage(
             frame.image,
             createdAt: frame.capturedAt,
@@ -632,6 +672,7 @@ final class LongScreenshotSessionController {
         )
         stitchedImageCache = update?.mergedImage
         frameRing.markCommitted(sequenceNumber: sequenceNumber)
+        minimumCaptureSequenceNumber = nil
         if let update {
             switch update.outcome {
             case .ignoredAlignmentFailed:
@@ -989,6 +1030,8 @@ final class LongScreenshotSessionController {
         trailingScrollCaptureWorkItem = nil
         alignmentRetryWorkItem?.cancel()
         alignmentRetryWorkItem = nil
+        stabilityCaptureWorkItem?.cancel()
+        stabilityCaptureWorkItem = nil
         if let localScrollMonitor {
             NSEvent.removeMonitor(localScrollMonitor)
             self.localScrollMonitor = nil
@@ -1021,7 +1064,9 @@ final class LongScreenshotSessionController {
         previewView = nil
         stitchedImageCache = nil
         pendingExpectedScrollDeltaPixels = 0
+        minimumCaptureSequenceNumber = nil
         alignmentRetryCount = 0
+        stabilityRetryCount = 0
         lastScrollDirectionSign = nil
         stitchDirectionByScrollSign.removeAll()
         isStreamSourceReady = false
