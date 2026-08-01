@@ -2,6 +2,12 @@ import XCTest
 @testable import ShotMark
 
 final class LongScreenshotCropGeometryTests: XCTestCase {
+    func testScrollWheelDirectionMapsToScreenshotExpansion() {
+        XCTAssertEqual(LongScreenshotScrollDirectionResolver.direction(forSign: -1), .downward)
+        XCTAssertEqual(LongScreenshotScrollDirectionResolver.direction(forSign: 1), .upward)
+        XCTAssertNil(LongScreenshotScrollDirectionResolver.direction(forSign: 0))
+    }
+
     func testCropRectAppliesTopAndBottomWithoutChangingWidth() {
         XCTAssertEqual(
             LongScreenshotCropGeometry.cropRect(

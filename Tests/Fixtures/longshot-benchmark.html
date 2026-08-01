@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ShotMark Long Screenshot Benchmark</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+    body { background: #f4f6f8; color: #17212b; letter-spacing: 0; }
+    .fixed-header {
+      position: fixed; inset: 0 0 auto 0; height: 76px; z-index: 20;
+      display: flex; align-items: center; justify-content: space-between; padding: 0 32px;
+      color: white; background: #182431; border-bottom: 1px solid rgba(255,255,255,.18);
+    }
+    .translucent .fixed-header {
+      color: #102030; background: rgba(245,250,255,.76); backdrop-filter: blur(18px) saturate(1.4);
+      border-bottom-color: rgba(20,40,60,.18);
+    }
+    .fixed-footer {
+      position: fixed; inset: auto 0 0 0; height: 52px; z-index: 20;
+      display: flex; align-items: center; justify-content: center;
+      color: white; background: #202a34; border-top: 1px solid rgba(255,255,255,.16);
+    }
+    .page { width: min(920px, calc(100% - 48px)); margin: 0 auto; padding: 100px 0 76px; }
+    .intro { padding: 26px 28px; background: white; border: 1px solid #d8dee5; }
+    h1 { margin: 0 0 8px; font-size: 27px; }
+    p { margin: 0; line-height: 1.55; }
+    .row {
+      position: relative; height: 92px; margin-top: 12px; padding: 17px 22px 14px 88px;
+      background: white; border: 1px solid #d5dce3; overflow: hidden;
+    }
+    .row::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 68px; background: var(--stripe); }
+    .row strong { display: block; font-size: 17px; margin-bottom: 8px; }
+    .row code { color: #52616f; font-size: 13px; }
+    .repeated .row { background-image: repeating-linear-gradient(0deg,#fff 0 22px,#f0f3f6 22px 44px); }
+    .moving-ad {
+      position: fixed; right: 22px; top: 150px; z-index: 15; width: 126px; height: 96px;
+      display: grid; place-items: center; color: white; background: #d64a3a;
+      animation: pulse 720ms alternate infinite ease-in-out;
+    }
+    .dynamic-card::after {
+      content: "LIVE"; position: absolute; right: 18px; top: 16px;
+      padding: 7px 10px; color: white; background: #e04767;
+      animation: tint 900ms alternate infinite linear;
+    }
+    @keyframes pulse { to { transform: translateY(18px); background: #7a4bd8; } }
+    @keyframes tint { to { filter: hue-rotate(110deg); transform: translateX(-12px); } }
+    .lazy-placeholder { height: 920px; margin-top: 12px; background: #e6ebef; display: grid; place-items: center; }
+    .sticky-section {
+      position: sticky; top: 76px; z-index: 10; margin-top: 12px; padding: 12px 20px;
+      color: white; background: #126b64;
+    }
+    .scenario-simple .fixed-footer, .scenario-simple .moving-ad { display: none; }
+    .scenario-simple .page { padding-bottom: 24px; }
+    .scenario-repeated .moving-ad, .scenario-repeated .fixed-footer { display: none; }
+    .scenario-dynamic .sticky-section { display: none; }
+  </style>
+</head>
+<body>
+  <header class="fixed-header"><strong>LONGSHOT BENCHMARK</strong><span id="scenario-label"></span></header>
+  <div class="moving-ad">动态悬浮区</div>
+  <main class="page">
+    <section class="intro"><h1>长截图真实场景</h1><p>每一行都有唯一编号与颜色，用于检测缺失、重复和顺序错误。</p></section>
+    <div class="sticky-section">章节导航固定栏</div>
+    <section id="rows"></section>
+  </main>
+  <footer class="fixed-footer">固定操作栏 · 最终图片中应只出现一次</footer>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const scenario = params.get('scenario') || 'fixed';
+    document.body.classList.add(`scenario-${scenario}`);
+    if (scenario === 'translucent') document.body.classList.add('translucent');
+    if (scenario === 'repeated') document.getElementById('rows').classList.add('repeated');
+    document.getElementById('scenario-label').textContent = scenario.toUpperCase();
+
+    const rows = document.getElementById('rows');
+    const count = scenario === 'lazy' ? 30 : 54;
+    const addRow = index => {
+      const row = document.createElement('article');
+      row.className = `row ${scenario === 'dynamic' && index % 7 === 0 ? 'dynamic-card' : ''}`;
+      const markerColor = [
+        20 + index * 4,
+        72 + (index % 4) * 44,
+        220 - (index % 6) * 34
+      ];
+      row.style.setProperty('--stripe', `rgb(${markerColor.join(',')})`);
+      const repeatedLabel = scenario === 'repeated' ? `重复模板 ${index % 4}` : `唯一内容 ${index}`;
+      row.innerHTML = `<strong>ROW ${String(index).padStart(3, '0')} · ${repeatedLabel}</strong><code>marker:${index}:rgb:${markerColor.join('-')}:checksum:${index * 7919}</code>`;
+      rows.appendChild(row);
+    };
+    for (let index = 0; index < count; index++) addRow(index);
+
+    if (scenario === 'lazy') {
+      let loaded = false;
+      addEventListener('scroll', () => {
+        if (!loaded && scrollY > document.body.scrollHeight * .45) {
+          loaded = true;
+          const marker = document.createElement('div');
+          marker.className = 'lazy-placeholder';
+          marker.textContent = 'LAZY CONTENT LOADED';
+          rows.appendChild(marker);
+          for (let index = count; index < count + 18; index++) addRow(index);
+        }
+      }, { passive: true });
+    }
+  </script>
+</body>
+</html>

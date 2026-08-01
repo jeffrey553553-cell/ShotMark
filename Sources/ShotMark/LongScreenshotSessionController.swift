@@ -3,6 +3,7 @@ import ApplicationServices
 import Carbon
 import CoreGraphics
 import Foundation
+import OSLog
 
 enum LongScreenshotSessionError: LocalizedError {
     case noFrames
@@ -181,6 +182,8 @@ private final class LongScreenshotHotKeyService {
 }
 
 final class LongScreenshotSessionController {
+    private static let logger = Logger(subsystem: "com.local.shotmark", category: "long-screenshot")
+
     var onFinish: ((Result<(CaptureResult, LongScreenshotCommitAction), Error>) -> Void)?
     var onCancel: (() -> Void)?
 
@@ -203,16 +206,22 @@ final class LongScreenshotSessionController {
     private var trailingScrollCaptureWorkItem: DispatchWorkItem?
     private var alignmentRetryWorkItem: DispatchWorkItem?
     private var stabilityCaptureWorkItem: DispatchWorkItem?
+    private var streamMotionCaptureWorkItem: DispatchWorkItem?
+    private var streamStableCaptureWorkItem: DispatchWorkItem?
     private var automaticScrollWorkItem: DispatchWorkItem?
     private var lastScrollCaptureAt = Date.distantPast
+    private var lastStreamMotionCaptureAt = Date.distantPast
+    private var nextStreamMotionCaptureAllowedAt = Date.distantPast
     private var pendingExpectedScrollDeltaPixels = 0
     private var minimumCaptureSequenceNumber: Int?
+    private var latestScrollEventSequenceNumber: Int?
     private var lastScrollDirectionSign: Int?
     private var stitchDirectionByScrollSign: [Int: LongScreenshotStitchDirection] = [:]
     private var isStreamCaptureEnabled = true
     private var isStreamSourceReady = false
     private var isCapturing = false
     private var needsCaptureAfterCurrent = false
+    private var needsStableCaptureAfterCurrent = false
     private var finishAfterCapture = false
     private var pendingCommitAction: LongScreenshotCommitAction?
     private var frameWindow: NSPanel?
@@ -225,6 +234,10 @@ final class LongScreenshotSessionController {
     private var didStartAutomaticScrolling = false
     private var cropTopPixels = 0
     private var cropBottomPixels = 0
+    private var streamFrameCount = 0
+    private var streamMotionReferenceImage: CGImage?
+    private var didWriteStreamDiagnostics = false
+    private var lastMergedPreviewAt = Date.distantPast
 
     private let scrollCaptureInterval: TimeInterval = 0.095
     private let trailingCaptureDelay: TimeInterval = 0.18
@@ -233,6 +246,9 @@ final class LongScreenshotSessionController {
     private let automaticScrollDeltaPoints: Int32 = 56
     private let automaticEventMarker: Int64 = 0x53484F544D41524B
     private let maximumStabilityRetryCount = 6
+    private let streamMotionDifferenceThreshold = 1.8
+    private let streamMotionCaptureInterval: TimeInterval = 0.12
+    private let streamStableCaptureDelay: TimeInterval = 0.16
 
     init(selection: CaptureSelection) {
         self.selection = selection
@@ -269,7 +285,7 @@ final class LongScreenshotSessionController {
             return
         }
 
-        guard let stitched = stitchedImageCache ?? stitcher.mergedImage() else {
+        guard let stitched = stitcher.mergedImage() ?? stitchedImageCache else {
             cleanup()
             onFinish?(.failure(LongScreenshotSessionError.stitchingFailed))
             return
@@ -335,24 +351,93 @@ final class LongScreenshotSessionController {
         }
 
         frameSource.onFrame = { [weak self] frame in
-            self?.frameRing.append(frame)
+            self?.handleStreamFrame(frame)
         }
-        frameSource.onFailure = { [weak self] _ in
+        frameSource.onFailure = { [weak self] error in
             self?.isStreamSourceReady = false
             self?.isStreamCaptureEnabled = false
             self?.updatePreview(status: "帧流异常，已回退")
+            Self.logger.error("Frame stream stopped: \(error.localizedDescription, privacy: .public)")
         }
         frameSource.start(selection: selection) { [weak self] result in
             guard let self else { return }
             switch result {
             case .success:
                 self.isStreamSourceReady = true
+                Self.logger.info("Frame stream started")
                 self.updatePreview(status: "实时帧流已启动")
-            case .failure:
+                self.captureFrame(requireStableFrame: false)
+            case .failure(let error):
                 self.isStreamSourceReady = false
                 self.isStreamCaptureEnabled = false
+                Self.logger.error("Frame stream failed: \(error.localizedDescription, privacy: .public)")
                 self.updatePreview(status: "帧流不可用，兼容采集")
             }
+        }
+    }
+
+    private func handleStreamFrame(_ frame: LongScreenshotFrame) {
+        let cleanedFrame = LongScreenshotFrame(
+            sequenceNumber: frame.sequenceNumber,
+            image: cleanedImage(frame.image, scale: selection.screen.backingScaleFactor),
+            capturedAt: frame.capturedAt
+        )
+        frameRing.append(cleanedFrame)
+        streamFrameCount += 1
+        if streamFrameCount.isMultiple(of: 30) {
+            Self.logger.debug("Received \(self.streamFrameCount) frames, latest=\(cleanedFrame.sequenceNumber)")
+        }
+        if streamMotionReferenceImage == nil, stitcher.acceptedFrameCount > 0 {
+            frameRing.markCommitted(sequenceNumber: cleanedFrame.sequenceNumber)
+            streamMotionReferenceImage = cleanedFrame.image
+            Self.logger.debug("Established stream motion reference at frame \(cleanedFrame.sequenceNumber)")
+            return
+        }
+        guard isStreamSourceReady,
+              let referenceImage = streamMotionReferenceImage,
+              frameRing.lastCommittedSequenceNumber != nil,
+              !finishAfterCapture,
+              Date() >= nextStreamMotionCaptureAllowedAt
+        else { return }
+
+        let difference = LongScreenshotFrameRing.sampledDifference(referenceImage, cleanedFrame.image)
+        if streamFrameCount.isMultiple(of: 30) {
+            Self.logger.debug("Difference from committed frame=\(difference)")
+        }
+        guard difference >= streamMotionDifferenceThreshold else { return }
+        Self.logger.debug("Motion at frame \(cleanedFrame.sequenceNumber), difference=\(difference)")
+        if !didWriteStreamDiagnostics,
+           ProcessInfo.processInfo.environment["SHOTMARK_LONGSHOT_DIAGNOSTICS"] == "1" {
+            didWriteStreamDiagnostics = true
+            writeDiagnosticFrames(reference: referenceImage, candidate: cleanedFrame.image)
+        }
+
+        streamStableCaptureWorkItem?.cancel()
+        let stableWorkItem = DispatchWorkItem { [weak self] in
+            guard let self, !self.finishAfterCapture else { return }
+            self.streamStableCaptureWorkItem = nil
+            self.captureFrame(requireStableFrame: true)
+        }
+        streamStableCaptureWorkItem = stableWorkItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + streamStableCaptureDelay, execute: stableWorkItem)
+
+        let now = Date()
+        let elapsed = now.timeIntervalSince(lastStreamMotionCaptureAt)
+        if elapsed >= streamMotionCaptureInterval {
+            lastStreamMotionCaptureAt = now
+            captureFrame(requireStableFrame: false)
+        } else if streamMotionCaptureWorkItem == nil {
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self, !self.finishAfterCapture else { return }
+                self.streamMotionCaptureWorkItem = nil
+                self.lastStreamMotionCaptureAt = Date()
+                self.captureFrame(requireStableFrame: false)
+            }
+            streamMotionCaptureWorkItem = workItem
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + max(0.02, streamMotionCaptureInterval - elapsed),
+                execute: workItem
+            )
         }
     }
 
@@ -474,7 +559,7 @@ final class LongScreenshotSessionController {
         let workItem = DispatchWorkItem { [weak self] in
             guard let self, self.captureMode == .automatic, !self.finishAfterCapture else { return }
             self.trailingScrollCaptureWorkItem = nil
-            self.captureFrame()
+            self.captureFrame(requireStableFrame: true)
         }
         trailingScrollCaptureWorkItem?.cancel()
         trailingScrollCaptureWorkItem = workItem
@@ -510,7 +595,7 @@ final class LongScreenshotSessionController {
     private func scheduleCaptureAfterScroll() {
         guard !finishAfterCapture else { return }
         if let latestSequence = frameRing.latest?.sequenceNumber {
-            minimumCaptureSequenceNumber = max(minimumCaptureSequenceNumber ?? latestSequence, latestSequence)
+            latestScrollEventSequenceNumber = latestSequence
         }
         updateControlView(status: "滚动中采集...")
         updatePreview(status: "滚动中")
@@ -519,14 +604,14 @@ final class LongScreenshotSessionController {
         let elapsed = now.timeIntervalSince(lastScrollCaptureAt)
         if elapsed >= scrollCaptureInterval {
             lastScrollCaptureAt = now
-            captureFrame()
+            captureFrame(requireStableFrame: false)
         } else if throttledScrollCaptureWorkItem == nil {
             let delay = max(0.04, scrollCaptureInterval - elapsed)
             let workItem = DispatchWorkItem { [weak self] in
                 guard let self, !self.finishAfterCapture else { return }
                 self.throttledScrollCaptureWorkItem = nil
                 self.lastScrollCaptureAt = Date()
-                self.captureFrame()
+                self.captureFrame(requireStableFrame: false)
             }
             throttledScrollCaptureWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
@@ -537,26 +622,33 @@ final class LongScreenshotSessionController {
             guard let self, !self.finishAfterCapture else { return }
             self.trailingScrollCaptureWorkItem = nil
             self.lastScrollCaptureAt = Date()
-            self.captureFrame()
+            self.minimumCaptureSequenceNumber = self.latestScrollEventSequenceNumber
+            self.captureFrame(requireStableFrame: true)
         }
         trailingScrollCaptureWorkItem = trailingWorkItem
         DispatchQueue.main.asyncAfter(deadline: .now() + trailingCaptureDelay, execute: trailingWorkItem)
     }
 
-    private func captureFrame(retryContext: LongScreenshotAlignmentRetryContext? = nil) {
+    private func captureFrame(
+        retryContext: LongScreenshotAlignmentRetryContext? = nil,
+        requireStableFrame: Bool = false
+    ) {
         guard !finishAfterCapture else { return }
         if isCapturing {
             needsCaptureAfterCurrent = true
+            needsStableCaptureAfterCurrent = needsStableCaptureAfterCurrent || requireStableFrame
             return
         }
 
         isCapturing = true
         needsCaptureAfterCurrent = false
+        needsStableCaptureAfterCurrent = false
         let expectedDeltaPixels = retryContext?.expectedDeltaPixels
             ?? (pendingExpectedScrollDeltaPixels > 0 ? pendingExpectedScrollDeltaPixels : nil)
         let scrollDirectionSign = retryContext?.scrollDirectionSign ?? lastScrollDirectionSign
         let expectedDirection = retryContext?.expectedDirection
             ?? scrollDirectionSign.flatMap { stitchDirectionByScrollSign[$0] }
+            ?? scrollDirectionSign.flatMap(LongScreenshotScrollDirectionResolver.direction(forSign:))
         if retryContext == nil {
             pendingExpectedScrollDeltaPixels = 0
         }
@@ -568,6 +660,7 @@ final class LongScreenshotSessionController {
         if isStreamCaptureEnabled,
            isStreamSourceReady,
            frameRing.lastCommittedSequenceNumber != nil,
+           requireStableFrame,
            frameRing.latestSettledFrame(after: streamSequenceFloor) == nil,
            stabilityRetryCount < maximumStabilityRetryCount {
             stabilityRetryCount += 1
@@ -583,7 +676,7 @@ final class LongScreenshotSessionController {
             let workItem = DispatchWorkItem { [weak self] in
                 guard let self else { return }
                 self.stabilityCaptureWorkItem = nil
-                self.captureFrame(retryContext: context)
+                self.captureFrame(retryContext: context, requireStableFrame: true)
             }
             stabilityCaptureWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.045, execute: workItem)
@@ -665,13 +758,49 @@ final class LongScreenshotSessionController {
         sequenceNumber: Int?,
         isAlignmentRetry: Bool
     ) {
+        let now = Date()
+        let shouldRenderPreview = stitcher.acceptedFrameCount == 0
+            || finishAfterCapture
+            || now.timeIntervalSince(lastMergedPreviewAt) >= 0.18
         let update = stitcher.append(
             image,
             expectedDeltaPixels: expectedDeltaPixels,
-            expectedDirection: expectedDirection
+            expectedDirection: expectedDirection,
+            renderMergedImage: shouldRenderPreview
         )
-        stitchedImageCache = update?.mergedImage
-        frameRing.markCommitted(sequenceNumber: sequenceNumber)
+        if case .ignoredAlignmentFailed = update?.outcome,
+           ProcessInfo.processInfo.environment["SHOTMARK_LONGSHOT_DIAGNOSTICS"] == "1",
+           let referenceImage = streamMotionReferenceImage {
+            writeDiagnosticFrames(reference: referenceImage, candidate: image)
+        }
+        if let update {
+            Self.logger.info(
+                "Stitch \(update.statusText, privacy: .public), height=\(update.outputHeight), accepted=\(update.acceptedFrameCount)"
+            )
+        } else {
+            Self.logger.error("Stitcher returned no update")
+        }
+        if let mergedImage = update?.mergedImage {
+            stitchedImageCache = mergedImage
+            lastMergedPreviewAt = now
+        }
+        switch update?.outcome {
+        case .initialized, .appended, .ignoredCoveredContent:
+            nextStreamMotionCaptureAllowedAt = .distantPast
+            frameRing.markCommitted(sequenceNumber: sequenceNumber)
+            if sequenceNumber != nil {
+                streamMotionReferenceImage = image
+            }
+        case .ignoredAlignmentFailed:
+            // A rejected frame is not a committed viewport. Keeping the last
+            // successful reference lets a later stable frame recover.
+            nextStreamMotionCaptureAllowedAt = Date().addingTimeInterval(0.45)
+        case .ignoredNoMovement, .none:
+            // Smooth scrolling often moves less than the stitcher's minimum
+            // useful overlap between adjacent stream frames. Do not consume
+            // that motion; let it accumulate against the last accepted frame.
+            break
+        }
         minimumCaptureSequenceNumber = nil
         if let update {
             switch update.outcome {
@@ -738,6 +867,17 @@ final class LongScreenshotSessionController {
         }
     }
 
+    private func writeDiagnosticFrames(reference: CGImage, candidate: CGImage) {
+        let directory = URL(fileURLWithPath: "/tmp/shotmark-stream-diagnostics", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let timestamp = Int(Date().timeIntervalSince1970 * 1_000)
+        for (name, image) in [("\(timestamp)-reference.png", reference), ("\(timestamp)-candidate.png", candidate)] {
+            let bitmap = NSBitmapImageRep(cgImage: image)
+            guard let data = bitmap.representation(using: .png, properties: [:]) else { continue }
+            try? data.write(to: directory.appendingPathComponent(name), options: .atomic)
+        }
+    }
+
     private func scheduleAlignmentRetry(context: LongScreenshotAlignmentRetryContext) {
         guard !finishAfterCapture else { return }
         alignmentRetryWorkItem?.cancel()
@@ -763,7 +903,7 @@ final class LongScreenshotSessionController {
                 status: "正在稳定画面并重试 \(self.alignmentRetryCount)/\(self.retryPolicy.maximumRetryCount)"
             )
             self.updatePreview(status: "自动重新对齐")
-            self.captureFrame(retryContext: context)
+            self.captureFrame(retryContext: context, requireStableFrame: true)
         }
         alignmentRetryWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
@@ -774,7 +914,9 @@ final class LongScreenshotSessionController {
         if finishAfterCapture {
             finish(action: pendingCommitAction ?? .saveToFile)
         } else if needsCaptureAfterCurrent {
-            captureFrame()
+            let requireStableFrame = needsStableCaptureAfterCurrent
+            needsStableCaptureAfterCurrent = false
+            captureFrame(requireStableFrame: requireStableFrame)
         }
     }
 
@@ -996,21 +1138,12 @@ final class LongScreenshotSessionController {
 
     private func cleanedCapture(_ capture: CaptureResult) -> CaptureResult {
         let scale = max(1, capture.screenScale)
-        let inset = max(2, Int((scale * 2).rounded()))
         let image = capture.image
+        let inset = captureInsetPixels(scale: scale)
         guard image.width > inset * 2 + 8, image.height > inset * 2 + 8 else {
             return capture
         }
-
-        let cropRect = CGRect(
-            x: inset,
-            y: inset,
-            width: image.width - inset * 2,
-            height: image.height - inset * 2
-        )
-        guard let cropped = image.cropping(to: cropRect) else {
-            return capture
-        }
+        let cropped = cleanedImage(image, scale: scale)
 
         let pointInset = CGFloat(inset) / scale
         return CaptureResult(
@@ -1019,6 +1152,22 @@ final class LongScreenshotSessionController {
             screenScale: capture.screenScale,
             createdAt: capture.createdAt
         )
+    }
+
+    private func captureInsetPixels(scale: CGFloat) -> Int {
+        max(2, Int((max(1, scale) * 2).rounded()))
+    }
+
+    private func cleanedImage(_ image: CGImage, scale: CGFloat) -> CGImage {
+        let inset = captureInsetPixels(scale: scale)
+        guard image.width > inset * 2 + 8, image.height > inset * 2 + 8 else { return image }
+        let cropRect = CGRect(
+            x: inset,
+            y: inset,
+            width: image.width - inset * 2,
+            height: image.height - inset * 2
+        )
+        return image.cropping(to: cropRect) ?? image
     }
 
     private func cleanup() {
@@ -1032,6 +1181,10 @@ final class LongScreenshotSessionController {
         alignmentRetryWorkItem = nil
         stabilityCaptureWorkItem?.cancel()
         stabilityCaptureWorkItem = nil
+        streamMotionCaptureWorkItem?.cancel()
+        streamMotionCaptureWorkItem = nil
+        streamStableCaptureWorkItem?.cancel()
+        streamStableCaptureWorkItem = nil
         if let localScrollMonitor {
             NSEvent.removeMonitor(localScrollMonitor)
             self.localScrollMonitor = nil
@@ -1065,20 +1218,34 @@ final class LongScreenshotSessionController {
         stitchedImageCache = nil
         pendingExpectedScrollDeltaPixels = 0
         minimumCaptureSequenceNumber = nil
+        latestScrollEventSequenceNumber = nil
         alignmentRetryCount = 0
         stabilityRetryCount = 0
+        lastStreamMotionCaptureAt = .distantPast
+        streamFrameCount = 0
+        streamMotionReferenceImage = nil
+        didWriteStreamDiagnostics = false
+        nextStreamMotionCaptureAllowedAt = .distantPast
         lastScrollDirectionSign = nil
         stitchDirectionByScrollSign.removeAll()
         isStreamSourceReady = false
         stitcher.reset()
         isCapturing = false
         needsCaptureAfterCurrent = false
+        needsStableCaptureAfterCurrent = false
         finishAfterCapture = false
         pendingCommitAction = nil
         automaticStallCount = 0
         didStartAutomaticScrolling = false
         cropTopPixels = 0
         cropBottomPixels = 0
+    }
+}
+
+enum LongScreenshotScrollDirectionResolver {
+    static func direction(forSign sign: Int) -> LongScreenshotStitchDirection? {
+        guard sign != 0 else { return nil }
+        return sign < 0 ? .downward : .upward
     }
 }
 

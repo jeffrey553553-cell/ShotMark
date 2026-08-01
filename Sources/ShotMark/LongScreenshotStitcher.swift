@@ -1,8 +1,9 @@
 import CoreGraphics
 import Foundation
+import OSLog
 import Vision
 
-enum LongScreenshotStitchDirection {
+enum LongScreenshotStitchDirection: Equatable {
     case unresolved
     case downward
     case upward
@@ -34,6 +35,7 @@ struct LongScreenshotStitchUpdate {
 }
 
 final class LongScreenshotStitcher {
+    private static let logger = Logger(subsystem: "com.local.shotmark", category: "long-screenshot-stitcher")
     private struct RasterImage {
         let width: Int
         let height: Int
@@ -172,11 +174,42 @@ final class LongScreenshotStitcher {
         let raster: RasterImage
         let startRow: Int
         let rowCount: Int
+        let documentStart: Int
     }
 
     private struct ViewportAnchor {
         let raster: RasterImage
         let start: Int
+    }
+
+    private struct ViewportOverlayRegion {
+        var xStart: Int
+        var xEnd: Int
+        var rowStart: Int
+        var rowEnd: Int
+        var observations: Int
+
+        var width: Int { xEnd - xStart }
+        var height: Int { rowEnd - rowStart }
+
+        func contains(x: Int, row: Int) -> Bool {
+            x >= xStart && x < xEnd && row >= rowStart && row < rowEnd
+        }
+
+        func isNear(_ other: ViewportOverlayRegion, margin: Int) -> Bool {
+            xStart < other.xEnd + margin
+                && xEnd + margin > other.xStart
+                && rowStart < other.rowEnd + margin
+                && rowEnd + margin > other.rowStart
+        }
+
+        mutating func merge(_ other: ViewportOverlayRegion) {
+            xStart = min(xStart, other.xStart)
+            xEnd = max(xEnd, other.xEnd)
+            rowStart = min(rowStart, other.rowStart)
+            rowEnd = max(rowEnd, other.rowEnd)
+            observations += 1
+        }
     }
 
     private struct OverlapMetrics {
@@ -205,6 +238,7 @@ final class LongScreenshotStitcher {
 
     private struct VisionAlignmentEstimate {
         let deltaY: Int
+        let direction: LongScreenshotStitchDirection
         let agreementCount: Int
         let spread: Int
 
@@ -227,6 +261,8 @@ final class LongScreenshotStitcher {
     private var coveredStart = 0
     private var coveredEnd = 0
     private var viewportAnchors: [ViewportAnchor] = []
+    private var viewportOverlayRegions: [ViewportOverlayRegion] = []
+    private var rendersMergedImageOnUpdate = true
 
     private(set) var acceptedFrameCount = 0
 
@@ -249,6 +285,7 @@ final class LongScreenshotStitcher {
         coveredStart = 0
         coveredEnd = 0
         viewportAnchors.removeAll()
+        viewportOverlayRegions.removeAll()
         acceptedFrameCount = 0
     }
 
@@ -256,13 +293,15 @@ final class LongScreenshotStitcher {
         _ image: CGImage,
         expectedDeltaPixels: Int? = nil,
         expectedDirection: LongScreenshotStitchDirection? = nil,
-        maxOutputHeight: Int = 120_000
+        maxOutputHeight: Int = 120_000,
+        renderMergedImage: Bool = true
     ) -> LongScreenshotStitchUpdate? {
+        rendersMergedImageOnUpdate = renderMergedImage
         guard let raster = RasterImage(cgImage: image) else { return nil }
         guard let lastRaster, let baseRaster else {
             self.baseRaster = raster
             self.lastRaster = raster
-            contentSlices = [ContentSlice(raster: raster, startRow: 0, rowCount: raster.height)]
+            contentSlices = [ContentSlice(raster: raster, startRow: 0, rowCount: raster.height, documentStart: 0)]
             stitchDirection = .unresolved
             lastMatch = nil
             cachedMergedImage = image
@@ -275,8 +314,29 @@ final class LongScreenshotStitcher {
             return update(outcome: .ignoredAlignmentFailed, confidence: 0)
         }
 
-        let topBand = headerHeight == 0 ? detectStaticBand(previous: lastRaster, current: raster, fromTop: true) : headerHeight
-        let bottomBand = footerHeight == 0 ? detectStaticBand(previous: lastRaster, current: raster, fromTop: false) : footerHeight
+        if let expectedDirection,
+           expectedDirection != .unresolved,
+           let lastMatch,
+           lastMatch.direction != expectedDirection {
+            // Keep historical viewport anchors for revisiting covered content,
+            // but never carry cadence from the opposite scroll direction.
+            self.lastMatch = nil
+        }
+
+        // Sticky navigation can become fixed only after the first scroll. Keep
+        // structural header/footer values stable for output composition, while
+        // continuously expanding the bands excluded from frame alignment.
+        let detectedTopBand = detectStaticBand(previous: lastRaster, current: raster, fromTop: true)
+        let maximumStickyGrowth = max(48, min(80, raster.height / 8))
+        let topBand = headerHeight == 0
+            ? detectedTopBand
+            : min(max(headerHeight, detectedTopBand), headerHeight + maximumStickyGrowth)
+        // Large blank/placeholder regions can look stationary at the bottom.
+        // Once a real footer is established, keep it structural rather than
+        // allowing scrollable low-texture content to inflate the fixed band.
+        let bottomBand = footerHeight == 0
+            ? detectStaticBand(previous: lastRaster, current: raster, fromTop: false)
+            : footerHeight
         let leftBand = leadingStaticWidth == 0 ? detectStaticSideBand(previous: lastRaster, current: raster, fromLeading: true) : leadingStaticWidth
         let rightBand = trailingStaticWidth == 0 ? detectStaticSideBand(previous: lastRaster, current: raster, fromLeading: false) : trailingStaticWidth
 
@@ -288,16 +348,11 @@ final class LongScreenshotStitcher {
             leadingStaticWidth: leftBand,
             trailingStaticWidth: rightBand
         )
-        let visionEstimate = estimateVisionAlignment(
-            previous: lastRaster,
-            current: raster,
-            headerHeight: topBand,
-            footerHeight: bottomBand,
-            leadingStaticWidth: leftBand,
-            trailingStaticWidth: rightBand
-        )
+        var visionEstimate: VisionAlignmentEstimate?
+        var alignmentDirection = expectedDirection
+            ?? (stitchDirection != .unresolved ? stitchDirection : nil)
 
-        let adjacentMatch = bestMatch(
+        var adjacentMatch = bestMatch(
             previous: lastRaster,
             current: raster,
             headerHeight: topBand,
@@ -305,9 +360,54 @@ final class LongScreenshotStitcher {
             leadingStaticWidth: leftBand,
             trailingStaticWidth: rightBand,
             expectedDeltaPixels: expectedDeltaPixels,
-            expectedDirection: expectedDirection,
-            visionEstimate: visionEstimate
+            expectedDirection: alignmentDirection,
+            visionEstimate: nil
         )
+
+        // Scroll events already provide a strong direction and distance hint. Pixel
+        // matching is both more exact and substantially cheaper than running Vision
+        // on every stream frame, so reserve feature matching for recovery only.
+        if !isAcceptable(adjacentMatch, expectedDeltaPixels: expectedDeltaPixels) {
+            visionEstimate = estimateVisionAlignment(
+                previous: lastRaster,
+                current: raster,
+                headerHeight: topBand,
+                footerHeight: bottomBand,
+                leadingStaticWidth: leftBand,
+                trailingStaticWidth: rightBand
+            )
+            alignmentDirection = expectedDirection
+                ?? (visionEstimate?.isStrong == true ? visionEstimate?.direction : nil)
+                ?? (stitchDirection != .unresolved ? stitchDirection : nil)
+            adjacentMatch = bestMatch(
+                previous: lastRaster,
+                current: raster,
+                headerHeight: topBand,
+                footerHeight: bottomBand,
+                leadingStaticWidth: leftBand,
+                trailingStaticWidth: rightBand,
+                expectedDeltaPixels: expectedDeltaPixels,
+                expectedDirection: alignmentDirection,
+                visionEstimate: visionEstimate
+            )
+        }
+        if adjacentMatch == nil,
+           expectedDirection == nil,
+           let alignmentDirection,
+           alignmentDirection != .unresolved {
+            adjacentMatch = bestMatch(
+                previous: lastRaster,
+                current: raster,
+                headerHeight: topBand,
+                footerHeight: bottomBand,
+                leadingStaticWidth: leftBand,
+                trailingStaticWidth: rightBand,
+                expectedDeltaPixels: expectedDeltaPixels,
+                expectedDirection: alignmentDirection.opposite,
+                visionEstimate: visionEstimate
+            )
+        }
+        let resolutionDirection = adjacentMatch?.direction ?? alignmentDirection
         let resolved = resolvedMatch(
             adjacentMatch: adjacentMatch,
             adjacentStart: currentViewportStart,
@@ -316,9 +416,36 @@ final class LongScreenshotStitcher {
             footerHeight: bottomBand,
             leadingStaticWidth: leftBand,
             trailingStaticWidth: rightBand,
-            expectedDirection: expectedDirection
+            expectedDirection: resolutionDirection
         )
         let candidateMatch = resolved?.match
+
+        if ProcessInfo.processInfo.environment["SHOTMARK_LONGSHOT_DIAGNOSTICS"] == "1" {
+            let visionText = visionEstimate.map {
+                "\($0.direction):\($0.deltaY):\($0.agreementCount):\($0.spread)"
+            } ?? "none"
+            let matchText = adjacentMatch.map {
+                "\($0.direction):\($0.deltaY):\($0.pixelScore):\($0.totalScore):\($0.strongBandCount)/\($0.bandCount):\($0.worstBandScore)"
+            } ?? "none"
+            let message = "bands=\(topBand)/\(bottomBand)/\(leftBand)/\(rightBand) diff=\(frameDifference) vision=\(visionText) match=\(matchText)"
+            Self.logger.debug("\(message, privacy: .public)")
+        }
+
+#if DEBUG
+        if ProcessInfo.processInfo.environment["SHOTMARK_STITCH_DIAGNOSTICS"] == "1" {
+            let visionText = visionEstimate.map { "direction=\($0.direction), delta=\($0.deltaY), agreements=\($0.agreementCount), spread=\($0.spread)" } ?? "none"
+            let matchText = adjacentMatch.map {
+                "direction=\($0.direction), delta=\($0.deltaY), pixel=\($0.pixelScore), total=\($0.totalScore), bands=\($0.strongBandCount)/\($0.bandCount), worst=\($0.worstBandScore)"
+            } ?? "none"
+            print("LONGSHOT_DIAGNOSTIC bands=\(topBand)/\(bottomBand)/\(leftBand)/\(rightBand) frameDifference=\(frameDifference) vision=[\(visionText)] adjacent=[\(matchText)]")
+        }
+#endif
+
+        if frameDifference < 2.4,
+           visionEstimate?.isStrong != true,
+           !hasReliablePixelMotion(match: candidateMatch, expectedDeltaPixels: expectedDeltaPixels) {
+            return update(outcome: .ignoredNoMovement, confidence: 1)
+        }
 
         if frameDifference < 8.5,
            visionEstimate?.isStrong != true,
@@ -332,24 +459,38 @@ final class LongScreenshotStitcher {
         let match = resolved.match
 
         if stitchDirection == .unresolved {
-            headerHeight = max(topBand, detectStaticBand(
+            let refinedHeaderHeight = detectStaticBand(
                 previous: lastRaster,
                 current: raster,
                 fromTop: true,
                 scrollingDelta: match.deltaY,
                 direction: match.direction
-            ))
-            footerHeight = max(bottomBand, detectStaticBand(
+            )
+            let refinedFooterHeight = detectStaticBand(
                 previous: lastRaster,
                 current: raster,
                 fromTop: false,
                 scrollingDelta: match.deltaY,
                 direction: match.direction
-            ))
+            )
+            headerHeight = refinedHeaderHeight > 0 ? refinedHeaderHeight : topBand
+            footerHeight = refinedFooterHeight > 0 ? refinedFooterHeight : bottomBand
+#if DEBUG
+            if ProcessInfo.processInfo.environment["SHOTMARK_STITCH_DIAGNOSTICS"] == "1" {
+                print("LONGSHOT_FIXED_BANDS initial=\(topBand)/\(bottomBand) refined=\(headerHeight)/\(footerHeight)")
+            }
+#endif
             leadingStaticWidth = leftBand
             trailingStaticWidth = rightBand
             bootstrapBaseContent(from: baseRaster)
         }
+
+        observeViewportOverlays(
+            previous: lastRaster,
+            current: raster,
+            deltaY: match.deltaY,
+            direction: match.direction
+        )
 
         stitchDirection = match.direction
         let contentHeight = raster.height - headerHeight - footerHeight
@@ -389,7 +530,13 @@ final class LongScreenshotStitcher {
             return update(outcome: .ignoredAlignmentFailed, confidence: 0)
         }
 
-        let slice = ContentSlice(raster: raster, startRow: startRow, rowCount: acceptedDelta)
+        let documentStart = nextViewportStart + startRow - headerHeight
+        let slice = ContentSlice(
+            raster: raster,
+            startRow: startRow,
+            rowCount: acceptedDelta,
+            documentStart: documentStart
+        )
         switch match.direction {
         case .downward:
             contentSlices.append(slice)
@@ -427,9 +574,10 @@ final class LongScreenshotStitcher {
             destinationRow += headerHeight
         }
         for slice in contentSlices {
-            slice.raster.copyRows(startRow: slice.startRow, rowCount: slice.rowCount, into: &pixels, destinationRow: destinationRow)
+            copyContentSlice(slice, into: &pixels, destinationRow: destinationRow)
             destinationRow += slice.rowCount
         }
+        compositeViewportOverlaysOnce(into: &pixels, contentDestinationStart: headerHeight)
         if footerHeight > 0 {
             let footerRaster = lastRaster ?? baseRaster
             footerRaster.copyRows(
@@ -460,10 +608,254 @@ final class LongScreenshotStitcher {
         return image
     }
 
+    private var activeViewportOverlayRegions: [ViewportOverlayRegion] {
+        viewportOverlayRegions.filter { $0.observations >= 2 }
+    }
+
+    private func observeViewportOverlays(
+        previous: RasterImage,
+        current: RasterImage,
+        deltaY: Int,
+        direction: LongScreenshotStitchDirection
+    ) {
+        guard direction != .unresolved, deltaY > 0 else { return }
+        let contentStart = headerHeight
+        let contentEnd = previous.height - footerHeight
+        guard contentEnd - contentStart > 96 else { return }
+
+        let cellSize = max(12, min(28, previous.width / 26))
+        let columns = Int(ceil(Double(previous.width) / Double(cellSize)))
+        let rows = Int(ceil(Double(contentEnd - contentStart) / Double(cellSize)))
+        guard columns > 0, rows > 0 else { return }
+
+        var candidates = [Bool](repeating: false, count: columns * rows)
+        for rowIndex in 0..<rows {
+            let rowStart = contentStart + rowIndex * cellSize
+            let rowCount = min(cellSize, contentEnd - rowStart)
+            guard rowCount >= 6 else { continue }
+            for columnIndex in 0..<columns {
+                let xStart = columnIndex * cellSize
+                let xEnd = min(previous.width, xStart + cellSize)
+                guard xEnd - xStart >= 6 else { continue }
+
+                let sameScreenDifference = previous.blockDifference(
+                    comparedTo: current,
+                    startRow: rowStart,
+                    otherStartRow: rowStart,
+                    rowCount: rowCount,
+                    xStart: xStart,
+                    xEnd: xEnd,
+                    columnStride: max(1, (xEnd - xStart) / 8),
+                    rowStride: max(1, rowCount / 8)
+                )
+
+                let alignedRows: (Int, Int)
+                switch direction {
+                case .downward:
+                    alignedRows = (rowStart + deltaY, rowStart)
+                case .upward:
+                    alignedRows = (rowStart, rowStart + deltaY)
+                case .unresolved:
+                    continue
+                }
+                guard alignedRows.0 >= contentStart,
+                      alignedRows.1 >= contentStart,
+                      alignedRows.0 + rowCount <= contentEnd,
+                      alignedRows.1 + rowCount <= contentEnd else {
+                    continue
+                }
+
+                let scrollingContentDifference = previous.blockDifference(
+                    comparedTo: current,
+                    startRow: alignedRows.0,
+                    otherStartRow: alignedRows.1,
+                    rowCount: rowCount,
+                    xStart: xStart,
+                    xEnd: xEnd,
+                    columnStride: max(1, (xEnd - xStart) / 8),
+                    rowStride: max(1, rowCount / 8)
+                )
+                let isScreenStationary = sameScreenDifference < 15
+                    && scrollingContentDifference > max(10, sameScreenDifference * 1.45 + 2)
+                candidates[rowIndex * columns + columnIndex] = isScreenStationary
+            }
+        }
+
+        var visited = [Bool](repeating: false, count: candidates.count)
+        var observations: [ViewportOverlayRegion] = []
+        for startIndex in candidates.indices where candidates[startIndex] && !visited[startIndex] {
+            var queue = [startIndex]
+            visited[startIndex] = true
+            var cursor = 0
+            var minimumColumn = startIndex % columns
+            var maximumColumn = minimumColumn
+            var minimumRow = startIndex / columns
+            var maximumRow = minimumRow
+            var cellCount = 0
+
+            while cursor < queue.count {
+                let index = queue[cursor]
+                cursor += 1
+                cellCount += 1
+                let row = index / columns
+                let column = index % columns
+                minimumColumn = min(minimumColumn, column)
+                maximumColumn = max(maximumColumn, column)
+                minimumRow = min(minimumRow, row)
+                maximumRow = max(maximumRow, row)
+
+                for (nextRow, nextColumn) in [(row - 1, column), (row + 1, column), (row, column - 1), (row, column + 1)]
+                where nextRow >= 0 && nextRow < rows && nextColumn >= 0 && nextColumn < columns {
+                    let nextIndex = nextRow * columns + nextColumn
+                    if candidates[nextIndex], !visited[nextIndex] {
+                        visited[nextIndex] = true
+                        queue.append(nextIndex)
+                    }
+                }
+            }
+
+            let xStart = minimumColumn * cellSize
+            let xEnd = min(previous.width, (maximumColumn + 1) * cellSize)
+            let rowStart = contentStart + minimumRow * cellSize
+            let rowEnd = min(contentEnd, contentStart + (maximumRow + 1) * cellSize)
+            let width = xEnd - xStart
+            let height = rowEnd - rowStart
+            guard cellCount >= 3,
+                  width >= cellSize,
+                  height >= cellSize,
+                  width <= previous.width / 2,
+                  height <= (contentEnd - contentStart) / 2 else {
+                continue
+            }
+            observations.append(ViewportOverlayRegion(
+                // Animated fixed widgets often expose only their stable text or
+                // center cells. Include one neighboring cell so their moving
+                // edges and shadows are removed with the detected core.
+                xStart: max(0, xStart - cellSize),
+                xEnd: min(previous.width, xEnd + cellSize),
+                rowStart: max(contentStart, rowStart - cellSize * 2),
+                rowEnd: min(contentEnd, rowEnd + cellSize * 2),
+                observations: 1
+            ))
+        }
+
+        var changed = false
+        for observation in observations {
+            if let index = viewportOverlayRegions.firstIndex(where: { $0.isNear(observation, margin: cellSize) }) {
+                viewportOverlayRegions[index].merge(observation)
+            } else {
+                viewportOverlayRegions.append(observation)
+            }
+            changed = true
+        }
+        if changed {
+            cachedMergedImage = nil
+        }
+#if DEBUG
+        if ProcessInfo.processInfo.environment["SHOTMARK_STITCH_DIAGNOSTICS"] == "1" {
+            let observed = observations.map {
+                "\($0.xStart),\($0.rowStart),\($0.width)x\($0.height)"
+            }.joined(separator: ";")
+            let active = activeViewportOverlayRegions.map {
+                "\($0.xStart),\($0.rowStart),\($0.width)x\($0.height):\($0.observations)"
+            }.joined(separator: ";")
+            print("LONGSHOT_OVERLAY observed=[\(observed)] active=[\(active)]")
+        }
+#endif
+    }
+
+    private func copyContentSlice(
+        _ slice: ContentSlice,
+        into destination: inout [UInt8],
+        destinationRow: Int
+    ) {
+        slice.raster.copyRows(
+            startRow: slice.startRow,
+            rowCount: slice.rowCount,
+            into: &destination,
+            destinationRow: destinationRow
+        )
+        let overlays = activeViewportOverlayRegions
+        guard !overlays.isEmpty else { return }
+        var patchedRows = 0
+        var missingRows = 0
+
+        for overlay in overlays {
+            let firstLocalRow = max(0, overlay.rowStart - slice.startRow)
+            let finalLocalRow = min(slice.rowCount, overlay.rowEnd - slice.startRow)
+            guard firstLocalRow < finalLocalRow else { continue }
+            let xStart = max(0, overlay.xStart)
+            let xEnd = min(slice.raster.width, overlay.xEnd)
+            guard xStart < xEnd else { continue }
+
+            for localRow in firstLocalRow..<finalLocalRow {
+                let documentRow = slice.documentStart + localRow
+                let centerX = (xStart + xEnd) / 2
+                guard let replacement = bestReplacementAnchor(
+                    forDocumentRow: documentRow,
+                    x: centerX
+                ) else {
+                    missingRows += 1
+                    continue
+                }
+                let sourceIndex = replacement.row * replacement.raster.bytesPerRow + xStart * 4
+                let destinationIndex = (destinationRow + localRow) * slice.raster.bytesPerRow + xStart * 4
+                let byteCount = (xEnd - xStart) * 4
+                destination[destinationIndex..<(destinationIndex + byteCount)] =
+                    replacement.raster.pixels[sourceIndex..<(sourceIndex + byteCount)]
+                patchedRows += 1
+            }
+        }
+#if DEBUG
+        if ProcessInfo.processInfo.environment["SHOTMARK_STITCH_DIAGNOSTICS"] == "1",
+           patchedRows > 0 || missingRows > 0 {
+            print("LONGSHOT_OVERLAY_PATCH document=\(slice.documentStart) rows=\(patchedRows) missing=\(missingRows)")
+        }
+#endif
+    }
+
+    private func bestReplacementAnchor(
+        forDocumentRow documentRow: Int,
+        x: Int
+    ) -> (raster: RasterImage, row: Int)? {
+        let contentEnd = (baseRaster?.height ?? 0) - footerHeight
+        return viewportAnchors.compactMap { anchor -> (RasterImage, Int, Int)? in
+            let viewportRow = headerHeight + documentRow - anchor.start
+            guard viewportRow >= headerHeight, viewportRow < contentEnd else { return nil }
+            guard !activeViewportOverlayRegions.contains(where: { $0.contains(x: x, row: viewportRow) }) else {
+                return nil
+            }
+            let edgeClearance = min(viewportRow - headerHeight, contentEnd - viewportRow)
+            return (anchor.raster, viewportRow, edgeClearance)
+        }.max { $0.2 < $1.2 }.map { ($0.0, $0.1) }
+    }
+
+    private func compositeViewportOverlaysOnce(
+        into destination: inout [UInt8],
+        contentDestinationStart: Int
+    ) {
+        guard let baseRaster else { return }
+        for overlay in activeViewportOverlayRegions {
+            let destinationStart = contentDestinationStart + overlay.rowStart - headerHeight
+            let rowCount = min(overlay.height, outputHeight - destinationStart - footerHeight)
+            let xStart = max(0, overlay.xStart)
+            let xEnd = min(baseRaster.width, overlay.xEnd)
+            guard destinationStart >= contentDestinationStart, rowCount > 0, xStart < xEnd else { continue }
+            for localRow in 0..<rowCount {
+                let sourceIndex = (overlay.rowStart + localRow) * baseRaster.bytesPerRow + xStart * 4
+                let destinationIndex = (destinationStart + localRow) * baseRaster.bytesPerRow + xStart * 4
+                let byteCount = (xEnd - xStart) * 4
+                destination[destinationIndex..<(destinationIndex + byteCount)] =
+                    baseRaster.pixels[sourceIndex..<(sourceIndex + byteCount)]
+            }
+        }
+    }
+
+
     private func update(outcome: LongScreenshotStitchOutcome, mergedImage: CGImage? = nil, confidence: Double) -> LongScreenshotStitchUpdate {
         LongScreenshotStitchUpdate(
             outcome: outcome,
-            mergedImage: mergedImage ?? self.mergedImage(),
+            mergedImage: mergedImage ?? (rendersMergedImageOnUpdate ? self.mergedImage() : nil),
             acceptedFrameCount: acceptedFrameCount,
             outputHeight: outputHeight,
             direction: stitchDirection,
@@ -474,7 +866,7 @@ final class LongScreenshotStitcher {
     private func bootstrapBaseContent(from raster: RasterImage) {
         let startRow = headerHeight
         let rowCount = max(1, raster.height - headerHeight - footerHeight)
-        contentSlices = [ContentSlice(raster: raster, startRow: startRow, rowCount: rowCount)]
+        contentSlices = [ContentSlice(raster: raster, startRow: startRow, rowCount: rowCount, documentStart: 0)]
         currentViewportStart = 0
         coveredStart = 0
         coveredEnd = rowCount
@@ -551,7 +943,7 @@ final class LongScreenshotStitcher {
             viewportAnchors.append(ViewportAnchor(raster: raster, start: start))
         }
 
-        let maximumAnchorCount = 24
+        let maximumAnchorCount = 64
         guard viewportAnchors.count > maximumAnchorCount else { return }
         let firstIndex = viewportAnchors.indices.min(by: { viewportAnchors[$0].start < viewportAnchors[$1].start })
         let lastIndex = viewportAnchors.indices.max(by: { viewportAnchors[$0].start < viewportAnchors[$1].start })
@@ -592,7 +984,7 @@ final class LongScreenshotStitcher {
 
         for offset in stride(from: 0, to: maxBand, by: step) {
             let row = fromTop ? offset : previous.height - 1 - offset
-            let difference = robustBlockDifference(
+            let difference = staticBandDifference(
                 previous: previous,
                 current: current,
                 previousRow: row,
@@ -650,7 +1042,7 @@ final class LongScreenshotStitcher {
 
         for (previousRow, currentRow) in pairs
         where previousRow >= 0 && previousRow < previous.height && currentRow >= 0 && currentRow < current.height {
-            return robustBlockDifference(
+            return staticBandDifference(
                 previous: previous,
                 current: current,
                 previousRow: previousRow,
@@ -703,26 +1095,32 @@ final class LongScreenshotStitcher {
         trailingStaticWidth: Int
     ) -> Double {
         let contentHeight = previous.height - headerHeight - footerHeight
-        guard contentHeight > 24, let xBounds = matchingColumnBounds(width: previous.width, leadingStaticWidth: leadingStaticWidth, trailingStaticWidth: trailingStaticWidth) else {
+        guard contentHeight > 24, let xBounds = matchingColumnBounds(
+            previous: previous,
+            current: current,
+            headerHeight: headerHeight,
+            footerHeight: footerHeight,
+            leadingStaticWidth: leadingStaticWidth,
+            trailingStaticWidth: trailingStaticWidth
+        ) else {
             return 255
         }
 
         let bandHeight = max(12, min(24, contentHeight / 8))
-        let columnStride = max(2, (xBounds.upperBound - xBounds.lowerBound) / 72)
         var total = 0.0
         let bandCount = 8
         for index in 0..<bandCount {
             let ratio = Double(index + 1) / Double(bandCount + 1)
             let row = headerHeight + min(max(0, contentHeight - bandHeight), Int(Double(contentHeight - bandHeight) * ratio))
-            total += previous.blockDifference(
-                comparedTo: current,
-                startRow: row,
-                otherStartRow: row,
+            total += robustBlockDifference(
+                previous: previous,
+                current: current,
+                previousRow: row,
+                currentRow: row,
                 rowCount: bandHeight,
                 xStart: xBounds.lowerBound,
                 xEnd: xBounds.upperBound,
-                columnStride: columnStride,
-                rowStride: 2
+                laneCount: 10
             )
         }
         return total / Double(bandCount)
@@ -743,7 +1141,14 @@ final class LongScreenshotStitcher {
         guard contentHeight > 48 else { return nil }
 
         let minDelta = max(12, min(120, contentHeight / 32))
-        let minOverlap = max(96, Int(Double(contentHeight) * 0.20))
+        let minOverlap: Int
+        if expectedDeltaPixels != nil {
+            // A real wheel/auto-scroll hint makes a shorter exact overlap safe
+            // and lets fast scrolling recover on viewports with large sticky bars.
+            minOverlap = max(64, Int(Double(contentHeight) * 0.12))
+        } else {
+            minOverlap = max(96, Int(Double(contentHeight) * 0.20))
+        }
         let maxDelta = max(minDelta, contentHeight - minOverlap)
         guard maxDelta > minDelta else { return nil }
 
@@ -753,6 +1158,37 @@ final class LongScreenshotStitcher {
             expectedDeltaPixels: expectedDeltaPixels,
             visionEstimate: visionEstimate
         )
+        let expectedHintMatch: Match? = {
+            guard let expectedDeltaPixels,
+                  let direction = expectedDirection,
+                  direction != .unresolved else { return nil }
+            let delta = min(maxDelta, max(minDelta, expectedDeltaPixels))
+            guard let metrics = overlapMetrics(
+                previous: previous,
+                current: current,
+                direction: direction,
+                deltaY: delta,
+                headerHeight: headerHeight,
+                footerHeight: footerHeight,
+                leadingStaticWidth: leadingStaticWidth,
+                trailingStaticWidth: trailingStaticWidth
+            ) else { return nil }
+            return makeMatch(
+                direction: direction,
+                deltaY: delta,
+                metrics: metrics,
+                expectedDeltaPixels: expectedDeltaPixels,
+                visionEstimate: visionEstimate
+            )
+        }()
+        if let expectedHintMatch,
+           expectedHintMatch.pixelScore <= 0.35,
+           expectedHintMatch.worstBandScore <= 1.2,
+           expectedHintMatch.strongBandCount == expectedHintMatch.bandCount {
+            // Exact stream/wheel hints are conclusive. Avoid scanning the full
+            // displacement range on every smooth-scroll frame.
+            return expectedHintMatch
+        }
         var search = searchBestMatch(
             previous: previous,
             current: current,
@@ -766,7 +1202,12 @@ final class LongScreenshotStitcher {
             visionEstimate: visionEstimate
         )
 
-        if !isAcceptable(search?.best, expectedDeltaPixels: expectedDeltaPixels) || isAmbiguous(search, expectedDeltaPixels: expectedDeltaPixels) {
+        let focusedMatchNeedsVerification = search.map { result in
+            result.best.pixelScore > 0.35
+                || !isAcceptable(result.best, expectedDeltaPixels: expectedDeltaPixels)
+                || isAmbiguous(result, expectedDeltaPixels: expectedDeltaPixels)
+        } ?? true
+        if focusedMatchNeedsVerification {
             if focusedRange != nil {
                 // Scroll-wheel deltas describe input motion, not necessarily the
                 // final viewport displacement. Recovery must be able to ignore
@@ -785,10 +1226,19 @@ final class LongScreenshotStitcher {
                     expectedDirection: expectedDirection,
                     visionEstimate: visionEstimate
                 )
-                if broad?.best.totalScore ?? .greatestFiniteMagnitude < search?.best.totalScore ?? .greatestFiniteMagnitude {
+                if shouldPreferBroadMatch(broad?.best, over: search?.best) {
                     search = broad
                 }
             }
+        }
+
+        if let expectedHintMatch,
+           isReliableExpectedHintMatch(expectedHintMatch),
+           (search == nil
+                || !isAcceptable(search?.best, expectedDeltaPixels: expectedDeltaPixels)
+                || isAmbiguous(search, expectedDeltaPixels: expectedDeltaPixels)
+                || shouldPreferBroadMatch(expectedHintMatch, over: search?.best)) {
+            return expectedHintMatch
         }
 
         guard let search, isAcceptable(search.best, expectedDeltaPixels: expectedDeltaPixels), !isAmbiguous(search, expectedDeltaPixels: expectedDeltaPixels) else {
@@ -797,12 +1247,47 @@ final class LongScreenshotStitcher {
         return search.best
     }
 
+    private func shouldPreferBroadMatch(_ broad: Match?, over focused: Match?) -> Bool {
+        guard let broad else { return false }
+        guard let focused else { return true }
+
+        // A wheel delta is an input hint, not the resulting viewport movement.
+        // Prefer substantially stronger image evidence even when momentum or
+        // frame coalescing moved farther than the focused search expected.
+        if broad.pixelScore + 0.25 < focused.pixelScore {
+            return true
+        }
+        if abs(broad.pixelScore - focused.pixelScore) <= 0.25 {
+            return broad.totalScore < focused.totalScore
+        }
+        return false
+    }
+
+    private func isReliableExpectedHintMatch(_ match: Match) -> Bool {
+        let strongBandRatio = Double(match.strongBandCount) / Double(max(1, match.bandCount))
+        return match.pixelScore <= 12.5
+            && match.totalScore < 30
+            && strongBandRatio >= 0.66
+    }
+
     private func focusedDeltaRange(
         minDelta: Int,
         maxDelta: Int,
         expectedDeltaPixels: Int?,
         visionEstimate: VisionAlignmentEstimate?
     ) -> ClosedRange<Int>? {
+        if let expectedDeltaPixels,
+           expectedDeltaPixels > 0,
+           let lastMatch,
+           lastMatch.deltaY >= max(72, expectedDeltaPixels * 2) {
+            // At a scroll boundary the actual viewport displacement collapses
+            // even though the preceding cadence was large. Do not average the
+            // small current hint with the old cadence or the true overlap can
+            // fall outside the focused search entirely.
+            let center = min(maxDelta, max(minDelta, expectedDeltaPixels))
+            let spread = max(28, min(72, center / 2 + 12))
+            return max(minDelta, center - spread)...min(maxDelta, center + spread)
+        }
         var centers: [Int] = []
         if let expectedDeltaPixels, expectedDeltaPixels > 0 {
             centers.append(min(maxDelta, max(minDelta, expectedDeltaPixels)))
@@ -946,7 +1431,14 @@ final class LongScreenshotStitcher {
         let contentHeight = previous.height - headerHeight - footerHeight
         let overlapHeight = contentHeight - deltaY
         guard overlapHeight > 24 else { return nil }
-        guard let xBounds = matchingColumnBounds(width: previous.width, leadingStaticWidth: leadingStaticWidth, trailingStaticWidth: trailingStaticWidth) else { return nil }
+        guard let xBounds = matchingColumnBounds(
+            previous: previous,
+            current: current,
+            headerHeight: headerHeight,
+            footerHeight: footerHeight,
+            leadingStaticWidth: leadingStaticWidth,
+            trailingStaticWidth: trailingStaticWidth
+        ) else { return nil }
 
         let bandCount = min(10, max(6, overlapHeight / 80))
         let bandHeight = max(12, min(28, overlapHeight / max(3, bandCount + 1)))
@@ -1012,8 +1504,79 @@ final class LongScreenshotStitcher {
         xEnd: Int,
         laneCount: Int
     ) -> Double {
+        let laneDifferences = blockDifferencesByLane(
+            previous: previous,
+            current: current,
+            previousRow: previousRow,
+            currentRow: currentRow,
+            rowCount: rowCount,
+            xStart: xStart,
+            xEnd: xEnd,
+            laneCount: laneCount
+        )
+        guard !laneDifferences.isEmpty else { return 255 }
+        let sorted = laneDifferences.sorted()
+        let capIndex = min(sorted.count - 1, Int(floor(Double(sorted.count - 1) * 0.8)))
+        let upperCap = sorted[capIndex]
+        let winsorized = laneDifferences.map { min($0, upperCap) }
+        return winsorized.reduce(0, +) / Double(winsorized.count)
+    }
+
+    private func staticBandDifference(
+        previous: RasterImage,
+        current: RasterImage,
+        previousRow: Int,
+        currentRow: Int,
+        rowCount: Int,
+        xStart: Int,
+        xEnd: Int,
+        laneCount: Int
+    ) -> Double {
+        let laneDifferences = blockDifferencesByLane(
+            previous: previous,
+            current: current,
+            previousRow: previousRow,
+            currentRow: currentRow,
+            rowCount: rowCount,
+            xStart: xStart,
+            xEnd: xEnd,
+            laneCount: laneCount
+        )
+        guard !laneDifferences.isEmpty else { return 255 }
+
+        let overallAverage = laneDifferences.reduce(0, +) / Double(laneDifferences.count)
+        let center = laneDifferences.count / 2
+        let centerStart = max(0, center - 1)
+        let centerEnd = min(laneDifferences.count, center + 2)
+        let centerLanes = laneDifferences[centerStart..<centerEnd]
+        let centerAverage = centerLanes.reduce(0, +) / Double(centerLanes.count)
+        let strongestLane = laneDifferences.max() ?? overallAverage
+
+        // Browser pages often have wide, unchanged gutters around a scrolling
+        // document. A trimmed average would classify the whole document as a
+        // fixed bar. Keep the center content lanes authoritative while still
+        // tolerating a small animated widget near either edge.
+        let baseline = max(overallAverage, centerAverage * 0.82)
+        let isLocalizedPeak = strongestLane > max(baseline * 3, baseline + 8)
+        // A colored row edge or narrow sidebar can occupy just one lane. Keep
+        // it from being swallowed into a fixed header even when the remaining
+        // row is mostly blank or repeated background. Broad translucent motion
+        // remains eligible because it affects the center and average together.
+        return isLocalizedPeak ? max(baseline, strongestLane) : baseline
+    }
+
+    private func blockDifferencesByLane(
+        previous: RasterImage,
+        current: RasterImage,
+        previousRow: Int,
+        currentRow: Int,
+        rowCount: Int,
+        xStart: Int,
+        xEnd: Int,
+        laneCount: Int
+    ) -> [Double] {
         let width = xEnd - xStart
-        guard width > 0 else { return 255 }
+        guard width > 0 else { return [] }
         let actualLaneCount = max(1, min(laneCount, width / 8))
         let laneWidth = max(1, width / actualLaneCount)
         var laneDifferences: [Double] = []
@@ -1034,18 +1597,91 @@ final class LongScreenshotStitcher {
                 rowStride: max(1, min(2, rowCount))
             ))
         }
-
-        guard !laneDifferences.isEmpty else { return 255 }
-        let retainedCount = max(1, Int(ceil(Double(laneDifferences.count) * 0.7)))
-        let retained = laneDifferences.sorted().prefix(retainedCount)
-        return retained.reduce(0, +) / Double(retained.count)
+        return laneDifferences
     }
 
-    private func matchingColumnBounds(width: Int, leadingStaticWidth: Int, trailingStaticWidth: Int) -> ClosedRange<Int>? {
+    private func matchingColumnBounds(
+        previous: RasterImage,
+        current: RasterImage,
+        headerHeight: Int,
+        footerHeight: Int,
+        leadingStaticWidth: Int,
+        trailingStaticWidth: Int
+    ) -> ClosedRange<Int>? {
+        let width = previous.width
         let inset = max(8, width / 40)
         let start = min(width - 2, max(inset, leadingStaticWidth + inset))
         let end = max(start + 1, min(width - inset, width - trailingStaticWidth - inset))
-        return start < end ? start...end : nil
+        guard start < end else { return nil }
+
+        let contentStart = max(0, headerHeight)
+        let contentEnd = min(previous.height, previous.height - max(0, footerHeight))
+        let contentHeight = contentEnd - contentStart
+        guard contentHeight > 48 else { return start...end }
+
+        let binCount = min(72, max(16, width / 48))
+        let binWidth = max(8, Int(ceil(Double(width) / Double(binCount))))
+        var differences: [Double] = []
+        differences.reserveCapacity(binCount)
+        for index in 0..<binCount {
+            let xStart = index * binWidth
+            let xEnd = min(width, xStart + binWidth)
+            guard xStart < xEnd else { break }
+            differences.append(previous.blockDifference(
+                comparedTo: current,
+                startRow: contentStart,
+                otherStartRow: contentStart,
+                rowCount: contentHeight,
+                xStart: xStart,
+                xEnd: xEnd,
+                columnStride: max(1, (xEnd - xStart) / 8),
+                rowStride: max(2, contentHeight / 72)
+            ))
+        }
+        guard differences.count >= 8 else { return start...end }
+
+        var active = differences.map { $0 >= 1.35 }
+        if active.count >= 3 {
+            for index in 1..<(active.count - 1) where !active[index] && active[index - 1] && active[index + 1] {
+                active[index] = true
+            }
+        }
+
+        var clusters: [Range<Int>] = []
+        var clusterStart: Int?
+        for index in active.indices {
+            if active[index], clusterStart == nil {
+                clusterStart = index
+            }
+            if !active[index], let startIndex = clusterStart {
+                clusters.append(startIndex..<index)
+                clusterStart = nil
+            }
+        }
+        if let clusterStart {
+            clusters.append(clusterStart..<active.count)
+        }
+
+        let minimumActiveWidth = max(width / 16, binWidth * 3)
+        let eligibleClusters = clusters.filter { cluster in
+            cluster.count * binWidth >= minimumActiveWidth
+        }
+        let preferredCluster = eligibleClusters.max { lhs, rhs in
+                let lhsWidth = lhs.count * binWidth
+                let rhsWidth = rhs.count * binWidth
+                if lhsWidth != rhsWidth { return lhsWidth < rhsWidth }
+                let lhsDistance = abs((lhs.lowerBound + lhs.upperBound) * binWidth / 2 - width / 2)
+                let rhsDistance = abs((rhs.lowerBound + rhs.upperBound) * binWidth / 2 - width / 2)
+                return lhsDistance > rhsDistance
+        }
+        guard let cluster = preferredCluster else {
+            return start...end
+        }
+
+        let expansion = binWidth * 2
+        let activeStart = max(start, cluster.lowerBound * binWidth - expansion)
+        let activeEnd = min(end, cluster.upperBound * binWidth + expansion)
+        return activeEnd - activeStart >= minimumActiveWidth ? activeStart...activeEnd : start...end
     }
 
     private func consistencyPenalty(for metrics: OverlapMetrics) -> Double {
@@ -1106,7 +1742,10 @@ final class LongScreenshotStitcher {
         trailingStaticWidth: Int
     ) -> VisionAlignmentEstimate? {
         guard let xBounds = matchingColumnBounds(
-            width: previous.width,
+            previous: previous,
+            current: current,
+            headerHeight: headerHeight,
+            footerHeight: footerHeight,
             leadingStaticWidth: leadingStaticWidth,
             trailingStaticWidth: trailingStaticWidth
         ) else {
@@ -1154,11 +1793,13 @@ final class LongScreenshotStitcher {
             }
         }
         let accepted = bestCluster.isEmpty ? samples : bestCluster
-        let deltaY = accepted[accepted.count / 2]
+        let signedDeltaY = accepted[accepted.count / 2]
+        let deltaY = abs(signedDeltaY)
         return VisionAlignmentEstimate(
             deltaY: deltaY,
+            direction: signedDeltaY < 0 ? .downward : .upward,
             agreementCount: accepted.count,
-            spread: max(0, (accepted.last ?? deltaY) - (accepted.first ?? deltaY))
+            spread: max(0, abs((accepted.last ?? signedDeltaY) - (accepted.first ?? signedDeltaY)))
         )
     }
 
@@ -1201,14 +1842,15 @@ final class LongScreenshotStitcher {
         }
         let transform = observation.alignmentTransform
         let horizontalShift = abs(transform.tx)
-        let verticalShift = abs(transform.ty)
-        guard horizontalShift.isFinite, verticalShift.isFinite else { return nil }
+        let signedVerticalShift = transform.ty
+        let verticalShift = abs(signedVerticalShift)
+        guard horizontalShift.isFinite, signedVerticalShift.isFinite else { return nil }
         guard verticalShift >= 6 else { return nil }
         guard horizontalShift <= max(10, CGFloat(previousImage.width) * 0.03) else { return nil }
 
-        let deltaY = Int(verticalShift.rounded())
+        let deltaY = Int(signedVerticalShift.rounded())
         let maxUsefulDelta = max(18, rowCount - max(80, Int(Double(rowCount) * 0.14)))
-        return deltaY <= maxUsefulDelta ? deltaY : nil
+        return abs(deltaY) <= maxUsefulDelta ? deltaY : nil
     }
 
     private func deviationPenalty(candidate: Int, expected: Int, weight: Double) -> Double {
@@ -1262,9 +1904,23 @@ final class LongScreenshotStitcher {
 
     private func isLikelyBoundaryOrDuplicate(match: Match?, expectedDeltaPixels: Int?) -> Bool {
         guard let match else { return true }
+        if hasReliablePixelMotion(match: match, expectedDeltaPixels: expectedDeltaPixels) {
+            return false
+        }
         let baselineDelta = max(lastMatch?.deltaY ?? 0, expectedDeltaPixels ?? 0)
         let suspiciousDeltaCeiling = max(18, min(36, max(baselineDelta / 2, (lastMatch?.deltaY ?? 0) / 3)))
         return confidence(for: match) < 0.84 || match.deltaY <= suspiciousDeltaCeiling
+    }
+
+    private func hasReliablePixelMotion(match: Match?, expectedDeltaPixels: Int?) -> Bool {
+        guard let match else { return false }
+        let baselineDelta = max(lastMatch?.deltaY ?? 0, expectedDeltaPixels ?? 0)
+        let minimumMotion = max(18, min(36, max(baselineDelta / 2, (lastMatch?.deltaY ?? 0) / 3)))
+        let strongBandRatio = Double(match.strongBandCount) / Double(max(1, match.bandCount))
+        return match.deltaY > minimumMotion
+            && match.pixelScore <= 3
+            && match.totalScore <= 18
+            && strongBandRatio >= 0.7
     }
 
     private func confidence(for match: Match) -> Double {

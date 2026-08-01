@@ -140,7 +140,7 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "LongScreenshotFrameSource" Sources/ShotMark/LongScreenshotFrameSource.swift Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "LongScreenshotFrameRing" Sources/ShotMark/LongScreenshotFrameRing.swift Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "SCStreamOutput" Sources/ShotMark/LongScreenshotFrameSource.swift
-  rg -q "latestFrame\\(after: frameRing\\.lastCommittedSequenceNumber\\)" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "latestFrame\\(after: sequenceNumber\\)" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "frameRing\\.markCommitted" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "SHOTMARK_LONGSHOT_V1" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "startFrameSourceIfNeeded" Sources/ShotMark/LongScreenshotSessionController.swift

@@ -21,6 +21,7 @@ final class LongScreenshotFrameSource: NSObject {
 
     private let sampleQueue = DispatchQueue(label: "com.shotmark.long-screenshot.stream", qos: .userInteractive)
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
+    private let frameMailbox = LongScreenshotFrameMailbox()
     private let minimumPublishInterval: TimeInterval
 
     private var stream: SCStream?
@@ -96,6 +97,7 @@ final class LongScreenshotFrameSource: NSObject {
     func stop() {
         let activeStream = stream
         stream = nil
+        frameMailbox.reset()
         guard let activeStream else { return }
 
         do {
@@ -164,11 +166,72 @@ extension LongScreenshotFrameSource: SCStreamOutput {
             lastPublishedAt = now
             nextSequenceNumber += 1
             let frame = LongScreenshotFrame(sequenceNumber: nextSequenceNumber, image: cgImage, capturedAt: Date())
+            publishLatest(frame)
+        }
+    }
 
+    private func publishLatest(_ frame: LongScreenshotFrame) {
+        guard frameMailbox.enqueue(frame) else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.deliverLatestFrame()
+        }
+    }
+
+    private func deliverLatestFrame() {
+        guard stream != nil, let frame = frameMailbox.takeLatest() else {
+            frameMailbox.reset()
+            return
+        }
+
+        onFrame?(frame)
+
+        if frameMailbox.completeDelivery() {
             DispatchQueue.main.async { [weak self] in
-                self?.onFrame?(frame)
+                self?.deliverLatestFrame()
             }
         }
+    }
+}
+
+final class LongScreenshotFrameMailbox {
+    private let lock = NSLock()
+    private var pendingFrame: LongScreenshotFrame?
+    private var isDeliveryScheduled = false
+
+    /// Returns true only when the caller needs to schedule a main-thread delivery.
+    func enqueue(_ frame: LongScreenshotFrame) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        pendingFrame = frame
+        guard !isDeliveryScheduled else { return false }
+        isDeliveryScheduled = true
+        return true
+    }
+
+    func takeLatest() -> LongScreenshotFrame? {
+        lock.lock()
+        defer { lock.unlock() }
+        let frame = pendingFrame
+        pendingFrame = nil
+        return frame
+    }
+
+    /// Returns true when another frame arrived while the previous one was processed.
+    func completeDelivery() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if pendingFrame != nil {
+            return true
+        }
+        isDeliveryScheduled = false
+        return false
+    }
+
+    func reset() {
+        lock.lock()
+        pendingFrame = nil
+        isDeliveryScheduled = false
+        lock.unlock()
     }
 }
 

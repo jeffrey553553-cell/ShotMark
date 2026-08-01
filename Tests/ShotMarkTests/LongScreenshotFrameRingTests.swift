@@ -3,6 +3,30 @@ import XCTest
 @testable import ShotMark
 
 final class LongScreenshotFrameRingTests: XCTestCase {
+    func testFrameMailboxCoalescesBacklogToLatestFrame() {
+        let mailbox = LongScreenshotFrameMailbox()
+        let first = makeFrame(sequenceNumber: 1, gray: 10)
+        let second = makeFrame(sequenceNumber: 2, gray: 20)
+
+        XCTAssertTrue(mailbox.enqueue(first))
+        XCTAssertFalse(mailbox.enqueue(second))
+        XCTAssertEqual(mailbox.takeLatest()?.sequenceNumber, 2)
+        XCTAssertFalse(mailbox.completeDelivery())
+    }
+
+    func testFrameMailboxSchedulesLatestFrameThatArrivesDuringDelivery() {
+        let mailbox = LongScreenshotFrameMailbox()
+        let first = makeFrame(sequenceNumber: 1, gray: 10)
+        let second = makeFrame(sequenceNumber: 2, gray: 20)
+
+        XCTAssertTrue(mailbox.enqueue(first))
+        XCTAssertEqual(mailbox.takeLatest()?.sequenceNumber, 1)
+        XCTAssertFalse(mailbox.enqueue(second))
+        XCTAssertTrue(mailbox.completeDelivery())
+        XCTAssertEqual(mailbox.takeLatest()?.sequenceNumber, 2)
+        XCTAssertFalse(mailbox.completeDelivery())
+    }
+
     func testSettledFrameRequiresTwoSimilarNewFrames() throws {
         let ring = LongScreenshotFrameRing()
         ring.append(LongScreenshotFrame(sequenceNumber: 1, image: try image(gray: 20), capturedAt: Date()))
@@ -23,6 +47,23 @@ final class LongScreenshotFrameRingTests: XCTestCase {
 
         XCTAssertNil(ring.latestSettledFrame(after: ring.lastCommittedSequenceNumber))
         XCTAssertEqual(ring.latestFrame(after: ring.lastCommittedSequenceNumber)?.sequenceNumber, 3)
+    }
+
+    func testSampledDifferenceSeparatesMotionFromStableFrames() throws {
+        let stableA = try image(gray: 80)
+        let stableB = try image(gray: 81)
+        let moved = try image(gray: 150)
+
+        XCTAssertLessThan(LongScreenshotFrameRing.sampledDifference(stableA, stableB), 1.8)
+        XCTAssertGreaterThan(LongScreenshotFrameRing.sampledDifference(stableA, moved), 1.8)
+    }
+
+    private func makeFrame(sequenceNumber: Int, gray: UInt8) -> LongScreenshotFrame {
+        LongScreenshotFrame(
+            sequenceNumber: sequenceNumber,
+            image: try! image(gray: gray),
+            capturedAt: Date()
+        )
     }
 
     private func image(gray: UInt8) throws -> CGImage {
