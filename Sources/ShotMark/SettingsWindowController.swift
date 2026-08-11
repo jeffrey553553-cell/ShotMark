@@ -36,7 +36,7 @@ struct SettingsView: View {
 
     @State private var screenRecordingAccess = PermissionService.hasScreenRecordingAccess
     @State private var accessibilityAccess = PermissionService.hasAccessibilityAccess
-    @State private var microphoneAccess = PermissionService.hasMicrophoneAccess
+    @State private var microphonePermission = PermissionService.microphonePermissionState
     @State private var isCheckingScreenRecording = false
     @State private var shortcut = AppSettings.shared.shortcut
     @State private var isRecordingShortcut = false
@@ -92,18 +92,7 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        permissionRow(
-                            title: "麦克风权限",
-                            isGranted: microphoneAccess,
-                            isChecking: false,
-                            actionTitle: "请求权限"
-                        ) {
-                            PermissionService.requestMicrophoneAccess { _ in
-                                DispatchQueue.main.async {
-                                    refresh()
-                                }
-                            }
-                        }
+                        microphonePermissionRow
 
                         HStack(spacing: 10) {
                             Button("屏幕录制设置") {
@@ -196,6 +185,41 @@ struct SettingsView: View {
         }
     }
 
+    private var microphonePermissionRow: some View {
+        HStack {
+            Text("麦克风权限")
+            Spacer()
+            Text(microphonePermission.statusText)
+                .foregroundColor(microphonePermission.isAuthorized ? Color.green : Color.orange)
+                .font(.system(size: 12, weight: .semibold))
+
+            switch microphonePermission {
+            case .authorized:
+                Button("已允许") {}
+                    .disabled(true)
+            case .notDetermined:
+                Button("请求权限") {
+                    PermissionService.requestMicrophoneAccess { _ in
+                        DispatchQueue.main.async {
+                            refresh()
+                        }
+                    }
+                }
+            case .denied:
+                Button("打开设置") {
+                    PermissionService.openMicrophoneSettings()
+                }
+            case .restricted:
+                Button("不可更改") {}
+                    .disabled(true)
+            case .unknown:
+                Button("重新检查") {
+                    refresh()
+                }
+            }
+        }
+    }
+
     private func refresh() {
         isCheckingScreenRecording = true
         screenRecordingAccess = false
@@ -206,7 +230,7 @@ struct SettingsView: View {
             }
         }
         accessibilityAccess = PermissionService.hasAccessibilityAccess
-        microphoneAccess = PermissionService.hasMicrophoneAccess
+        microphonePermission = PermissionService.microphonePermissionState
         shortcut = AppSettings.shared.shortcut
     }
 

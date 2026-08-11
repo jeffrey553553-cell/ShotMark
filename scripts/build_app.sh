@@ -67,6 +67,24 @@ WARN
     "$APP_DIR"
 fi
 
+MICROPHONE_USAGE_DESCRIPTION="$(plutil -extract NSMicrophoneUsageDescription raw -o - "$CONTENTS_DIR/Info.plist" 2>/dev/null || true)"
+if [[ -z "$MICROPHONE_USAGE_DESCRIPTION" ]]; then
+  echo "error: NSMicrophoneUsageDescription is missing from the built app." >&2
+  exit 1
+fi
+
+SIGNATURE_DETAILS="$(codesign -dv --verbose=4 "$APP_DIR" 2>&1)"
+if ! grep -q "flags=.*runtime" <<<"$SIGNATURE_DETAILS"; then
+  echo "error: the built app is missing Hardened Runtime." >&2
+  exit 1
+fi
+
+SIGNED_ENTITLEMENTS="$(codesign -d --entitlements :- "$APP_DIR" 2>/dev/null)"
+if ! plutil -p - <<<"$SIGNED_ENTITLEMENTS" | grep -q '"com.apple.security.device.audio-input" => 1'; then
+    echo "error: the built app is missing the Audio Input entitlement." >&2
+    exit 1
+fi
+
 if [[ "$PUBLIC_COPY" == "1" ]]; then
   mkdir -p "$PUBLIC_DIST_DIR"
   rm -rf "$PUBLIC_APP_DIR"

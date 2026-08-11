@@ -39,6 +39,23 @@ run_step "Swift debug build" swift build --disable-sandbox
 run_step "Swift tests" swift test --disable-sandbox
 run_step "Release app build" "$ROOT_DIR/scripts/build_app.sh"
 run_step "Code signature verify" codesign --verify --deep --verbose=2 "$ROOT_DIR/dist/ShotMark.app"
+run_step "Privacy metadata verify" env ROOT_DIR="$ROOT_DIR" bash -c '
+  set -euo pipefail
+  INFO="$ROOT_DIR/dist/ShotMark.app/Contents/Info.plist"
+  [[ -n "$(plutil -extract NSMicrophoneUsageDescription raw -o - "$INFO")" ]]
+  codesign -dv --verbose=4 "$ROOT_DIR/dist/ShotMark.app" 2>&1 | rg -q "flags=.*runtime"
+'
+run_step "Permission reset coverage verify" env ROOT_DIR="$ROOT_DIR" bash -c '
+  set -euo pipefail
+  rg -q "tccutil reset ScreenCapture" "$ROOT_DIR/scripts/reset_permissions.sh"
+  rg -q "tccutil reset Accessibility" "$ROOT_DIR/scripts/reset_permissions.sh"
+  rg -q "tccutil reset Microphone" "$ROOT_DIR/scripts/reset_permissions.sh"
+'
+run_step "Microphone entitlement verify" env ROOT_DIR="$ROOT_DIR" bash -c '
+  set -euo pipefail
+  ENTITLEMENTS="$(codesign -d --entitlements :- "$ROOT_DIR/dist/ShotMark.app" 2>/dev/null)"
+  plutil -p - <<<"$ENTITLEMENTS" | rg -q "\"com.apple.security.device.audio-input\" => 1"
+'
 run_step "App icon verify" env ROOT_DIR="$ROOT_DIR" bash -c '
   set -euo pipefail
   [[ "$(plutil -extract CFBundleIconFile raw -o - "$ROOT_DIR/dist/ShotMark.app/Contents/Info.plist")" == "ShotMark" ]]
@@ -250,6 +267,9 @@ Generated: $TIMESTAMP
 - Swift tests: PASS
 - Release app build: PASS
 - Code signature verify: PASS
+- Privacy metadata verify: PASS
+- Permission reset coverage verify: PASS
+- Microphone entitlement verify: PASS
 - App icon verify: PASS
 - DMG package: PASS
 - DMG verify: PASS

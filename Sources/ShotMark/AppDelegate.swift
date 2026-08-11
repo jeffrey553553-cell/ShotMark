@@ -312,9 +312,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         accessibilityStatusMenuItem?.title = PermissionService.hasAccessibilityAccess
             ? "辅助功能权限（窗口识别校准）：已允许"
             : "辅助功能权限（窗口识别校准）：未允许"
-        microphoneStatusMenuItem?.title = PermissionService.hasMicrophoneAccess
-            ? "麦克风权限：已允许"
-            : "麦克风权限：未允许"
+        microphoneStatusMenuItem?.title = "麦克风权限：\(PermissionService.microphonePermissionState.statusText)"
     }
 
     private func updatePinnedMenuItems(count: Int) {

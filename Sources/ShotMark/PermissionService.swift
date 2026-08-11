@@ -5,6 +5,38 @@ import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 
+enum MicrophonePermissionState: Equatable {
+    case authorized
+    case notDetermined
+    case denied
+    case restricted
+    case unknown
+
+    init(_ status: AVAuthorizationStatus) {
+        switch status {
+        case .authorized: self = .authorized
+        case .notDetermined: self = .notDetermined
+        case .denied: self = .denied
+        case .restricted: self = .restricted
+        @unknown default: self = .unknown
+        }
+    }
+
+    var isAuthorized: Bool {
+        self == .authorized
+    }
+
+    var statusText: String {
+        switch self {
+        case .authorized: "已允许"
+        case .notDetermined: "尚未请求"
+        case .denied: "已拒绝"
+        case .restricted: "受系统限制"
+        case .unknown: "状态未知"
+        }
+    }
+}
+
 enum PermissionService {
     static var hasScreenRecordingAccess: Bool {
         CGPreflightScreenCaptureAccess()
@@ -45,7 +77,11 @@ enum PermissionService {
     }
 
     static var hasMicrophoneAccess: Bool {
-        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        microphonePermissionState.isAuthorized
+    }
+
+    static var microphonePermissionState: MicrophonePermissionState {
+        MicrophonePermissionState(AVCaptureDevice.authorizationStatus(for: .audio))
     }
 
     static func requestMicrophoneAccess(completion: @escaping (Bool) -> Void) {
@@ -103,8 +139,9 @@ enum PermissionService {
     private static func openSettingsURL(_ candidates: [String]) {
         for candidate in candidates {
             guard let url = URL(string: candidate) else { continue }
-            NSWorkspace.shared.open(url)
-            return
+            if NSWorkspace.shared.open(url) {
+                return
+            }
         }
     }
 }
