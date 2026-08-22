@@ -51,6 +51,30 @@ enum AnnotationInteractionPolicy {
 }
 
 enum AnnotationGeometry {
+    static func numberMarkerCenter(
+        forPointer pointer: CGPoint,
+        markerSize: CGFloat,
+        inside canvas: CGRect,
+        cursorGap: CGFloat = 10
+    ) -> CGPoint {
+        let radius = max(8, markerSize)
+        let insetCanvas = canvas.insetBy(dx: radius, dy: radius)
+        guard !insetCanvas.isNull, !insetCanvas.isEmpty else {
+            return CGPoint(x: canvas.midX, y: canvas.midY)
+        }
+
+        let distance = radius + cursorGap
+        let aboveY = pointer.y + distance
+        let belowY = pointer.y - distance
+        let y = aboveY <= insetCanvas.maxY
+            ? aboveY
+            : max(insetCanvas.minY, belowY)
+        return CGPoint(
+            x: min(max(pointer.x, insetCanvas.minX), insetCanvas.maxX),
+            y: min(max(y, insetCanvas.minY), insetCanvas.maxY)
+        )
+    }
+
     static let canvasMargin: CGFloat = 2
 
     static func clampedPoint(_ point: CGPoint, to bounds: CGRect, margin: CGFloat = canvasMargin) -> CGPoint {

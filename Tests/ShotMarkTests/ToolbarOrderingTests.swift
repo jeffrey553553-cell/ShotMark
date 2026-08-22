@@ -12,18 +12,30 @@ final class ToolbarOrderingTests: XCTestCase {
         XCTAssertEqual(buttons.compactMap(\.defaultShortcutKey), (1...9).map(String.init))
     }
 
-    func testLetterShortcutButtonsFollowNumericTools() {
-        let buttons = Array(SelectionOverlayView.OverlayButton.toolbarOrder.dropFirst(9).prefix(4))
+    func testTextAndMoreFollowNumericTools() {
+        let buttons = Array(SelectionOverlayView.OverlayButton.toolbarOrder.dropFirst(9).prefix(2))
 
-        XCTAssertEqual(buttons, [.ellipse, .pen, .highlighter, .text])
-        XCTAssertEqual(buttons.compactMap(\.defaultShortcutKey), ["E", "P", "H", "T"])
+        XCTAssertEqual(buttons, [.text, .more])
+        XCTAssertEqual(buttons.compactMap(\.defaultShortcutKey), ["T"])
     }
 
-    func testToolbarOrderContainsEveryButtonExactlyOnce() {
+    func testSecondaryDrawingToolsLiveOnlyInMoreMenu() {
         let order = SelectionOverlayView.OverlayButton.toolbarOrder
 
-        XCTAssertEqual(order.count, SelectionOverlayView.OverlayButton.allCases.count)
-        XCTAssertEqual(Set(order), Set(SelectionOverlayView.OverlayButton.allCases))
+        XCTAssertEqual(SelectionOverlayView.OverlayButton.moreTools, [.ellipse, .pen, .highlighter])
+        XCTAssertTrue(SelectionOverlayView.OverlayButton.moreTools.allSatisfy { !order.contains($0) })
+        XCTAssertEqual(
+            SelectionOverlayView.OverlayButton.moreTools.compactMap(\.defaultShortcutKey),
+            ["E", "P", "H"]
+        )
+    }
+
+    func testToolbarAndMoreMenuContainEveryButtonExactlyOnce() {
+        let combined = SelectionOverlayView.OverlayButton.toolbarOrder
+            + SelectionOverlayView.OverlayButton.moreTools
+
+        XCTAssertEqual(combined.count, SelectionOverlayView.OverlayButton.allCases.count)
+        XCTAssertEqual(Set(combined), Set(SelectionOverlayView.OverlayButton.allCases))
     }
 
     func testToolbarButtonPersistenceIDsAreStableAndUnique() {

@@ -3,6 +3,36 @@ import XCTest
 @testable import ShotMark
 
 final class AnnotationGeometryTests: XCTestCase {
+    func testNumberMarkerAppearsAbovePointerWithCursorClearance() {
+        let center = AnnotationGeometry.numberMarkerCenter(
+            forPointer: CGPoint(x: 120, y: 80),
+            markerSize: 13,
+            inside: CGRect(x: 0, y: 0, width: 300, height: 200)
+        )
+
+        XCTAssertEqual(center, CGPoint(x: 120, y: 103))
+    }
+
+    func testNumberMarkerFlipsBelowPointerNearTopEdge() {
+        let center = AnnotationGeometry.numberMarkerCenter(
+            forPointer: CGPoint(x: 120, y: 194),
+            markerSize: 13,
+            inside: CGRect(x: 0, y: 0, width: 300, height: 200)
+        )
+
+        XCTAssertEqual(center, CGPoint(x: 120, y: 171))
+    }
+
+    func testNumberMarkerStaysFullyInsideCanvasNearSideEdge() {
+        let center = AnnotationGeometry.numberMarkerCenter(
+            forPointer: CGPoint(x: 2, y: 80),
+            markerSize: 13,
+            inside: CGRect(x: 0, y: 0, width: 300, height: 200)
+        )
+
+        XCTAssertEqual(center, CGPoint(x: 13, y: 103))
+    }
+
     func testCalloutTextCommitContinuesTheSamePointerInteraction() {
         XCTAssertEqual(
             AnnotationInteractionPolicy.pointerDownResolution(

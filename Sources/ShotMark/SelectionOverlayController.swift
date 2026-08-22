@@ -240,13 +240,15 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     enum OverlayButton: CaseIterable, Hashable {
-        case callout, rectangle, ellipse, arrow, pen, highlighter, number, text, mosaic, ocr, pin, longScreenshot, record, undo, redo, delete, copy, save, cancel
+        case callout, rectangle, ellipse, arrow, pen, highlighter, number, text, mosaic, ocr, pin, longScreenshot, record, more, undo, redo, delete, copy, save, cancel
 
         static let toolbarOrder: [OverlayButton] = [
             .callout, .rectangle, .arrow, .number, .mosaic, .ocr, .pin, .longScreenshot, .record,
-            .ellipse, .pen, .highlighter, .text,
+            .text, .more,
             .undo, .redo, .delete, .copy, .save, .cancel
         ]
+
+        static let moreTools: [OverlayButton] = [.ellipse, .pen, .highlighter]
 
         var persistenceID: String {
             switch self {
@@ -263,6 +265,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             case .pin: "pin"
             case .longScreenshot: "longScreenshot"
             case .record: "record"
+            case .more: "more"
             case .undo: "undo"
             case .redo: "redo"
             case .delete: "delete"
@@ -297,7 +300,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             case .copy: "RETURN"
             case .save: "SPACE"
             case .cancel: "ESCAPE"
-            case .undo, .redo, .delete: nil
+            case .more, .undo, .redo, .delete: nil
             }
         }
 
@@ -316,6 +319,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             case .pin: "P"
             case .longScreenshot: "长"
             case .record: "录制"
+            case .more: "更多"
             case .undo: "↶"
             case .redo: "↷"
             case .delete: "⌫"
@@ -340,6 +344,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             case .pin: "pin"
             case .longScreenshot: nil
             case .record: "record.circle"
+            case .more: "ellipsis"
             case .undo: "arrow.uturn.backward"
             case .redo: "arrow.uturn.forward"
             case .delete: "trash"
@@ -388,7 +393,9 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private var pendingTextEditStart: CGPoint?
     private var pendingTextEditDidMove = false
     private var isRecordingMenuOpen = false
+    private var isMoreMenuOpen = false
     private var hoveredAudioMode: VideoAudioMode?
+    private var hoveredMoreTool: OverlayButton?
     private var isRecordingMouseClicksOptionHovered = false
     private var hoveredButton: OverlayButton?
     private var shortcutMenuButton: OverlayButton?
@@ -626,6 +633,15 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                 needsDisplay = true
             }
 
+            if handleMoreMenuClick(at: point, selectionRect: selectionRect) {
+                return
+            }
+            if isMoreMenuOpen {
+                isMoreMenuOpen = false
+                hoveredMoreTool = nil
+                needsDisplay = true
+            }
+
             if handleButtonClick(at: point, selectionRect: selectionRect) {
                 return
             }
@@ -728,6 +744,16 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
         hoveredWindowCandidate = nil
         updateRecordingMenuHover(at: mousePoint, selectionRect: selectionRect)
+        updateMoreMenuHover(at: mousePoint, selectionRect: selectionRect)
+
+        if isMoreMenuOpen,
+           let panel = moreMenuFrame(for: selectionRect),
+           panel.contains(mousePoint) {
+            setHoveredButton(nil)
+            NSCursor.pointingHand.set()
+            needsDisplay = true
+            return
+        }
 
         if let button = hoveredToolbarButton(at: mousePoint, selectionRect: selectionRect) {
             setHoveredButton(button)
@@ -1044,6 +1070,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         drawToolbar(for: selectionRect)
         drawStylePanel(for: selectionRect)
         drawRecordingMenu(for: selectionRect)
+        drawMoreMenu(for: selectionRect)
         drawToolbarTooltip(for: selectionRect)
         drawShortcutLetterMenu(for: selectionRect)
         drawSelectionMagnifierIfNeeded()
@@ -1222,8 +1249,13 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             )
             requestMosaicPreviewCaptureIfNeeded()
         case .numberMarker:
+            let canvas = CGRect(origin: .zero, size: selectionRect?.size ?? bounds.size)
             add(.numberMarker(
-                center: point,
+                center: AnnotationGeometry.numberMarkerCenter(
+                    forPointer: point,
+                    markerSize: numberMarkerStyle.size,
+                    inside: canvas
+                ),
                 number: nextMarkerNumber,
                 color: effectiveColor(numberMarkerStyle),
                 markerSize: numberMarkerStyle.size,
@@ -1574,7 +1606,14 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                 continue
             }
 
-            let highlighted = tool(for: button).map { $0 == selectedTool } ?? false
+            let highlighted: Bool
+            if button == .more {
+                highlighted = isMoreMenuOpen || OverlayButton.moreTools.contains {
+                    tool(for: $0) == selectedTool
+                }
+            } else {
+                highlighted = tool(for: button).map { $0 == selectedTool } ?? false
+            }
             drawButton(
                 button,
                 in: buttonFrame(button, for: rect),
@@ -1623,6 +1662,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private func drawStylePanel(for rect: CGRect) {
+        guard !isMoreMenuOpen else { return }
         guard
             let tool = selectedTool,
             supportsStylePanel(tool),
@@ -1814,6 +1854,50 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         }
     }
 
+    private func drawMoreMenu(for rect: CGRect) {
+        guard isMoreMenuOpen, let panel = moreMenuFrame(for: rect) else { return }
+
+        drawFloatingPanelBackground(in: panel, radius: 11, alpha: 0.90)
+        for (index, button) in OverlayButton.moreTools.enumerated() {
+            let row = moreToolOptionFrame(index: index, in: panel)
+            let isSelected = tool(for: button) == selectedTool
+            if isSelected {
+                NSColor.controlAccentColor.withAlphaComponent(0.62).setFill()
+                NSBezierPath(roundedRect: row.insetBy(dx: 6, dy: 3), xRadius: 7, yRadius: 7).fill()
+            } else if hoveredMoreTool == button {
+                NSColor.white.withAlphaComponent(0.11).setFill()
+                NSBezierPath(roundedRect: row.insetBy(dx: 6, dy: 3), xRadius: 7, yRadius: 7).fill()
+            }
+
+            drawSymbol(
+                button,
+                in: CGRect(x: row.minX + 12, y: row.midY - 10, width: 20, height: 20),
+                color: NSColor.white.withAlphaComponent(0.88)
+            )
+            let title = tooltipTitle(for: button)
+            title.draw(
+                at: CGPoint(x: row.minX + 42, y: row.midY - 8),
+                withAttributes: [
+                    .font: NSFont.systemFont(ofSize: 12.5, weight: .medium),
+                    .foregroundColor: NSColor.white.withAlphaComponent(0.92)
+                ]
+            )
+            let shortcut = shortcutDisplay(for: button)
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedSystemFont(ofSize: 10.5, weight: .medium),
+                .foregroundColor: NSColor.white.withAlphaComponent(0.52)
+            ]
+            let size = shortcut.size(withAttributes: attributes)
+            let shortcutFrame = moreToolShortcutFrame(index: index, in: panel)
+            NSColor.white.withAlphaComponent(0.07).setFill()
+            NSBezierPath(roundedRect: shortcutFrame, xRadius: 5, yRadius: 5).fill()
+            shortcut.draw(
+                at: CGPoint(x: shortcutFrame.midX - size.width / 2, y: shortcutFrame.midY - size.height / 2),
+                withAttributes: attributes
+            )
+        }
+    }
+
     private func drawRecordingCheckbox(in rect: CGRect, isOn: Bool) {
         (isOn ? NSColor.controlAccentColor : NSColor.white.withAlphaComponent(0.08)).setFill()
         NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
@@ -1959,6 +2043,37 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         return true
     }
 
+    private func handleMoreMenuClick(at point: CGPoint, selectionRect: CGRect) -> Bool {
+        guard isMoreMenuOpen else { return false }
+        if buttonFrame(.more, for: selectionRect).contains(point) {
+            isMoreMenuOpen = false
+            hoveredMoreTool = nil
+            needsDisplay = true
+            return true
+        }
+        guard let panel = moreMenuFrame(for: selectionRect), panel.contains(point) else {
+            return false
+        }
+
+        for (index, button) in OverlayButton.moreTools.enumerated()
+            where moreToolOptionFrame(index: index, in: panel).contains(point) {
+            if moreToolShortcutFrame(index: index, in: panel).contains(point) {
+                isMoreMenuOpen = false
+                hoveredMoreTool = nil
+                hoveredButton = nil
+                shortcutMenuButton = button
+                needsDisplay = true
+                return true
+            }
+            guard let tool = tool(for: button) else { return true }
+            isMoreMenuOpen = false
+            hoveredMoreTool = nil
+            selectTool(tool, toggles: false)
+            return true
+        }
+        return true
+    }
+
     private func stylePanelFrame(for rect: CGRect) -> CGRect? {
         guard let tool = selectedTool, supportsStylePanel(tool) else { return nil }
         let bar = toolbarFrame(for: rect)
@@ -2041,6 +2156,44 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
         origin.x = min(max(origin.x, bounds.minX + 10), bounds.maxX - size.width - 10)
         return CGRect(origin: origin, size: size)
+    }
+
+    private func moreMenuFrame(for rect: CGRect) -> CGRect? {
+        let bar = toolbarFrame(for: rect)
+        let moreButton = buttonFrame(.more, for: rect)
+        let size = CGSize(width: 154, height: 112)
+        let spacing: CGFloat = 8
+        let toolbarIsAboveSelection = bar.minY >= rect.maxY
+        var origin = CGPoint(x: moreButton.midX - size.width / 2, y: 0)
+
+        if toolbarIsAboveSelection {
+            origin.y = bar.maxY + spacing
+            if origin.y + size.height > bounds.maxY - 10 {
+                origin.y = bar.minY - size.height - spacing
+            }
+        } else {
+            origin.y = bar.minY - size.height - spacing
+            if origin.y < bounds.minY + 10 {
+                origin.y = bar.maxY + spacing
+            }
+        }
+
+        origin.x = min(max(origin.x, bounds.minX + 10), bounds.maxX - size.width - 10)
+        return CGRect(origin: origin, size: size)
+    }
+
+    private func moreToolOptionFrame(index: Int, in panel: CGRect) -> CGRect {
+        CGRect(
+            x: panel.minX,
+            y: panel.maxY - 8 - CGFloat(index + 1) * 32,
+            width: panel.width,
+            height: 32
+        )
+    }
+
+    private func moreToolShortcutFrame(index: Int, in panel: CGRect) -> CGRect {
+        let row = moreToolOptionFrame(index: index, in: panel)
+        return CGRect(x: row.maxX - 48, y: row.midY - 10, width: 38, height: 20)
     }
 
     private func audioModeOptionFrame(index: Int, in panel: CGRect) -> CGRect {
@@ -2231,12 +2384,15 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     private func drawToolbarTooltip(for selectionRect: CGRect) {
         guard let hoveredButton else { return }
+        guard !(isMoreMenuOpen && hoveredButton == .more) else { return }
 
         let frame = tooltipFrame(for: hoveredButton, selectionRect: selectionRect)
         drawFloatingPanelBackground(in: frame, radius: 9, alpha: 0.91)
 
         let title = tooltipTitle(for: hoveredButton)
-        let shortcut = "快捷键 \(shortcutDisplay(for: hoveredButton))"
+        let shortcut = hoveredButton == .more
+            ? "椭圆 · 画笔 · 荧光笔"
+            : "快捷键 \(shortcutDisplay(for: hoveredButton))"
         let titleAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
             .foregroundColor: NSColor.white.withAlphaComponent(0.96)
@@ -2244,7 +2400,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         let shortcutAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 11, weight: .medium),
             .foregroundColor: NSColor.white.withAlphaComponent(0.72),
-            .underlineStyle: NSUnderlineStyle.single.rawValue
+            .underlineStyle: hoveredButton == .more ? 0 : NSUnderlineStyle.single.rawValue
         ]
         let titleSize = title.size(withAttributes: titleAttributes)
         let shortcutSize = shortcut.size(withAttributes: shortcutAttributes)
@@ -2260,9 +2416,12 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private func tooltipFrame(for button: OverlayButton, selectionRect: CGRect) -> CGRect {
-        let buttonRect = buttonFrame(button, for: selectionRect)
+        let anchorButton: OverlayButton = OverlayButton.moreTools.contains(button) ? .more : button
+        let buttonRect = buttonFrame(anchorButton, for: selectionRect)
         let title = tooltipTitle(for: button)
-        let shortcut = "快捷键 \(shortcutDisplay(for: button))"
+        let shortcut = button == .more
+            ? "椭圆 · 画笔 · 荧光笔"
+            : "快捷键 \(shortcutDisplay(for: button))"
         let titleWidth = title.size(withAttributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold)]).width
         let shortcutWidth = shortcut.size(withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium)]).width
         let size = CGSize(width: max(titleWidth, shortcutWidth) + 24, height: 46)
@@ -2600,6 +2759,12 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                 shortcutMenuButton = nil
                 isRecordingMenuOpen.toggle()
                 needsDisplay = true
+            case .more:
+                isRecordingMenuOpen = false
+                shortcutMenuButton = nil
+                isMoreMenuOpen.toggle()
+                hoveredMoreTool = nil
+                needsDisplay = true
             case .undo:
                 undoEdit()
             case .redo:
@@ -2623,6 +2788,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     private func selectTool(_ tool: AnnotationTool, toggles: Bool = true) {
         isRecordingMenuOpen = false
+        isMoreMenuOpen = false
+        hoveredMoreTool = nil
         shortcutMenuButton = nil
         if toggles, selectedTool == tool {
             selectedTool = nil
@@ -2682,6 +2849,24 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         }
     }
 
+    private func updateMoreMenuHover(at point: CGPoint, selectionRect: CGRect) {
+        guard isMoreMenuOpen, let panel = moreMenuFrame(for: selectionRect), panel.contains(point) else {
+            if hoveredMoreTool != nil {
+                hoveredMoreTool = nil
+                needsDisplay = true
+            }
+            return
+        }
+
+        let next = OverlayButton.moreTools.enumerated().first {
+            moreToolOptionFrame(index: $0.offset, in: panel).contains(point)
+        }?.element
+        if hoveredMoreTool != next {
+            hoveredMoreTool = next
+            needsDisplay = true
+        }
+    }
+
     private func hoveredToolbarButton(at point: CGPoint, selectionRect: CGRect) -> OverlayButton? {
         if let hoveredButton, tooltipFrame(for: hoveredButton, selectionRect: selectionRect).contains(point) {
             return hoveredButton
@@ -2720,6 +2905,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             return "长截图"
         case .record:
             return "录制视频"
+        case .more:
+            return "更多工具"
         case .undo:
             return "撤销"
         case .redo:
@@ -2769,6 +2956,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             return "8"
         case .record:
             return "9"
+        case .more:
+            return "点击展开"
         case .undo:
             return "Cmd+Z"
         case .redo:
@@ -2937,6 +3126,12 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             selectedAnnotationIndex = nil
             isRecordingMenuOpen.toggle()
             needsDisplay = true
+        case .more:
+            isRecordingMenuOpen = false
+            shortcutMenuButton = nil
+            isMoreMenuOpen.toggle()
+            hoveredMoreTool = nil
+            needsDisplay = true
         case .undo:
             undoEdit()
         case .redo:
@@ -2954,7 +3149,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private func handleLayeredEscape() {
-        if ocrPanelController != nil || isRecordingMenuOpen || shortcutMenuButton != nil {
+        if ocrPanelController != nil || isRecordingMenuOpen || isMoreMenuOpen || shortcutMenuButton != nil {
             closeTransientPanels()
             shortcutMenuButton = nil
             needsDisplay = true
@@ -2977,6 +3172,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private func handleTooltipShortcutClick(at point: CGPoint, selectionRect: CGRect) -> Bool {
         guard
             let hoveredButton,
+            hoveredButton != .more,
             tooltipShortcutFrame(for: hoveredButton, selectionRect: selectionRect).contains(point)
         else { return false }
 
@@ -3085,7 +3281,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     private func buttonWidth(_ button: OverlayButton) -> CGFloat {
         switch button {
-        case .rectangle, .ellipse, .arrow, .pen, .highlighter, .number, .callout, .text, .mosaic, .ocr, .pin, .longScreenshot, .record, .undo, .redo, .delete, .copy, .save, .cancel:
+        case .rectangle, .ellipse, .arrow, .pen, .highlighter, .number, .callout, .text, .mosaic, .ocr, .pin, .longScreenshot, .record, .more, .undo, .redo, .delete, .copy, .save, .cancel:
             return 32
         }
     }
@@ -3114,7 +3310,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         case .callout: .callout
         case .mosaic: .mosaic
         case .text: .text
-        case .ocr, .pin, .longScreenshot, .record, .undo, .redo, .delete, .copy, .save, .cancel: nil
+        case .ocr, .pin, .longScreenshot, .record, .more, .undo, .redo, .delete, .copy, .save, .cancel: nil
         }
     }
 
@@ -3656,6 +3852,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     func closeTransientPanels() {
         isRecordingMenuOpen = false
+        isMoreMenuOpen = false
+        hoveredMoreTool = nil
         removeOCRDismissEventMonitor()
         ocrPanelController?.close()
         ocrPanelController = nil

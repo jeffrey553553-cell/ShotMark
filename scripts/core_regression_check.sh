@@ -83,7 +83,8 @@ run_step "DMG verify" hdiutil verify "$ROOT_DIR/dist/ShotMark.dmg"
 run_step "DMG install layout verify" verify_dmg_install_layout
 run_step "P1 editing and recording static checks" bash -c '
   set -euo pipefail
-  rg -q "case callout, rectangle, ellipse, arrow, pen, highlighter, number, text, mosaic, ocr, pin, longScreenshot, record, undo, redo, delete" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "case callout, rectangle, ellipse, arrow, pen, highlighter, number, text, mosaic, ocr, pin, longScreenshot, record, more, undo, redo, delete" Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "static let moreTools: \[OverlayButton\] = \[\.ellipse, \.pen, \.highlighter\]" Sources/ShotMark/SelectionOverlayController.swift
   ! rg -q "VideoQualityPreset|720p|1080p|2K|recordQuality" Sources/ShotMark
   rg -q "nativeOutputPixelSize" Sources/ShotMark/VideoRecordingService.swift
   rg -q "showMouseClicks = options.showsMouseClicks" Sources/ShotMark/VideoRecordingService.swift
