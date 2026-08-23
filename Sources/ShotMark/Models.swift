@@ -136,7 +136,10 @@ enum Annotation {
         number: Int,
         color: NSColor,
         markerSize: CGFloat,
-        appearance: NumberMarkerAppearance
+        appearance: NumberMarkerAppearance,
+        textOrigin: CGPoint,
+        text: String,
+        fontSize: CGFloat
     )
     case text(origin: CGPoint, value: String, color: NSColor, fontSize: CGFloat)
     case mosaic(rect: CGRect, blockSize: CGFloat)

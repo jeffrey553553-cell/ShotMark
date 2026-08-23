@@ -41,21 +41,30 @@ final class AnnotationRenderingTests: XCTestCase {
                 number: 1,
                 color: .systemBlue,
                 markerSize: 16,
-                appearance: .filled
+                appearance: .filled,
+                textOrigin: CGPoint(x: 120, y: 460),
+                text: "第一处",
+                fontSize: 16
             ),
             .numberMarker(
                 center: CGPoint(x: 145, y: 470),
                 number: 2,
                 color: .systemBlue,
                 markerSize: 16,
-                appearance: .outlined
+                appearance: .outlined,
+                textOrigin: CGPoint(x: 170, y: 460),
+                text: "",
+                fontSize: 16
             ),
             .numberMarker(
                 center: CGPoint(x: 195, y: 470),
                 number: 3,
                 color: .systemBlue,
                 markerSize: 16,
-                appearance: .light
+                appearance: .light,
+                textOrigin: CGPoint(x: 220, y: 460),
+                text: "",
+                fontSize: 16
             ),
             .text(origin: CGPoint(x: 245, y: 455), value: "重点信息\n支持多行评论", color: .white, fontSize: 20),
             .mosaic(rect: CGRect(x: 650, y: 70, width: 230, height: 100), blockSize: 12),

@@ -33,25 +33,81 @@ final class AnnotationGeometryTests: XCTestCase {
         XCTAssertEqual(center, CGPoint(x: 13, y: 103))
     }
 
+    func testNumberDescriptionDefaultsToMarkerRightWithComfortableGap() {
+        let origin = AnnotationGeometry.numberMarkerTextOrigin(
+            markerCenter: CGPoint(x: 80, y: 100),
+            markerSize: 13,
+            textSize: CGSize(width: 96, height: 24),
+            inside: CGRect(x: 0, y: 0, width: 300, height: 200)
+        )
+
+        XCTAssertEqual(origin, CGPoint(x: 105, y: 88))
+    }
+
+    func testNumberDescriptionMovesToLeftNearRightCanvasEdge() {
+        let origin = AnnotationGeometry.numberMarkerTextOrigin(
+            markerCenter: CGPoint(x: 280, y: 100),
+            markerSize: 13,
+            textSize: CGSize(width: 96, height: 24),
+            inside: CGRect(x: 0, y: 0, width: 300, height: 200)
+        )
+
+        XCTAssertEqual(origin, CGPoint(x: 159, y: 88))
+    }
+
+    func testNumberDescriptionIsIncludedInGroupBoundsAndHitTesting() {
+        let annotation = Annotation.numberMarker(
+            center: CGPoint(x: 80, y: 100),
+            number: 1,
+            color: .systemRed,
+            markerSize: 13,
+            appearance: .filled,
+            textOrigin: CGPoint(x: 105, y: 88),
+            text: "待确认内容",
+            fontSize: 16
+        )
+        let bounds = AnnotationGeometry.visualBounds(of: annotation)
+
+        XCTAssertLessThanOrEqual(bounds.minX, 67)
+        XCTAssertGreaterThan(bounds.maxX, 105)
+        XCTAssertTrue(AnnotationGeometry.contains(CGPoint(x: 120, y: 96), annotation: annotation))
+    }
+
+    func testEmptyNumberDescriptionKeepsAnEditablePlaceholderHitArea() {
+        let annotation = Annotation.numberMarker(
+            center: CGPoint(x: 80, y: 100),
+            number: 1,
+            color: .systemRed,
+            markerSize: 13,
+            appearance: .filled,
+            textOrigin: CGPoint(x: 105, y: 88),
+            text: "",
+            fontSize: 18
+        )
+
+        XCTAssertTrue(AnnotationGeometry.contains(CGPoint(x: 190, y: 98), annotation: annotation))
+        XCTAssertGreaterThanOrEqual(AnnotationGeometry.visualBounds(of: annotation).maxX, 201)
+    }
+
     func testCalloutTextCommitContinuesTheSamePointerInteraction() {
         XCTAssertEqual(
             AnnotationInteractionPolicy.pointerDownResolution(
                 hasActiveTextEditor: true,
-                isEditingCallout: true
+                isEditingCompositeAnnotation: true
             ),
             .commitAndContinue
         )
         XCTAssertEqual(
             AnnotationInteractionPolicy.pointerDownResolution(
                 hasActiveTextEditor: true,
-                isEditingCallout: false
+                isEditingCompositeAnnotation: false
             ),
             .commitAndConsume
         )
         XCTAssertEqual(
             AnnotationInteractionPolicy.pointerDownResolution(
                 hasActiveTextEditor: false,
-                isEditingCallout: false
+                isEditingCompositeAnnotation: false
             ),
             .noActiveEditor
         )

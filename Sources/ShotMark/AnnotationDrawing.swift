@@ -38,7 +38,7 @@ enum AnnotationDrawing {
                 drawFreehand(points: points, color: color, lineWidth: lineWidth)
             case .highlighter(let points, let color, let lineWidth):
                 drawHighlighter(points: points, color: color, lineWidth: lineWidth)
-            case .numberMarker(let center, let number, let color, let markerSize, let appearance):
+            case .numberMarker(let center, let number, let color, let markerSize, let appearance, let textOrigin, let text, let fontSize):
                 drawNumberMarker(
                     center: center,
                     number: number,
@@ -46,6 +46,9 @@ enum AnnotationDrawing {
                     markerSize: markerSize,
                     appearance: appearance
                 )
+                if !text.isEmpty {
+                    drawText(origin: textOrigin, value: text, color: color, fontSize: fontSize)
+                }
             case .text(let origin, let value, let color, let fontSize):
                 drawText(origin: origin, value: value, color: color, fontSize: fontSize)
             case .mosaic(let rect, let blockSize):

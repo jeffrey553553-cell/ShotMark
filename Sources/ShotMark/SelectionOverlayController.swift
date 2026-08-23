@@ -1,5 +1,27 @@
 import AppKit
 
+private final class AnnotationPlaceholderTextView: NSTextView {
+    var placeholder: String? {
+        didSet { needsDisplay = true }
+    }
+    var placeholderColor = NSColor.white.withAlphaComponent(0.46) {
+        didSet { needsDisplay = true }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard string.isEmpty, let placeholder, !placeholder.isEmpty else { return }
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font ?? NSFont.systemFont(ofSize: 16, weight: .semibold),
+            .foregroundColor: placeholderColor
+        ]
+        placeholder.draw(
+            at: CGPoint(x: textContainerInset.width, y: textContainerInset.height),
+            withAttributes: attributes
+        )
+    }
+}
+
 protocol SelectionOverlayControllerDelegate: AnyObject {
     func selectionOverlayController(_ controller: SelectionOverlayController, didCommit selection: CaptureSelection, frozenCapture: CaptureResult?, annotations: [Annotation], action: CaptureCommitAction)
     func selectionOverlayController(_ controller: SelectionOverlayController, didRequestOCRCapture selection: CaptureSelection, completion: @escaping (Result<CaptureResult, Error>) -> Void)
@@ -378,6 +400,9 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private var activeCalloutTextEditIndex: Int?
     private var activeCalloutOriginalAnnotation: Annotation?
     private var activeCalloutWasJustCreated = false
+    private var activeNumberTextEditIndex: Int?
+    private var activeNumberOriginalAnnotation: Annotation?
+    private var activeNumberWasJustCreated = false
     private var ocrPanelController: OCRResultPanelController?
     private var ocrDismissEventMonitor: Any?
     private var isOCRBusy = false
@@ -452,6 +477,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private var textStyle = ToolStyle(color: .systemRed, size: 18, opacity: 1)
     private let textInputMinSize = CGSize(width: 80, height: 28)
     private let calloutPlaceholderTextSize = CGSize(width: 96, height: 28)
+    private let numberPlaceholderTextSize = AnnotationGeometry.emptyNumberTextSize
     private let textInputPadding = CGSize(width: 6, height: 4)
     private let styleColors: [NSColor] = [
         .systemRed,
@@ -597,9 +623,10 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             return
         }
 
+        let continuesNumberSequence = activeNumberTextEditIndex != nil
         switch AnnotationInteractionPolicy.pointerDownResolution(
             hasActiveTextEditor: activeTextView != nil,
-            isEditingCallout: activeCalloutTextEditIndex != nil
+            isEditingCompositeAnnotation: activeCalloutTextEditIndex != nil || activeNumberTextEditIndex != nil
         ) {
         case .commitAndContinue:
             if activeTextView != nil {
@@ -682,6 +709,12 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                 if let drag = hitAnnotation(at: relative) {
                     registerUndo()
                     dragMode = drag
+                    return
+                }
+
+                if continuesNumberSequence, selectedTool == .numberMarker {
+                    selectedAnnotationIndex = nil
+                    beginAnnotation(tool: .numberMarker, at: relative, modifierFlags: event.modifierFlags)
                     return
                 }
 
@@ -1249,19 +1282,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             )
             requestMosaicPreviewCaptureIfNeeded()
         case .numberMarker:
-            let canvas = CGRect(origin: .zero, size: selectionRect?.size ?? bounds.size)
-            add(.numberMarker(
-                center: AnnotationGeometry.numberMarkerCenter(
-                    forPointer: point,
-                    markerSize: numberMarkerStyle.size,
-                    inside: canvas
-                ),
-                number: nextMarkerNumber,
-                color: effectiveColor(numberMarkerStyle),
-                markerSize: numberMarkerStyle.size,
-                appearance: numberMarkerAppearance
-            ))
-            nextMarkerNumber += 1
+            addNumberMarker(at: point)
         case .text:
             beginTextEntry(at: point, initialText: "")
         case .callout:
@@ -1296,6 +1317,41 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         selectedAnnotationIndex = annotations.count - 1
         selectedTool = .callout
         beginCalloutTextEdit(
+            at: annotations.count - 1,
+            registersUndo: false,
+            wasJustCreated: true
+        )
+    }
+
+    private func addNumberMarker(at point: CGPoint) {
+        guard let selectionRect else { return }
+        registerUndo()
+        let canvas = CGRect(origin: .zero, size: selectionRect.size)
+        let center = AnnotationGeometry.numberMarkerCenter(
+            forPointer: point,
+            markerSize: numberMarkerStyle.size,
+            inside: canvas
+        )
+        let textOrigin = AnnotationGeometry.numberMarkerTextOrigin(
+            markerCenter: center,
+            markerSize: numberMarkerStyle.size,
+            textSize: numberPlaceholderTextSize,
+            inside: canvas
+        )
+        annotations.append(.numberMarker(
+            center: center,
+            number: nextMarkerNumber,
+            color: effectiveColor(numberMarkerStyle),
+            markerSize: numberMarkerStyle.size,
+            appearance: numberMarkerAppearance,
+            textOrigin: textOrigin,
+            text: "",
+            fontSize: textStyle.size
+        ))
+        nextMarkerNumber += 1
+        selectedAnnotationIndex = annotations.count - 1
+        selectedTool = .numberMarker
+        beginNumberMarkerTextEdit(
             at: annotations.count - 1,
             registersUndo: false,
             wasJustCreated: true
@@ -1531,31 +1587,52 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private func annotationsForDrawing() -> [Annotation] {
-        guard let activeCalloutTextEditIndex else { return annotations }
         return annotations.enumerated().map { index, annotation in
-            guard index == activeCalloutTextEditIndex else { return annotation }
-            guard case .callout(
-                let targetRect,
-                let arrowStart,
-                let arrowEnd,
-                let textOrigin,
-                _,
-                let color,
-                let lineWidth,
-                let fontSize
-            ) = annotation else {
-                return annotation
+            if index == activeCalloutTextEditIndex,
+               case .callout(
+                   let targetRect,
+                   let arrowStart,
+                   let arrowEnd,
+                   let textOrigin,
+                   _,
+                   let color,
+                   let lineWidth,
+                   let fontSize
+               ) = annotation {
+                return .callout(
+                    targetRect: targetRect,
+                    arrowStart: arrowStart,
+                    arrowEnd: arrowEnd,
+                    textOrigin: textOrigin,
+                    text: "",
+                    color: color,
+                    lineWidth: lineWidth,
+                    fontSize: fontSize
+                )
             }
-            return .callout(
-                targetRect: targetRect,
-                arrowStart: arrowStart,
-                arrowEnd: arrowEnd,
-                textOrigin: textOrigin,
-                text: "",
-                color: color,
-                lineWidth: lineWidth,
-                fontSize: fontSize
-            )
+            if index == activeNumberTextEditIndex,
+               case .numberMarker(
+                   let center,
+                   let number,
+                   let color,
+                   let markerSize,
+                   let appearance,
+                   let textOrigin,
+                   _,
+                   let fontSize
+               ) = annotation {
+                return .numberMarker(
+                    center: center,
+                    number: number,
+                    color: color,
+                    markerSize: markerSize,
+                    appearance: appearance,
+                    textOrigin: textOrigin,
+                    text: "",
+                    fontSize: fontSize
+                )
+            }
+            return annotation
         }
     }
 
@@ -1785,7 +1862,10 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                     number: 1,
                     color: effectiveColor(numberMarkerStyle),
                     markerSize: 7,
-                    appearance: appearance
+                    appearance: appearance,
+                    textOrigin: .zero,
+                    text: "",
+                    fontSize: textStyle.size
                 )],
                 in: panel.size
             )
@@ -3459,6 +3539,9 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         switch annotations[index] {
         case .text:
             return annotation(at: index, contains: point)
+        case .numberMarker(_, _, _, _, _, let textOrigin, let text, let fontSize):
+            let size = AnnotationGeometry.numberMarkerTextSize(text: text, fontSize: fontSize)
+            return CGRect(origin: textOrigin, size: size).insetBy(dx: -10, dy: -8).contains(point)
         case .callout(_, _, _, let textOrigin, let text, _, _, let fontSize):
             let value = text.isEmpty ? " " : text
             let size = AnnotationTextLayout.size(for: value, fontSize: fontSize)
@@ -3473,6 +3556,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         switch annotations[index] {
         case .text:
             beginTextEdit(at: index)
+        case .numberMarker:
+            beginNumberMarkerTextEdit(at: index, registersUndo: false)
         case .callout:
             beginCalloutTextEdit(at: index, registersUndo: false)
         default:
@@ -3520,12 +3605,43 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         needsDisplay = true
     }
 
-    private func beginTextEntry(at point: CGPoint, initialText: String, editingExisting: Bool = false) {
+    private func beginNumberMarkerTextEdit(
+        at index: Int,
+        registersUndo: Bool = true,
+        wasJustCreated: Bool = false
+    ) {
+        guard annotations.indices.contains(index) else { return }
+        guard case .numberMarker(_, _, let color, _, _, let textOrigin, let text, let fontSize) = annotations[index] else { return }
+        if registersUndo {
+            registerUndo()
+        }
+        let originalAnnotation = annotations[index]
+        selectedAnnotationIndex = index
+        selectedTool = .numberMarker
+        textStyle = style(from: color, size: fontSize)
+        beginTextEntry(
+            at: textOrigin,
+            initialText: text,
+            editingExisting: true,
+            placeholder: "输入说明"
+        )
+        activeNumberTextEditIndex = index
+        activeNumberOriginalAnnotation = originalAnnotation
+        activeNumberWasJustCreated = wasJustCreated
+        needsDisplay = true
+    }
+
+    private func beginTextEntry(
+        at point: CGPoint,
+        initialText: String,
+        editingExisting: Bool = false,
+        placeholder: String? = nil
+    ) {
         commitActiveText()
         guard let selectionRect else { return }
 
         let absolute = CGPoint(x: selectionRect.minX + point.x, y: selectionRect.minY + point.y)
-        let textView = NSTextView(frame: CGRect(
+        let textView = AnnotationPlaceholderTextView(frame: CGRect(
             x: absolute.x - textInputPadding.width,
             y: absolute.y - textInputPadding.height,
             width: textInputMinSize.width,
@@ -3551,6 +3667,8 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             width: CGFloat.greatestFiniteMagnitude,
             height: CGFloat.greatestFiniteMagnitude
         )
+        textView.placeholder = placeholder
+        textView.placeholderColor = effectiveColor(textStyle).withAlphaComponent(0.52)
         textView.string = initialText
         addSubview(textView)
 
@@ -3576,15 +3694,25 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         activeTextOrigin = nil
         activeTextTopY = nil
         let calloutTextEditIndex = activeCalloutTextEditIndex
+        let numberTextEditIndex = activeNumberTextEditIndex
         activeCalloutTextEditIndex = nil
         activeCalloutOriginalAnnotation = nil
         activeCalloutWasJustCreated = false
+        activeNumberTextEditIndex = nil
+        activeNumberOriginalAnnotation = nil
+        activeNumberWasJustCreated = false
         activeTextIsEditingExisting = false
         textView.delegate = nil
         textView.removeFromSuperview()
         if let calloutTextEditIndex {
             updateCalloutText(at: calloutTextEditIndex, value: value, origin: resolvedOrigin)
             selectedAnnotationIndex = calloutTextEditIndex
+            needsDisplay = true
+            return
+        }
+        if let numberTextEditIndex {
+            updateNumberMarkerText(at: numberTextEditIndex, value: value, origin: resolvedOrigin)
+            selectedAnnotationIndex = numberTextEditIndex
             needsDisplay = true
             return
         }
@@ -3683,6 +3811,32 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         )
     }
 
+    private func updateNumberMarkerText(at index: Int, value: String, origin: CGPoint) {
+        guard annotations.indices.contains(index) else { return }
+        guard case .numberMarker(
+            let center,
+            let number,
+            let color,
+            let markerSize,
+            let appearance,
+            _,
+            _,
+            let fontSize
+        ) = annotations[index] else {
+            return
+        }
+        annotations[index] = .numberMarker(
+            center: center,
+            number: number,
+            color: color,
+            markerSize: markerSize,
+            appearance: appearance,
+            textOrigin: origin,
+            text: value,
+            fontSize: fontSize
+        )
+    }
+
     private func updateCalloutConnector(at index: Int, textOrigin: CGPoint, textSize: CGSize) {
         guard annotations.indices.contains(index) else { return }
         guard case .callout(
@@ -3742,10 +3896,39 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         needsDisplay = true
     }
 
+    private func cancelActiveNumberTextEdit() {
+        guard let textView = activeTextView, let index = activeNumberTextEditIndex else { return }
+        activeTextView = nil
+        activeTextOrigin = nil
+        activeTextTopY = nil
+        activeNumberTextEditIndex = nil
+        activeTextIsEditingExisting = false
+        textView.delegate = nil
+        textView.removeFromSuperview()
+
+        if activeNumberWasJustCreated {
+            if annotations.indices.contains(index) {
+                annotations.remove(at: index)
+            }
+            nextMarkerNumber = max(1, nextMarkerNumber - 1)
+            selectedAnnotationIndex = nil
+        } else if let original = activeNumberOriginalAnnotation, annotations.indices.contains(index) {
+            annotations[index] = original
+            selectedAnnotationIndex = index
+        }
+        _ = undoStack.popLast()
+        activeNumberOriginalAnnotation = nil
+        activeNumberWasJustCreated = false
+        window?.makeFirstResponder(self)
+        needsDisplay = true
+    }
+
     func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
             if activeCalloutTextEditIndex != nil {
                 cancelActiveCalloutTextEdit()
+            } else if activeNumberTextEditIndex != nil {
+                cancelActiveNumberTextEdit()
             } else {
                 commitActiveText()
                 window?.makeFirstResponder(self)
@@ -4033,7 +4216,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         case .highlighter(_, let color, let lineWidth):
             selectedTool = .highlighter
             highlighterStyle = style(from: color, size: lineWidth)
-        case .numberMarker(_, _, let color, let markerSize, let appearance):
+        case .numberMarker(_, _, let color, let markerSize, let appearance, _, _, _):
             selectedTool = .numberMarker
             numberMarkerStyle = style(from: color, size: markerSize)
             numberMarkerAppearance = appearance
@@ -4099,13 +4282,16 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                 color: color,
                 lineWidth: lineWidth
             )
-        case .numberMarker(let center, let number, let color, let markerSize, let appearance):
+        case .numberMarker(let center, let number, let color, let markerSize, let appearance, let textOrigin, let text, let fontSize):
             annotations[index] = .numberMarker(
                 center: CGPoint(x: center.x + appliedDelta.x, y: center.y + appliedDelta.y),
                 number: number,
                 color: color,
                 markerSize: markerSize,
-                appearance: appearance
+                appearance: appearance,
+                textOrigin: CGPoint(x: textOrigin.x + appliedDelta.x, y: textOrigin.y + appliedDelta.y),
+                text: text,
+                fontSize: fontSize
             )
         case .text(let origin, let value, let color, let fontSize):
             annotations[index] = .text(origin: CGPoint(x: origin.x + appliedDelta.x, y: origin.y + appliedDelta.y), value: value, color: color, fontSize: fontSize)
@@ -4218,13 +4404,23 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             annotations[index] = .freehand(points: points, color: effectiveColor(penStyle), lineWidth: penStyle.size)
         case (.highlighter, .highlighter(let points, _, _)):
             annotations[index] = .highlighter(points: points, color: effectiveColor(highlighterStyle), lineWidth: highlighterStyle.size)
-        case (.numberMarker, .numberMarker(let center, let number, _, _, _)):
+        case (.numberMarker, .numberMarker(let center, let number, _, _, _, _, let text, let fontSize)):
+            let canvas = CGRect(origin: .zero, size: selectionRect?.size ?? bounds.size)
+            let textOrigin = AnnotationGeometry.numberMarkerTextOrigin(
+                markerCenter: center,
+                markerSize: numberMarkerStyle.size,
+                textSize: AnnotationGeometry.numberMarkerTextSize(text: text, fontSize: fontSize),
+                inside: canvas
+            )
             annotations[index] = .numberMarker(
                 center: center,
                 number: number,
                 color: effectiveColor(numberMarkerStyle),
                 markerSize: numberMarkerStyle.size,
-                appearance: numberMarkerAppearance
+                appearance: numberMarkerAppearance,
+                textOrigin: textOrigin,
+                text: text,
+                fontSize: fontSize
             )
         case (.text, .text(let origin, let value, _, _)):
             annotations[index] = .text(origin: origin, value: value, color: effectiveColor(textStyle), fontSize: textStyle.size)
@@ -4477,8 +4673,17 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         case .arrow(let start, let end, _, _):
             drawSmallHandle(at: start)
             drawSmallHandle(at: end)
-        case .numberMarker(let center, _, _, _, _):
+        case .numberMarker(let center, _, _, _, _, let textOrigin, let text, let fontSize):
             drawSmallHandle(at: center)
+            if activeNumberTextEditIndex != index {
+                let textSize = AnnotationGeometry.numberMarkerTextSize(text: text, fontSize: fontSize)
+                let textFrame = CGRect(origin: textOrigin, size: textSize).insetBy(dx: -5, dy: -3)
+                let path = NSBezierPath(roundedRect: textFrame, xRadius: 4, yRadius: 4)
+                NSColor.controlAccentColor.withAlphaComponent(0.48).setStroke()
+                path.lineWidth = 1
+                path.setLineDash([3, 3], count: 2, phase: 0)
+                path.stroke()
+            }
         case .text(let origin, _, _, _):
             drawSmallHandle(at: origin)
         case .freehand(let points, _, let lineWidth), .highlighter(let points, _, let lineWidth):

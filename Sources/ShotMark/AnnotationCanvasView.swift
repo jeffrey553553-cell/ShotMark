@@ -178,7 +178,10 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
                 number: state.nextMarkerNumber,
                 color: .systemRed,
                 markerSize: 13,
-                appearance: .filled
+                appearance: .filled,
+                textOrigin: CGPoint(x: point.x + 25, y: point.y - 9),
+                text: "",
+                fontSize: 16
             ))
             state.nextMarkerNumber += 1
             needsDisplay = true
@@ -485,13 +488,16 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
                 color: color,
                 lineWidth: lineWidth
             )
-        case .numberMarker(let center, let number, let color, let markerSize, let appearance):
+        case .numberMarker(let center, let number, let color, let markerSize, let appearance, let textOrigin, let text, let fontSize):
             state.annotations[index] = .numberMarker(
                 center: CGPoint(x: center.x + appliedDelta.x, y: center.y + appliedDelta.y),
                 number: number,
                 color: color,
                 markerSize: markerSize,
-                appearance: appearance
+                appearance: appearance,
+                textOrigin: CGPoint(x: textOrigin.x + appliedDelta.x, y: textOrigin.y + appliedDelta.y),
+                text: text,
+                fontSize: fontSize
             )
         case .text(let origin, let value, let color, let fontSize):
             state.annotations[index] = .text(origin: CGPoint(x: origin.x + appliedDelta.x, y: origin.y + appliedDelta.y), value: value, color: color, fontSize: fontSize)
@@ -698,7 +704,7 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         case .arrow(let start, let end, _, _):
             drawHandle(at: start)
             drawHandle(at: end)
-        case .numberMarker(let center, _, _, _, _):
+        case .numberMarker(let center, _, _, _, _, _, _, _):
             drawHandle(at: center)
         case .text(let origin, _, _, _):
             drawHandle(at: origin)

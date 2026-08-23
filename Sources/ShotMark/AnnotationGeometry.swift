@@ -36,10 +36,10 @@ enum TextPointerDownResolution: Equatable {
 enum AnnotationInteractionPolicy {
     static func pointerDownResolution(
         hasActiveTextEditor: Bool,
-        isEditingCallout: Bool
+        isEditingCompositeAnnotation: Bool
     ) -> TextPointerDownResolution {
         guard hasActiveTextEditor else { return .noActiveEditor }
-        return isEditingCallout ? .commitAndContinue : .commitAndConsume
+        return isEditingCompositeAnnotation ? .commitAndContinue : .commitAndConsume
     }
 
     static func shouldDeselectBeforeDrawing(
@@ -51,6 +51,14 @@ enum AnnotationInteractionPolicy {
 }
 
 enum AnnotationGeometry {
+    static let emptyNumberTextSize = CGSize(width: 96, height: 24)
+
+    static func numberMarkerTextSize(text: String, fontSize: CGFloat) -> CGSize {
+        text.isEmpty
+            ? emptyNumberTextSize
+            : AnnotationTextLayout.size(for: text, fontSize: fontSize)
+    }
+
     static func numberMarkerCenter(
         forPointer pointer: CGPoint,
         markerSize: CGFloat,
@@ -72,6 +80,26 @@ enum AnnotationGeometry {
         return CGPoint(
             x: min(max(pointer.x, insetCanvas.minX), insetCanvas.maxX),
             y: min(max(y, insetCanvas.minY), insetCanvas.maxY)
+        )
+    }
+
+    static func numberMarkerTextOrigin(
+        markerCenter: CGPoint,
+        markerSize: CGFloat,
+        textSize: CGSize,
+        inside canvas: CGRect,
+        gap: CGFloat = 12
+    ) -> CGPoint {
+        let radius = max(8, markerSize)
+        let rightX = markerCenter.x + radius + gap
+        let leftX = markerCenter.x - radius - gap - textSize.width
+        let preferredX = rightX + textSize.width <= canvas.maxX ? rightX : leftX
+        return CGPoint(
+            x: min(max(preferredX, canvas.minX), max(canvas.minX, canvas.maxX - textSize.width)),
+            y: min(
+                max(markerCenter.y - textSize.height / 2, canvas.minY),
+                max(canvas.minY, canvas.maxY - textSize.height)
+            )
         )
     }
 
@@ -323,9 +351,11 @@ enum AnnotationGeometry {
         case .freehand(let points, _, let lineWidth),
              .highlighter(let points, _, let lineWidth):
             return AnnotationPathGeometry.bounds(points: points, lineWidth: lineWidth)
-        case .numberMarker(let center, _, _, let markerSize, _):
+        case .numberMarker(let center, _, _, let markerSize, _, let textOrigin, let text, let fontSize):
             let radius = max(8, markerSize)
-            return CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+            let markerBounds = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+            let textSize = numberMarkerTextSize(text: text, fontSize: fontSize)
+            return markerBounds.union(CGRect(origin: textOrigin, size: textSize))
         case .text(let origin, let value, _, let fontSize):
             return CGRect(origin: origin, size: AnnotationTextLayout.size(for: value, fontSize: fontSize))
         case .mosaic(let rect, _):
@@ -361,8 +391,11 @@ enum AnnotationGeometry {
         case .freehand(let points, _, let lineWidth),
              .highlighter(let points, _, let lineWidth):
             return AnnotationPathGeometry.contains(point, points: points, lineWidth: lineWidth)
-        case .numberMarker(let center, _, _, let markerSize, _):
-            return hypot(point.x - center.x, point.y - center.y) <= max(16, markerSize + 4)
+        case .numberMarker(let center, _, _, let markerSize, _, let textOrigin, let text, let fontSize):
+            let markerHit = hypot(point.x - center.x, point.y - center.y) <= max(16, markerSize + 4)
+            let textSize = numberMarkerTextSize(text: text, fontSize: fontSize)
+            let textHit = CGRect(origin: textOrigin, size: textSize).insetBy(dx: -8, dy: -7).contains(point)
+            return markerHit || textHit
         case .text(let origin, let value, _, let fontSize):
             let size = AnnotationTextLayout.size(for: value.isEmpty ? " " : value, fontSize: fontSize)
             return CGRect(origin: origin, size: size).insetBy(dx: -6, dy: -6).contains(point)
