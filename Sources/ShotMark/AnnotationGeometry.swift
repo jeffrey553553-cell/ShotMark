@@ -48,6 +48,17 @@ enum AnnotationInteractionPolicy {
     ) -> Bool {
         hasSelectedAnnotation && !didHitAnnotation
     }
+
+    static func shouldContinueNumberSequence(
+        wasEditingNumber: Bool,
+        isPrimedAfterBlur: Bool,
+        isNumberToolActive: Bool,
+        didHitAnnotation: Bool
+    ) -> Bool {
+        isNumberToolActive
+            && !didHitAnnotation
+            && (wasEditingNumber || isPrimedAfterBlur)
+    }
 }
 
 enum AnnotationGeometry {

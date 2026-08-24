@@ -159,6 +159,33 @@ final class AnnotationGeometryTests: XCTestCase {
         )
     }
 
+    func testBlurredNumberEditorPrimesExactlyOneFollowingCanvasClick() {
+        XCTAssertTrue(
+            AnnotationInteractionPolicy.shouldContinueNumberSequence(
+                wasEditingNumber: false,
+                isPrimedAfterBlur: true,
+                isNumberToolActive: true,
+                didHitAnnotation: false
+            )
+        )
+        XCTAssertFalse(
+            AnnotationInteractionPolicy.shouldContinueNumberSequence(
+                wasEditingNumber: false,
+                isPrimedAfterBlur: true,
+                isNumberToolActive: true,
+                didHitAnnotation: true
+            )
+        )
+        XCTAssertFalse(
+            AnnotationInteractionPolicy.shouldContinueNumberSequence(
+                wasEditingNumber: false,
+                isPrimedAfterBlur: true,
+                isNumberToolActive: false,
+                didHitAnnotation: false
+            )
+        )
+    }
+
     func testNearestPointForInteriorDragAlwaysSnapsToRectangleBorder() {
         let rect = CGRect(x: 100, y: 80, width: 200, height: 120)
         let point = AnnotationGeometry.nearestPointOnBorder(

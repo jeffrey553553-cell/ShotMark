@@ -403,6 +403,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     private var activeNumberTextEditIndex: Int?
     private var activeNumberOriginalAnnotation: Annotation?
     private var activeNumberWasJustCreated = false
+    private var isNumberSequencePrimed = false
     private var ocrPanelController: OCRResultPanelController?
     private var ocrDismissEventMonitor: Any?
     private var isOCRBusy = false
@@ -678,6 +679,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             }
 
             if let selectedAnnotationIndex, let drag = hitSelectedAnnotationHandle(at: point, index: selectedAnnotationIndex) {
+                isNumberSequencePrimed = false
                 registerUndo()
                 if event.clickCount >= 2, reattachCalloutArrowHead(for: drag) {
                     needsDisplay = true
@@ -695,6 +697,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                 pendingTextEditDidMove = false
 
                 if selectedEditableTextAnnotationContains(relative), let selectedAnnotationIndex {
+                    isNumberSequencePrimed = false
                     registerUndo()
                     pendingTextEditIndex = selectedAnnotationIndex
                     pendingTextEditStart = relative
@@ -707,12 +710,19 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
                 }
 
                 if let drag = hitAnnotation(at: relative) {
+                    isNumberSequencePrimed = false
                     registerUndo()
                     dragMode = drag
                     return
                 }
 
-                if continuesNumberSequence, selectedTool == .numberMarker {
+                if AnnotationInteractionPolicy.shouldContinueNumberSequence(
+                    wasEditingNumber: continuesNumberSequence,
+                    isPrimedAfterBlur: isNumberSequencePrimed,
+                    isNumberToolActive: selectedTool == .numberMarker,
+                    didHitAnnotation: false
+                ) {
+                    isNumberSequencePrimed = false
                     selectedAnnotationIndex = nil
                     beginAnnotation(tool: .numberMarker, at: relative, modifierFlags: event.modifierFlags)
                     return
@@ -1325,6 +1335,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     private func addNumberMarker(at point: CGPoint) {
         guard let selectionRect else { return }
+        isNumberSequencePrimed = false
         registerUndo()
         let canvas = CGRect(origin: .zero, size: selectionRect.size)
         let center = AnnotationGeometry.numberMarkerCenter(
@@ -2867,6 +2878,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private func selectTool(_ tool: AnnotationTool, toggles: Bool = true) {
+        isNumberSequencePrimed = false
         isRecordingMenuOpen = false
         isMoreMenuOpen = false
         hoveredMoreTool = nil
@@ -3229,6 +3241,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
     }
 
     private func handleLayeredEscape() {
+        isNumberSequencePrimed = false
         if ocrPanelController != nil || isRecordingMenuOpen || isMoreMenuOpen || shortcutMenuButton != nil {
             closeTransientPanels()
             shortcutMenuButton = nil
@@ -3919,6 +3932,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         _ = undoStack.popLast()
         activeNumberOriginalAnnotation = nil
         activeNumberWasJustCreated = false
+        isNumberSequencePrimed = false
         window?.makeFirstResponder(self)
         needsDisplay = true
     }
@@ -3946,8 +3960,12 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     func textDidEndEditing(_ notification: Notification) {
         guard activeTextView != nil else { return }
+        let wasEditingNumber = activeNumberTextEditIndex != nil
         shouldIgnoreNextMouseDownAfterTextEndEditing = true
         commitActiveText()
+        if wasEditingNumber {
+            isNumberSequencePrimed = true
+        }
     }
 
     private func runOCR() {
