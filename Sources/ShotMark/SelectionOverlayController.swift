@@ -4189,7 +4189,17 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             if let handle = annotationRectangleHandleHit(at: relative, rect: targetRect) {
                 return .resizingAnnotation(index: index, handle: handle)
             }
-        case .freehand, .highlighter, .numberMarker, .text:
+        case .numberMarker(let center, _, _, let markerSize, _, _, _, _):
+            let canvas = CGRect(origin: .zero, size: selectionRect?.size ?? bounds.size)
+            let handle = AnnotationGeometry.numberMarkerMoveHandle(
+                markerCenter: center,
+                markerSize: markerSize,
+                inside: canvas
+            )
+            if distance(relative, handle) <= 14 {
+                return .movingAnnotation(index: index, lastPoint: relative)
+            }
+        case .freehand, .highlighter, .text:
             break
         }
         return nil
@@ -4673,8 +4683,24 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         case .arrow(let start, let end, _, _):
             drawSmallHandle(at: start)
             drawSmallHandle(at: end)
-        case .numberMarker(let center, _, _, _, _, let textOrigin, let text, let fontSize):
-            drawSmallHandle(at: center)
+        case .numberMarker(let center, _, _, let markerSize, _, let textOrigin, let text, let fontSize):
+            let radius = max(8, markerSize)
+            let selectionRing = CGRect(
+                x: center.x - radius - 3,
+                y: center.y - radius - 3,
+                width: radius * 2 + 6,
+                height: radius * 2 + 6
+            )
+            let ringPath = NSBezierPath(ovalIn: selectionRing)
+            NSColor.controlAccentColor.withAlphaComponent(0.58).setStroke()
+            ringPath.lineWidth = 1
+            ringPath.stroke()
+            let canvas = CGRect(origin: .zero, size: selectionRect?.size ?? bounds.size)
+            drawSmallHandle(at: AnnotationGeometry.numberMarkerMoveHandle(
+                markerCenter: center,
+                markerSize: markerSize,
+                inside: canvas
+            ))
             if activeNumberTextEditIndex != index {
                 let textSize = AnnotationGeometry.numberMarkerTextSize(text: text, fontSize: fontSize)
                 let textFrame = CGRect(origin: textOrigin, size: textSize).insetBy(dx: -5, dy: -3)

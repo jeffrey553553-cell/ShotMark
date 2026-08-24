@@ -704,8 +704,12 @@ final class AnnotationCanvasView: NSView, NSTextFieldDelegate {
         case .arrow(let start, let end, _, _):
             drawHandle(at: start)
             drawHandle(at: end)
-        case .numberMarker(let center, _, _, _, _, _, _, _):
-            drawHandle(at: center)
+        case .numberMarker(let center, _, _, let markerSize, _, _, _, _):
+            drawHandle(at: AnnotationGeometry.numberMarkerMoveHandle(
+                markerCenter: center,
+                markerSize: markerSize,
+                inside: bounds
+            ))
         case .text(let origin, _, _, _):
             drawHandle(at: origin)
         case .freehand(let points, _, let lineWidth), .highlighter(let points, _, let lineWidth):

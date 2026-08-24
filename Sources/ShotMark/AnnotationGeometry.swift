@@ -103,6 +103,29 @@ enum AnnotationGeometry {
         )
     }
 
+    static func numberMarkerMoveHandle(
+        markerCenter: CGPoint,
+        markerSize: CGFloat,
+        inside canvas: CGRect,
+        handleRadius: CGFloat = 5
+    ) -> CGPoint {
+        let diagonal = (max(8, markerSize) + handleRadius) / sqrt(2)
+        let offsets = [
+            CGPoint(x: diagonal, y: -diagonal),
+            CGPoint(x: -diagonal, y: -diagonal),
+            CGPoint(x: diagonal, y: diagonal),
+            CGPoint(x: -diagonal, y: diagonal)
+        ]
+        let safeCanvas = canvas.insetBy(dx: handleRadius, dy: handleRadius)
+        return offsets
+            .map { CGPoint(x: markerCenter.x + $0.x, y: markerCenter.y + $0.y) }
+            .first(where: safeCanvas.contains)
+            ?? CGPoint(
+                x: min(max(markerCenter.x, safeCanvas.minX), safeCanvas.maxX),
+                y: min(max(markerCenter.y, safeCanvas.minY), safeCanvas.maxY)
+            )
+    }
+
     static let canvasMargin: CGFloat = 2
 
     static func clampedPoint(_ point: CGPoint, to bounds: CGRect, margin: CGFloat = canvasMargin) -> CGPoint {

@@ -89,6 +89,31 @@ final class AnnotationGeometryTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(AnnotationGeometry.visualBounds(of: annotation).maxX, 201)
     }
 
+    func testNumberMoveHandleSitsOutsideDigitAtBottomRight() {
+        let handle = AnnotationGeometry.numberMarkerMoveHandle(
+            markerCenter: CGPoint(x: 100, y: 100),
+            markerSize: 13,
+            inside: CGRect(x: 0, y: 0, width: 300, height: 200)
+        )
+
+        XCTAssertGreaterThan(handle.x, 110)
+        XCTAssertLessThan(handle.y, 90)
+        XCTAssertGreaterThan(hypot(handle.x - 100, handle.y - 100), 13)
+    }
+
+    func testNumberMoveHandleChangesCornerToStayInsideCanvas() {
+        let canvas = CGRect(x: 0, y: 0, width: 120, height: 120)
+        let handle = AnnotationGeometry.numberMarkerMoveHandle(
+            markerCenter: CGPoint(x: 108, y: 12),
+            markerSize: 13,
+            inside: canvas
+        )
+
+        XCTAssertTrue(canvas.insetBy(dx: 5, dy: 5).contains(handle))
+        XCTAssertLessThan(handle.x, 108)
+        XCTAssertGreaterThan(handle.y, 12)
+    }
+
     func testCalloutTextCommitContinuesTheSamePointerInteraction() {
         XCTAssertEqual(
             AnnotationInteractionPolicy.pointerDownResolution(
