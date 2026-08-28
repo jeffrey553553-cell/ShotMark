@@ -36,6 +36,26 @@ enum LongScreenshotCaptureMode: Equatable {
     }
 }
 
+enum LongScreenshotAutomaticScrollPolicy {
+    static let defaultStep: Int32 = 44
+    static let minimumStep: Int32 = 28
+    static let maximumStep: Int32 = 56
+
+    static func acceleratedStep(from current: Int32, confidence: CGFloat) -> Int32 {
+        if confidence >= 0.9 {
+            return min(maximumStep, current + 4)
+        }
+        if confidence < 0.74 {
+            return max(minimumStep, current - 6)
+        }
+        return current
+    }
+
+    static func recoveryStep(from current: Int32) -> Int32 {
+        max(minimumStep, current - 8)
+    }
+}
+
 enum LongScreenshotCropGeometry {
     static func cropRect(
         imageWidth: Int,
@@ -229,7 +249,7 @@ final class LongScreenshotSessionController {
     private var previewView: LongScreenshotPreviewView?
     private var alignmentRetryCount = 0
     private var stabilityRetryCount = 0
-    private var captureMode: LongScreenshotCaptureMode = .automatic
+    private var captureMode: LongScreenshotCaptureMode = .manual
     private var automaticStallCount = 0
     private var didStartAutomaticScrolling = false
     private var cropTopPixels = 0
@@ -242,8 +262,8 @@ final class LongScreenshotSessionController {
     private let scrollCaptureInterval: TimeInterval = 0.095
     private let trailingCaptureDelay: TimeInterval = 0.18
     private let scrollDirectionThreshold: CGFloat = 0.1
-    private let automaticScrollInterval: TimeInterval = 0.34
-    private let automaticScrollDeltaPoints: Int32 = 56
+    private let automaticScrollInterval: TimeInterval = 0.38
+    private var automaticScrollDeltaPoints = LongScreenshotAutomaticScrollPolicy.defaultStep
     private let automaticEventMarker: Int64 = 0x53484F544D41524B
     private let maximumStabilityRetryCount = 6
     private let streamMotionDifferenceThreshold = 1.8
@@ -487,6 +507,7 @@ final class LongScreenshotSessionController {
         automaticScrollWorkItem?.cancel()
         automaticScrollWorkItem = nil
         automaticStallCount = 0
+        automaticScrollDeltaPoints = LongScreenshotAutomaticScrollPolicy.defaultStep
         controlView?.captureMode = mode
         updateControlView(status: status ?? (mode == .automatic ? "自动滚动准备中" : "请滚动页面"))
         updatePreview(status: status ?? (mode == .automatic ? "自动模式" : "手动模式"))
@@ -498,8 +519,9 @@ final class LongScreenshotSessionController {
 
     private func startAutomaticScrolling() {
         guard captureMode == .automatic, !finishAfterCapture else { return }
-        guard AXIsProcessTrusted() else {
-            setCaptureMode(.manual, status: "自动滚动需要辅助功能权限，请手动滚动")
+        guard PermissionService.hasAccessibilityAccess else {
+            PermissionService.requestAccessibilityAccess()
+            setCaptureMode(.manual, status: "请允许辅助功能权限，再点自动向下")
             return
         }
         didStartAutomaticScrolling = true
@@ -838,8 +860,13 @@ final class LongScreenshotSessionController {
                 screenScale: selection.screen.backingScaleFactor,
                 createdAt: createdAt
             ))
-            updateControlView(status: update?.statusText ?? "滚动页面继续采集")
-            updatePreview(status: update?.previewStatusText ?? "继续滚动采集")
+            if captureMode == .manual, case .initialized = update?.outcome {
+                updateControlView(status: "首帧已采集，请滚动或点自动向下")
+                updatePreview(status: "可手动滚动或自动向下")
+            } else {
+                updateControlView(status: update?.statusText ?? "滚动页面继续采集")
+                updatePreview(status: update?.previewStatusText ?? "继续滚动采集")
+            }
         } else {
             updateControlView(status: update?.statusText ?? "未检测到新内容")
             updatePreview(status: update?.previewStatusText ?? "未追加")
@@ -854,6 +881,10 @@ final class LongScreenshotSessionController {
             startAutomaticScrolling()
         case .appended:
             automaticStallCount = 0
+            automaticScrollDeltaPoints = LongScreenshotAutomaticScrollPolicy.acceleratedStep(
+                from: automaticScrollDeltaPoints,
+                confidence: update.confidence
+            )
             scheduleAutomaticScrollStep()
         case .ignoredNoMovement, .ignoredCoveredContent:
             automaticStallCount += 1
@@ -863,6 +894,9 @@ final class LongScreenshotSessionController {
                 scheduleAutomaticScrollStep(after: 0.22)
             }
         case .ignoredAlignmentFailed:
+            automaticScrollDeltaPoints = LongScreenshotAutomaticScrollPolicy.recoveryStep(
+                from: automaticScrollDeltaPoints
+            )
             break
         }
     }
@@ -921,13 +955,13 @@ final class LongScreenshotSessionController {
     }
 
     private func showControlWindow() {
-        let size = CGSize(width: 236, height: 40)
+        let size = CGSize(width: 226, height: 40)
         let frame = toolbarFrame(size: size)
 
         let view = LongScreenshotControlView(frame: CGRect(origin: .zero, size: size))
         view.captureMode = captureMode
-        view.onModeChange = { [weak self] mode in
-            self?.setCaptureMode(mode)
+        view.onAutomaticToggle = { [weak self] in
+            self?.toggleAutomaticScrolling()
         }
         view.onCopy = { [weak self] in self?.finish(action: .copyToClipboard) }
         view.onSave = { [weak self] in self?.finish(action: .saveToFile) }
@@ -950,6 +984,20 @@ final class LongScreenshotSessionController {
         panel.contentView = view
         panel.orderFrontRegardless()
         window = panel
+    }
+
+    private func toggleAutomaticScrolling() {
+        if captureMode == .automatic {
+            setCaptureMode(.manual, status: "已停止自动滚动，请手动滚动或保存")
+            return
+        }
+        guard PermissionService.hasAccessibilityAccess else {
+            PermissionService.requestAccessibilityAccess()
+            updateControlView(status: "请允许辅助功能权限，再点自动向下")
+            updatePreview(status: "等待辅助功能授权")
+            return
+        }
+        setCaptureMode(.automatic, status: "自动滚动准备中")
     }
 
     private func updateControlView(status: String) {
@@ -1236,6 +1284,8 @@ final class LongScreenshotSessionController {
         finishAfterCapture = false
         pendingCommitAction = nil
         automaticStallCount = 0
+        automaticScrollDeltaPoints = LongScreenshotAutomaticScrollPolicy.defaultStep
+        captureMode = .manual
         didStartAutomaticScrolling = false
         cropTopPixels = 0
         cropBottomPixels = 0
@@ -1250,28 +1300,24 @@ enum LongScreenshotScrollDirectionResolver {
 }
 
 final class LongScreenshotControlView: NSView {
-    var onModeChange: ((LongScreenshotCaptureMode) -> Void)?
+    var onAutomaticToggle: (() -> Void)?
     var onCopy: (() -> Void)?
     var onSave: (() -> Void)?
     var onCancel: (() -> Void)?
     var frameCount = 0
     var status = "准备采集..."
-    var captureMode: LongScreenshotCaptureMode = .automatic
+    var captureMode: LongScreenshotCaptureMode = .manual
     var directionText = "待滚动"
     var stitchedHeight = 0
-    private var hoveredMode: LongScreenshotCaptureMode?
+    private var isAutomaticHovered = false
     private var trackingAreaRef: NSTrackingArea?
 
     private var automaticFrame: CGRect {
-        CGRect(x: bounds.minX + 7, y: bounds.midY - 14, width: 45, height: 28)
-    }
-
-    private var manualFrame: CGRect {
-        CGRect(x: automaticFrame.maxX + 2, y: bounds.midY - 14, width: 45, height: 28)
+        CGRect(x: bounds.minX + 7, y: bounds.midY - 14, width: 88, height: 28)
     }
 
     private var copyFrame: CGRect {
-        CGRect(x: manualFrame.maxX + 10, y: bounds.midY - 15, width: 32, height: 30)
+        CGRect(x: automaticFrame.maxX + 10, y: bounds.midY - 15, width: 32, height: 30)
     }
 
     private var saveFrame: CGRect {
@@ -1308,25 +1354,21 @@ final class LongScreenshotControlView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        let next: LongScreenshotCaptureMode? = automaticFrame.contains(point)
-            ? .automatic
-            : (manualFrame.contains(point) ? .manual : nil)
-        guard next != hoveredMode else { return }
-        hoveredMode = next
+        let next = automaticFrame.contains(point)
+        guard next != isAutomaticHovered else { return }
+        isAutomaticHovered = next
         needsDisplay = true
     }
 
     override func mouseExited(with event: NSEvent) {
-        hoveredMode = nil
+        isAutomaticHovered = false
         needsDisplay = true
     }
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         if automaticFrame.contains(point) {
-            onModeChange?(.automatic)
-        } else if manualFrame.contains(point) {
-            onModeChange?(.manual)
+            onAutomaticToggle?()
         } else if copyFrame.contains(point) {
             onCopy?()
         } else if saveFrame.contains(point) {
@@ -1338,33 +1380,38 @@ final class LongScreenshotControlView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         drawToolbarBackground()
-        drawModeButton(.automatic, in: automaticFrame)
-        drawModeButton(.manual, in: manualFrame)
-        drawSeparator(x: manualFrame.maxX + 5)
+        drawAutomaticButton(in: automaticFrame)
+        drawSeparator(x: automaticFrame.maxX + 5)
         drawIconButton(kind: .copy, in: copyFrame)
         drawIconButton(kind: .save, in: saveFrame)
         drawSeparator(x: cancelFrame.minX - 6)
         drawIconButton(kind: .cancel, in: cancelFrame)
     }
 
-    private func drawModeButton(_ mode: LongScreenshotCaptureMode, in rect: CGRect) {
-        let selected = captureMode == mode
-        let hovered = hoveredMode == mode
-        if selected || hovered {
-            (selected
+    private func drawAutomaticButton(in rect: CGRect) {
+        let isRunning = captureMode == .automatic
+        if isRunning || isAutomaticHovered {
+            (isRunning
                 ? NSColor.white.withAlphaComponent(0.15)
                 : NSColor.white.withAlphaComponent(0.08)
             ).setFill()
             NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8).fill()
         }
-        let text = mode.displayName
+        let text = isRunning ? "停止" : "自动向下"
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 11, weight: selected ? .semibold : .medium),
-            .foregroundColor: NSColor.white.withAlphaComponent(selected ? 0.94 : 0.66)
+            .font: NSFont.systemFont(ofSize: 11, weight: isRunning ? .semibold : .medium),
+            .foregroundColor: NSColor.white.withAlphaComponent(isRunning ? 0.94 : 0.72)
         ]
         let size = text.size(withAttributes: attributes)
+        let symbolName = isRunning ? "stop.fill" : "arrow.down"
+        let iconRect = CGRect(x: rect.minX + 11, y: rect.midY - 6, width: 12, height: 12)
+        drawSystemIcon(
+            symbolName,
+            in: iconRect,
+            color: isRunning ? .systemRed : NSColor.white.withAlphaComponent(0.72)
+        )
         text.draw(
-            at: CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2),
+            at: CGPoint(x: rect.minX + 29, y: rect.midY - size.height / 2),
             withAttributes: attributes
         )
     }
@@ -1539,7 +1586,7 @@ final class LongScreenshotPreviewView: NSView {
     var image: CGImage?
     var frameCount = 0
     var status = "准备采集"
-    var captureMode: LongScreenshotCaptureMode = .automatic
+    var captureMode: LongScreenshotCaptureMode = .manual
     var directionText = "待滚动"
     var stitchedHeight = 0
     var cropTopPixels = 0

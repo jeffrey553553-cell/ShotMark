@@ -19,4 +19,30 @@ final class LongScreenshotRetryPolicyTests: XCTestCase {
         XCTAssertEqual(policy.delay(forAttempt: 2), 0.2)
         XCTAssertNil(policy.delay(forAttempt: 3))
     }
+
+    func testAutomaticScrollAcceleratesOnlyAfterReliableAlignment() {
+        XCTAssertEqual(
+            LongScreenshotAutomaticScrollPolicy.acceleratedStep(from: 44, confidence: 0.94),
+            48
+        )
+        XCTAssertEqual(
+            LongScreenshotAutomaticScrollPolicy.acceleratedStep(from: 44, confidence: 0.82),
+            44
+        )
+        XCTAssertEqual(
+            LongScreenshotAutomaticScrollPolicy.acceleratedStep(from: 44, confidence: 0.61),
+            38
+        )
+    }
+
+    func testAutomaticScrollStepAlwaysStaysInsideSafeRange() {
+        XCTAssertEqual(
+            LongScreenshotAutomaticScrollPolicy.acceleratedStep(from: 56, confidence: 0.98),
+            LongScreenshotAutomaticScrollPolicy.maximumStep
+        )
+        XCTAssertEqual(
+            LongScreenshotAutomaticScrollPolicy.recoveryStep(from: 28),
+            LongScreenshotAutomaticScrollPolicy.minimumStep
+        )
+    }
 }
