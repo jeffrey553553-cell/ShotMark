@@ -13,6 +13,7 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
     private let captureService = CaptureService()
     private let videoRecordingService = VideoRecordingService()
     private var recordingResultScreen: NSScreen?
+    private var captureSourceProcessIdentifier: pid_t?
     private var recordingState: RecordingUIState = .idle {
         didSet {
             recordingOverlayController?.update(state: recordingState)
@@ -60,6 +61,11 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
     func beginCapture() {
         guard case .idle = recordingState else { return }
 
+        let frontmostApplication = NSWorkspace.shared.frontmostApplication
+        captureSourceProcessIdentifier = frontmostApplication?.bundleIdentifier == Bundle.main.bundleIdentifier
+            ? nil
+            : frontmostApplication?.processIdentifier
+
         PermissionService.verifyScreenRecordingAccess { [weak self] isGranted in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -105,10 +111,13 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
 
     func selectionOverlayControllerDidCancel(_ controller: SelectionOverlayController) {
         overlayController = nil
+        captureSourceProcessIdentifier = nil
     }
 
     func selectionOverlayController(_ controller: SelectionOverlayController, didCommit selection: CaptureSelection, frozenCapture: CaptureResult?, annotations: [Annotation], action: CaptureCommitAction) {
         overlayController = nil
+        let sourceProcessIdentifier = captureSourceProcessIdentifier
+        captureSourceProcessIdentifier = nil
         switch action {
         case .recordVideo(let options):
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
@@ -116,7 +125,10 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
             }
         case .longScreenshot:
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
-                self?.startLongScreenshot(selection: selection)
+                self?.startLongScreenshot(
+                    selection: selection,
+                    targetProcessIdentifier: sourceProcessIdentifier
+                )
             }
         case .copyToClipboard, .saveToFile, .pinToScreen:
             if let frozenCapture {
@@ -206,8 +218,11 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
         }
     }
 
-    private func startLongScreenshot(selection: CaptureSelection) {
-        let controller = LongScreenshotSessionController(selection: selection)
+    private func startLongScreenshot(selection: CaptureSelection, targetProcessIdentifier: pid_t?) {
+        let controller = LongScreenshotSessionController(
+            selection: selection,
+            targetProcessIdentifier: targetProcessIdentifier
+        )
         longScreenshotController = controller
         controller.onFinish = { [weak self, weak controller] result in
             guard let self else { return }

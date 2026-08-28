@@ -56,6 +56,27 @@ enum LongScreenshotAutomaticScrollPolicy {
     }
 }
 
+enum LongScreenshotAutomaticStartDecision: Equatable {
+    case requestAccessibilityPermission
+    case waitForTargetApplication
+    case start
+}
+
+enum LongScreenshotAutomaticStartPolicy {
+    static func decision(
+        hasAccessibilityAccess: Bool,
+        targetProcessIdentifier: pid_t?,
+        frontmostProcessIdentifier: pid_t?
+    ) -> LongScreenshotAutomaticStartDecision {
+        guard hasAccessibilityAccess else { return .requestAccessibilityPermission }
+        guard let targetProcessIdentifier,
+              targetProcessIdentifier == frontmostProcessIdentifier else {
+            return .waitForTargetApplication
+        }
+        return .start
+    }
+}
+
 enum LongScreenshotCropGeometry {
     static func cropRect(
         imageWidth: Int,
@@ -213,6 +234,7 @@ final class LongScreenshotSessionController {
     private let frameRing = LongScreenshotFrameRing()
     private let retryPolicy = LongScreenshotRetryPolicy()
     private let selection: CaptureSelection
+    private var targetProcessIdentifier: pid_t?
     private var captures: [CaptureResult] = []
     private var stitchedImageCache: CGImage?
     private var window: NSPanel?
@@ -252,6 +274,7 @@ final class LongScreenshotSessionController {
     private var captureMode: LongScreenshotCaptureMode = .manual
     private var automaticStallCount = 0
     private var didStartAutomaticScrolling = false
+    private var isAwaitingAccessibilityAuthorization = false
     private var cropTopPixels = 0
     private var cropBottomPixels = 0
     private var streamFrameCount = 0
@@ -270,8 +293,9 @@ final class LongScreenshotSessionController {
     private let streamMotionCaptureInterval: TimeInterval = 0.12
     private let streamStableCaptureDelay: TimeInterval = 0.16
 
-    init(selection: CaptureSelection) {
+    init(selection: CaptureSelection, targetProcessIdentifier: pid_t? = nil) {
         self.selection = selection
+        self.targetProcessIdentifier = targetProcessIdentifier
         isStreamCaptureEnabled = ProcessInfo.processInfo.environment["SHOTMARK_LONGSHOT_V1"] != "1"
     }
 
@@ -397,6 +421,7 @@ final class LongScreenshotSessionController {
     }
 
     private func handleStreamFrame(_ frame: LongScreenshotFrame) {
+        guard !isAwaitingAccessibilityAuthorization else { return }
         let cleanedFrame = LongScreenshotFrame(
             sequenceNumber: frame.sequenceNumber,
             image: cleanedImage(frame.image, scale: selection.screen.backingScaleFactor),
@@ -482,6 +507,7 @@ final class LongScreenshotSessionController {
         if event.cgEvent?.getIntegerValueField(.eventSourceUserData) == automaticEventMarker {
             return
         }
+        guard !isAwaitingAccessibilityAuthorization else { return }
         if captureMode == .automatic, didStartAutomaticScrolling {
             setCaptureMode(.manual, status: "已切换手动滚动")
         }
@@ -519,9 +545,8 @@ final class LongScreenshotSessionController {
 
     private func startAutomaticScrolling() {
         guard captureMode == .automatic, !finishAfterCapture else { return }
-        guard PermissionService.hasAccessibilityAccess else {
-            PermissionService.requestAccessibilityAccess()
-            setCaptureMode(.manual, status: "请允许辅助功能权限，再点自动向下")
+        guard automaticStartDecision() == .start else {
+            setCaptureMode(.manual, status: "请返回原页面，再点自动向下")
             return
         }
         didStartAutomaticScrolling = true
@@ -544,6 +569,10 @@ final class LongScreenshotSessionController {
     }
 
     private func performAutomaticScrollStep() {
+        guard automaticStartDecision() == .start else {
+            setCaptureMode(.manual, status: "已停止自动滚动，请返回原页面")
+            return
+        }
         guard !isCapturing, alignmentRetryWorkItem == nil else {
             scheduleAutomaticScrollStep(after: 0.12)
             return
@@ -566,7 +595,11 @@ final class LongScreenshotSessionController {
             ?? CGDisplayBounds(CGMainDisplayID()).height
         event.location = CGPoint(x: center.x, y: mainScreenTop - center.y)
         event.setIntegerValueField(.eventSourceUserData, value: automaticEventMarker)
-        event.post(tap: .cghidEventTap)
+        guard let targetProcessIdentifier else {
+            setCaptureMode(.manual, status: "未找到滚动页面，请重新开始长截图")
+            return
+        }
+        event.postToPid(targetProcessIdentifier)
 
         let scale = max(1, selection.screen.backingScaleFactor)
         lastScrollDirectionSign = -1
@@ -655,7 +688,7 @@ final class LongScreenshotSessionController {
         retryContext: LongScreenshotAlignmentRetryContext? = nil,
         requireStableFrame: Bool = false
     ) {
-        guard !finishAfterCapture else { return }
+        guard !finishAfterCapture, !isAwaitingAccessibilityAuthorization else { return }
         if isCapturing {
             needsCaptureAfterCurrent = true
             needsStableCaptureAfterCurrent = needsStableCaptureAfterCurrent || requireStableFrame
@@ -723,6 +756,7 @@ final class LongScreenshotSessionController {
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.isCapturing = false
+                    guard !self.isAwaitingAccessibilityAuthorization else { return }
 
                     switch result {
                     case .success(let capture):
@@ -991,13 +1025,67 @@ final class LongScreenshotSessionController {
             setCaptureMode(.manual, status: "已停止自动滚动，请手动滚动或保存")
             return
         }
-        guard PermissionService.hasAccessibilityAccess else {
+
+        refreshTargetProcessIdentifierIfNeeded()
+        switch automaticStartDecision() {
+        case .requestAccessibilityPermission:
+            suspendCaptureForAccessibilityAuthorization()
             PermissionService.requestAccessibilityAccess()
-            updateControlView(status: "请允许辅助功能权限，再点自动向下")
-            updatePreview(status: "等待辅助功能授权")
-            return
+            updateControlView(status: "请授权后返回原页面，再点自动向下")
+            updatePreview(status: "授权期间已暂停采集")
+        case .waitForTargetApplication:
+            updateControlView(status: "请返回原页面，再点自动向下")
+            updatePreview(status: "等待返回原页面")
+        case .start:
+            resumeCaptureAfterAccessibilityAuthorization()
+            setCaptureMode(.automatic, status: "自动滚动准备中")
         }
-        setCaptureMode(.automatic, status: "自动滚动准备中")
+    }
+
+    private func automaticStartDecision() -> LongScreenshotAutomaticStartDecision {
+        LongScreenshotAutomaticStartPolicy.decision(
+            hasAccessibilityAccess: PermissionService.hasAccessibilityAccess,
+            targetProcessIdentifier: targetProcessIdentifier,
+            frontmostProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier
+        )
+    }
+
+    private func refreshTargetProcessIdentifierIfNeeded() {
+        guard targetProcessIdentifier == nil,
+              let application = NSWorkspace.shared.frontmostApplication,
+              application.bundleIdentifier != Bundle.main.bundleIdentifier,
+              application.bundleIdentifier != "com.apple.systempreferences",
+              application.bundleIdentifier != "com.apple.systemsettings" else { return }
+        targetProcessIdentifier = application.processIdentifier
+    }
+
+    private func suspendCaptureForAccessibilityAuthorization() {
+        isAwaitingAccessibilityAuthorization = true
+        setCaptureMode(.manual, status: "等待辅助功能授权")
+        throttledScrollCaptureWorkItem?.cancel()
+        throttledScrollCaptureWorkItem = nil
+        trailingScrollCaptureWorkItem?.cancel()
+        trailingScrollCaptureWorkItem = nil
+        alignmentRetryWorkItem?.cancel()
+        alignmentRetryWorkItem = nil
+        stabilityCaptureWorkItem?.cancel()
+        stabilityCaptureWorkItem = nil
+        streamMotionCaptureWorkItem?.cancel()
+        streamMotionCaptureWorkItem = nil
+        streamStableCaptureWorkItem?.cancel()
+        streamStableCaptureWorkItem = nil
+        needsCaptureAfterCurrent = false
+        needsStableCaptureAfterCurrent = false
+    }
+
+    private func resumeCaptureAfterAccessibilityAuthorization() {
+        guard isAwaitingAccessibilityAuthorization else { return }
+        isAwaitingAccessibilityAuthorization = false
+        frameRing.reset()
+        streamMotionReferenceImage = nil
+        minimumCaptureSequenceNumber = nil
+        latestScrollEventSequenceNumber = nil
+        pendingExpectedScrollDeltaPixels = 0
     }
 
     private func updateControlView(status: String) {
@@ -1287,6 +1375,7 @@ final class LongScreenshotSessionController {
         automaticScrollDeltaPoints = LongScreenshotAutomaticScrollPolicy.defaultStep
         captureMode = .manual
         didStartAutomaticScrolling = false
+        isAwaitingAccessibilityAuthorization = false
         cropTopPixels = 0
         cropBottomPixels = 0
     }

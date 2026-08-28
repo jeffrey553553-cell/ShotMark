@@ -45,4 +45,31 @@ final class LongScreenshotRetryPolicyTests: XCTestCase {
             LongScreenshotAutomaticScrollPolicy.minimumStep
         )
     }
+
+    func testAutomaticScrollRequiresPermissionAndOriginalApplication() {
+        XCTAssertEqual(
+            LongScreenshotAutomaticStartPolicy.decision(
+                hasAccessibilityAccess: false,
+                targetProcessIdentifier: 101,
+                frontmostProcessIdentifier: 101
+            ),
+            .requestAccessibilityPermission
+        )
+        XCTAssertEqual(
+            LongScreenshotAutomaticStartPolicy.decision(
+                hasAccessibilityAccess: true,
+                targetProcessIdentifier: 101,
+                frontmostProcessIdentifier: 202
+            ),
+            .waitForTargetApplication
+        )
+        XCTAssertEqual(
+            LongScreenshotAutomaticStartPolicy.decision(
+                hasAccessibilityAccess: true,
+                targetProcessIdentifier: 101,
+                frontmostProcessIdentifier: 101
+            ),
+            .start
+        )
+    }
 }

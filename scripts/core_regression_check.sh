@@ -340,6 +340,8 @@ Mark each item PASS/FAIL after running it.
 | Recording stop | Press configured screenshot shortcut while recording | Recording stops and saved file plays | |
 | Mosaic | Draw mosaic over text | Text under the drawn area is blurred, no visible border is drawn | |
 | Long screenshot | Start long screenshot and press Esc | Session cancels and returns without saving/copying | |
+| Long screenshot | Click Auto Down without Accessibility permission | Capture pauses while System Settings is visible; granting permission does not auto-start; returning to the original page and clicking Auto Down starts scrolling | |
+| Long screenshot | Move and click the mouse during automatic scrolling | Pointer remains under user control; the original page keeps scrolling and switching to another app stops automatic scrolling | |
 | Long screenshot | Scroll down, then scroll upward repeatedly | Preview does not keep appending reversed/duplicate content | |
 | Long screenshot | Reverse direction through already captured content | Preview height stays unchanged while traversing covered content and resumes only after reaching new content | |
 | Long screenshot | Start near page bottom, scroll upward | New upper content is prepended above the starting frame | |
