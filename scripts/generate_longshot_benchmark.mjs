@@ -39,8 +39,8 @@ try {
     await fs.rm(directory, { recursive: true, force: true });
     await fs.mkdir(directory, { recursive: true });
 
-    // Bidirectional capture models ShotMark's 30fps stream/56pt automatic
-    // scrolling cadence. Other scenarios retain larger jumps as stress tests.
+    // Bidirectional capture models ShotMark's stable-frame stream cadence.
+    // Other scenarios retain larger jumps as overlap and recovery stress tests.
     const hasFloatingOverlay = !["simple", "repeated"].includes(scenario);
     const step = hasFloatingOverlay ? 112 : 236;
     let maximumOffset = await page.evaluate(() => document.documentElement.scrollHeight - innerHeight);

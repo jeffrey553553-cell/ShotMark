@@ -20,30 +20,55 @@ final class LongScreenshotRetryPolicyTests: XCTestCase {
         XCTAssertNil(policy.delay(forAttempt: 3))
     }
 
-    func testAutomaticScrollAcceleratesOnlyAfterReliableAlignment() {
+    func testAutomaticScrollAdaptsToObservedMovementAndConfidence() {
         XCTAssertEqual(
-            LongScreenshotAutomaticScrollPolicy.acceleratedStep(from: 44, confidence: 0.94),
-            48
+            LongScreenshotAutomaticScrollPolicy.nextStep(
+                from: 100,
+                acceptedDeltaPixels: 100,
+                viewportHeightPixels: 1_000,
+                screenScale: 1,
+                confidence: 0.94
+            ),
+            116
         )
         XCTAssertEqual(
-            LongScreenshotAutomaticScrollPolicy.acceleratedStep(from: 44, confidence: 0.82),
-            44
+            LongScreenshotAutomaticScrollPolicy.nextStep(
+                from: 100,
+                acceptedDeltaPixels: 280,
+                viewportHeightPixels: 1_000,
+                screenScale: 1,
+                confidence: 0.82
+            ),
+            100
         )
         XCTAssertEqual(
-            LongScreenshotAutomaticScrollPolicy.acceleratedStep(from: 44, confidence: 0.61),
-            38
+            LongScreenshotAutomaticScrollPolicy.nextStep(
+                from: 100,
+                acceptedDeltaPixels: 280,
+                viewportHeightPixels: 1_000,
+                screenScale: 1,
+                confidence: 0.61
+            ),
+            72
         )
     }
 
     func testAutomaticScrollStepAlwaysStaysInsideSafeRange() {
         XCTAssertEqual(
-            LongScreenshotAutomaticScrollPolicy.acceleratedStep(from: 56, confidence: 0.98),
-            LongScreenshotAutomaticScrollPolicy.maximumStep
+            LongScreenshotAutomaticScrollPolicy.nextStep(
+                from: 230,
+                acceptedDeltaPixels: 80,
+                viewportHeightPixels: 600,
+                screenScale: 1,
+                confidence: 0.98
+            ),
+            204
         )
         XCTAssertEqual(
-            LongScreenshotAutomaticScrollPolicy.recoveryStep(from: 28),
+            LongScreenshotAutomaticScrollPolicy.recoveryStep(from: 48, viewportHeightPoints: 600),
             LongScreenshotAutomaticScrollPolicy.minimumStep
         )
+        XCTAssertEqual(LongScreenshotAutomaticScrollPolicy.initialStep(viewportHeightPoints: 1_000), 180)
     }
 
     func testAutomaticScrollRequiresPermissionAndOriginalApplication() {

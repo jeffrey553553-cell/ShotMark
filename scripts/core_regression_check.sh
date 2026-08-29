@@ -37,6 +37,7 @@ verify_dmg_install_layout() {
 
 run_step "Swift debug build" swift build --disable-sandbox
 run_step "Swift tests" swift test --disable-sandbox
+run_step "Rendered long screenshot benchmark" "$ROOT_DIR/scripts/run_longshot_benchmark.sh"
 run_step "Release app build" "$ROOT_DIR/scripts/build_app.sh"
 run_step "Code signature verify" codesign --verify --deep --verbose=2 "$ROOT_DIR/dist/ShotMark.app"
 run_step "Privacy metadata verify" env ROOT_DIR="$ROOT_DIR" bash -c '
@@ -157,6 +158,10 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "pendingExpectedScrollDeltaPixels" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "LongScreenshotFrameSource" Sources/ShotMark/LongScreenshotFrameSource.swift Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "LongScreenshotFrameRing" Sources/ShotMark/LongScreenshotFrameRing.swift Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "requiredConsecutiveFrames: Int = 3" Sources/ShotMark/LongScreenshotFrameRing.swift
+  rg -q "sampledSharpness" Sources/ShotMark/LongScreenshotFrameRing.swift Tests/ShotMarkTests/LongScreenshotFrameRingTests.swift
+  rg -q "sharpestRecentFrame" Sources/ShotMark/LongScreenshotFrameRing.swift Sources/ShotMark/LongScreenshotSessionController.swift Tests/ShotMarkTests/LongScreenshotFrameRingTests.swift
+  rg -q "LongScreenshotAutomaticScrollPolicy.nextStep" Sources/ShotMark/LongScreenshotSessionController.swift Tests/ShotMarkTests/LongScreenshotRetryPolicyTests.swift
   rg -q "SCStreamOutput" Sources/ShotMark/LongScreenshotFrameSource.swift
   rg -q "latestFrame\\(after: sequenceNumber\\)" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "frameRing\\.markCommitted" Sources/ShotMark/LongScreenshotSessionController.swift
@@ -266,6 +271,7 @@ Generated: $TIMESTAMP
 
 - Swift debug build: PASS
 - Swift tests: PASS
+- Rendered long screenshot benchmark: PASS
 - Release app build: PASS
 - Code signature verify: PASS
 - Privacy metadata verify: PASS
@@ -346,6 +352,9 @@ Mark each item PASS/FAIL after running it.
 | Long screenshot | Reverse direction through already captured content | Preview height stays unchanged while traversing covered content and resumes only after reaching new content | |
 | Long screenshot | Start near page bottom, scroll upward | New upper content is prepended above the starting frame | |
 | Long screenshot | Scroll through a lazy-loading or animated page | Automatic retries preserve direction/distance context and recover after the page settles | |
+| Long screenshot | Auto-scroll through text while animations or loading placeholders are active | Preview only commits a settled sharp frame; moving or blurred intermediate frames do not create broken seams | |
+| Long screenshot | Continuously scroll by trackpad without pausing | Preview keeps extending during the gesture using sharp recent frames, then performs a stable trailing capture after scrolling stops | |
+| Long screenshot | Auto-scroll through short and tall viewports | Scroll distance adapts to accepted content and confidence without large jumps or repeatedly tiny steps | |
 | Long screenshot | Capture down, then beyond the original viewport upward | Every content row appears once in the final image, with no duplicated or missing seam pixels | |
 | Edit | Draw rectangle/arrow/text/mosaic, then Cmd+Z/Cmd+Shift+Z | Undo and redo restore the previous annotation state | |
 | Edit | Select an annotation and press Delete | The selected annotation is removed only after selection | |

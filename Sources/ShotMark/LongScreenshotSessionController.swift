@@ -37,22 +37,45 @@ enum LongScreenshotCaptureMode: Equatable {
 }
 
 enum LongScreenshotAutomaticScrollPolicy {
-    static let defaultStep: Int32 = 44
-    static let minimumStep: Int32 = 28
-    static let maximumStep: Int32 = 56
+    static let minimumStep: Int32 = 48
+    static let maximumStep: Int32 = 240
 
-    static func acceleratedStep(from current: Int32, confidence: CGFloat) -> Int32 {
-        if confidence >= 0.9 {
-            return min(maximumStep, current + 4)
-        }
-        if confidence < 0.74 {
-            return max(minimumStep, current - 6)
-        }
-        return current
+    static func initialStep(viewportHeightPoints: CGFloat) -> Int32 {
+        clamped(Int32((viewportHeightPoints * 0.18).rounded()), viewportHeightPoints: viewportHeightPoints)
     }
 
-    static func recoveryStep(from current: Int32) -> Int32 {
-        max(minimumStep, current - 8)
+    static func nextStep(
+        from current: Int32,
+        acceptedDeltaPixels: Int,
+        viewportHeightPixels: Int,
+        screenScale: CGFloat,
+        confidence: CGFloat
+    ) -> Int32 {
+        let scale = max(1, screenScale)
+        let viewportHeightPoints = CGFloat(max(1, viewportHeightPixels)) / scale
+        let targetDelta = CGFloat(max(1, viewportHeightPixels)) * 0.28
+        var proposed = CGFloat(current)
+
+        if confidence < 0.78 {
+            proposed *= 0.72
+        } else if confidence >= 0.9 {
+            if CGFloat(acceptedDeltaPixels) < targetDelta * 0.72 {
+                proposed *= 1.16
+            } else if CGFloat(acceptedDeltaPixels) > targetDelta * 1.24 {
+                proposed *= 0.88
+            }
+        }
+
+        return clamped(Int32(proposed.rounded()), viewportHeightPoints: viewportHeightPoints)
+    }
+
+    static func recoveryStep(from current: Int32, viewportHeightPoints: CGFloat) -> Int32 {
+        clamped(Int32((CGFloat(current) * 0.64).rounded()), viewportHeightPoints: viewportHeightPoints)
+    }
+
+    private static func clamped(_ value: Int32, viewportHeightPoints: CGFloat) -> Int32 {
+        let viewportMaximum = Int32(max(CGFloat(minimumStep), min(CGFloat(maximumStep), viewportHeightPoints * 0.34)))
+        return min(viewportMaximum, max(minimumStep, value))
     }
 }
 
@@ -248,11 +271,9 @@ final class LongScreenshotSessionController {
     private var trailingScrollCaptureWorkItem: DispatchWorkItem?
     private var alignmentRetryWorkItem: DispatchWorkItem?
     private var stabilityCaptureWorkItem: DispatchWorkItem?
-    private var streamMotionCaptureWorkItem: DispatchWorkItem?
     private var streamStableCaptureWorkItem: DispatchWorkItem?
     private var automaticScrollWorkItem: DispatchWorkItem?
     private var lastScrollCaptureAt = Date.distantPast
-    private var lastStreamMotionCaptureAt = Date.distantPast
     private var nextStreamMotionCaptureAllowedAt = Date.distantPast
     private var pendingExpectedScrollDeltaPixels = 0
     private var minimumCaptureSequenceNumber: Int?
@@ -282,20 +303,22 @@ final class LongScreenshotSessionController {
     private var didWriteStreamDiagnostics = false
     private var lastMergedPreviewAt = Date.distantPast
 
-    private let scrollCaptureInterval: TimeInterval = 0.095
     private let trailingCaptureDelay: TimeInterval = 0.18
+    private let scrollingPreviewCaptureInterval: TimeInterval = 0.2
     private let scrollDirectionThreshold: CGFloat = 0.1
     private let automaticScrollInterval: TimeInterval = 0.38
-    private var automaticScrollDeltaPoints = LongScreenshotAutomaticScrollPolicy.defaultStep
+    private var automaticScrollDeltaPoints: Int32
     private let automaticEventMarker: Int64 = 0x53484F544D41524B
     private let maximumStabilityRetryCount = 6
     private let streamMotionDifferenceThreshold = 1.8
-    private let streamMotionCaptureInterval: TimeInterval = 0.12
     private let streamStableCaptureDelay: TimeInterval = 0.16
 
     init(selection: CaptureSelection, targetProcessIdentifier: pid_t? = nil) {
         self.selection = selection
         self.targetProcessIdentifier = targetProcessIdentifier
+        automaticScrollDeltaPoints = LongScreenshotAutomaticScrollPolicy.initialStep(
+            viewportHeightPoints: selection.rectInScreen.height
+        )
         isStreamCaptureEnabled = ProcessInfo.processInfo.environment["SHOTMARK_LONGSHOT_V1"] != "1"
     }
 
@@ -465,25 +488,6 @@ final class LongScreenshotSessionController {
         }
         streamStableCaptureWorkItem = stableWorkItem
         DispatchQueue.main.asyncAfter(deadline: .now() + streamStableCaptureDelay, execute: stableWorkItem)
-
-        let now = Date()
-        let elapsed = now.timeIntervalSince(lastStreamMotionCaptureAt)
-        if elapsed >= streamMotionCaptureInterval {
-            lastStreamMotionCaptureAt = now
-            captureFrame(requireStableFrame: false)
-        } else if streamMotionCaptureWorkItem == nil {
-            let workItem = DispatchWorkItem { [weak self] in
-                guard let self, !self.finishAfterCapture else { return }
-                self.streamMotionCaptureWorkItem = nil
-                self.lastStreamMotionCaptureAt = Date()
-                self.captureFrame(requireStableFrame: false)
-            }
-            streamMotionCaptureWorkItem = workItem
-            DispatchQueue.main.asyncAfter(
-                deadline: .now() + max(0.02, streamMotionCaptureInterval - elapsed),
-                execute: workItem
-            )
-        }
     }
 
     private func handleKey(_ event: NSEvent) -> Bool {
@@ -533,7 +537,9 @@ final class LongScreenshotSessionController {
         automaticScrollWorkItem?.cancel()
         automaticScrollWorkItem = nil
         automaticStallCount = 0
-        automaticScrollDeltaPoints = LongScreenshotAutomaticScrollPolicy.defaultStep
+        automaticScrollDeltaPoints = LongScreenshotAutomaticScrollPolicy.initialStep(
+            viewportHeightPoints: selection.rectInScreen.height
+        )
         controlView?.captureMode = mode
         updateControlView(status: status ?? (mode == .automatic ? "自动滚动准备中" : "请滚动页面"))
         updatePreview(status: status ?? (mode == .automatic ? "自动模式" : "手动模式"))
@@ -607,7 +613,6 @@ final class LongScreenshotSessionController {
             1,
             Int((CGFloat(automaticScrollDeltaPoints) * scale).rounded())
         )
-        lastScrollCaptureAt = Date()
         updateControlView(status: "自动向下滚动")
         updatePreview(status: "正在自动拼接")
 
@@ -655,13 +660,11 @@ final class LongScreenshotSessionController {
         updateControlView(status: "滚动中采集...")
         updatePreview(status: "滚动中")
 
-        let now = Date()
-        let elapsed = now.timeIntervalSince(lastScrollCaptureAt)
-        if elapsed >= scrollCaptureInterval {
-            lastScrollCaptureAt = now
+        let elapsed = Date().timeIntervalSince(lastScrollCaptureAt)
+        if elapsed >= scrollingPreviewCaptureInterval {
+            lastScrollCaptureAt = Date()
             captureFrame(requireStableFrame: false)
         } else if throttledScrollCaptureWorkItem == nil {
-            let delay = max(0.04, scrollCaptureInterval - elapsed)
             let workItem = DispatchWorkItem { [weak self] in
                 guard let self, !self.finishAfterCapture else { return }
                 self.throttledScrollCaptureWorkItem = nil
@@ -669,14 +672,16 @@ final class LongScreenshotSessionController {
                 self.captureFrame(requireStableFrame: false)
             }
             throttledScrollCaptureWorkItem = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + max(0.04, scrollingPreviewCaptureInterval - elapsed),
+                execute: workItem
+            )
         }
 
         trailingScrollCaptureWorkItem?.cancel()
         let trailingWorkItem = DispatchWorkItem { [weak self] in
             guard let self, !self.finishAfterCapture else { return }
             self.trailingScrollCaptureWorkItem = nil
-            self.lastScrollCaptureAt = Date()
             self.minimumCaptureSequenceNumber = self.latestScrollEventSequenceNumber
             self.captureFrame(requireStableFrame: true)
         }
@@ -743,6 +748,7 @@ final class LongScreenshotSessionController {
             expectedDeltaPixels: expectedDeltaPixels,
             expectedDirection: expectedDirection,
             scrollDirectionSign: scrollDirectionSign,
+            requiresStableFrame: requireStableFrame,
             isAlignmentRetry: retryContext != nil
         ) {
             stabilityRetryCount = 0
@@ -787,11 +793,13 @@ final class LongScreenshotSessionController {
         expectedDeltaPixels: Int?,
         expectedDirection: LongScreenshotStitchDirection?,
         scrollDirectionSign: Int?,
+        requiresStableFrame: Bool,
         isAlignmentRetry: Bool
     ) -> Bool {
         guard isStreamCaptureEnabled, isStreamSourceReady else { return false }
-        let frame = frameRing.latestSettledFrame(after: sequenceNumber)
-            ?? frameRing.latestFrame(after: sequenceNumber)
+        let frame = requiresStableFrame
+            ? (frameRing.latestSettledFrame(after: sequenceNumber) ?? frameRing.latestFrame(after: sequenceNumber))
+            : (frameRing.sharpestRecentFrame(after: sequenceNumber) ?? frameRing.latestFrame(after: sequenceNumber))
         guard let frame else { return false }
         commitImage(
             frame.image,
@@ -913,10 +921,13 @@ final class LongScreenshotSessionController {
         case .initialized:
             automaticStallCount = 0
             startAutomaticScrolling()
-        case .appended:
+        case .appended(let deltaY):
             automaticStallCount = 0
-            automaticScrollDeltaPoints = LongScreenshotAutomaticScrollPolicy.acceleratedStep(
+            automaticScrollDeltaPoints = LongScreenshotAutomaticScrollPolicy.nextStep(
                 from: automaticScrollDeltaPoints,
+                acceptedDeltaPixels: deltaY,
+                viewportHeightPixels: Int(selection.nativePixelSize.height.rounded()),
+                screenScale: selection.screen.backingScaleFactor,
                 confidence: update.confidence
             )
             scheduleAutomaticScrollStep()
@@ -929,7 +940,8 @@ final class LongScreenshotSessionController {
             }
         case .ignoredAlignmentFailed:
             automaticScrollDeltaPoints = LongScreenshotAutomaticScrollPolicy.recoveryStep(
-                from: automaticScrollDeltaPoints
+                from: automaticScrollDeltaPoints,
+                viewportHeightPoints: selection.rectInScreen.height
             )
             break
         }
@@ -1070,8 +1082,6 @@ final class LongScreenshotSessionController {
         alignmentRetryWorkItem = nil
         stabilityCaptureWorkItem?.cancel()
         stabilityCaptureWorkItem = nil
-        streamMotionCaptureWorkItem?.cancel()
-        streamMotionCaptureWorkItem = nil
         streamStableCaptureWorkItem?.cancel()
         streamStableCaptureWorkItem = nil
         needsCaptureAfterCurrent = false
@@ -1317,8 +1327,6 @@ final class LongScreenshotSessionController {
         alignmentRetryWorkItem = nil
         stabilityCaptureWorkItem?.cancel()
         stabilityCaptureWorkItem = nil
-        streamMotionCaptureWorkItem?.cancel()
-        streamMotionCaptureWorkItem = nil
         streamStableCaptureWorkItem?.cancel()
         streamStableCaptureWorkItem = nil
         if let localScrollMonitor {
@@ -1357,7 +1365,7 @@ final class LongScreenshotSessionController {
         latestScrollEventSequenceNumber = nil
         alignmentRetryCount = 0
         stabilityRetryCount = 0
-        lastStreamMotionCaptureAt = .distantPast
+        lastScrollCaptureAt = .distantPast
         streamFrameCount = 0
         streamMotionReferenceImage = nil
         didWriteStreamDiagnostics = false
@@ -1372,7 +1380,9 @@ final class LongScreenshotSessionController {
         finishAfterCapture = false
         pendingCommitAction = nil
         automaticStallCount = 0
-        automaticScrollDeltaPoints = LongScreenshotAutomaticScrollPolicy.defaultStep
+        automaticScrollDeltaPoints = LongScreenshotAutomaticScrollPolicy.initialStep(
+            viewportHeightPoints: selection.rectInScreen.height
+        )
         captureMode = .manual
         didStartAutomaticScrolling = false
         isAwaitingAccessibilityAuthorization = false

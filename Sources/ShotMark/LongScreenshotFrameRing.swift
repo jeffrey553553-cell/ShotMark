@@ -34,16 +34,55 @@ final class LongScreenshotFrameRing {
         return frames.last { $0.sequenceNumber > sequenceNumber }
     }
 
-    func latestSettledFrame(after sequenceNumber: Int?, maximumDifference: Double = 1.4) -> LongScreenshotFrame? {
+    func sharpestRecentFrame(after sequenceNumber: Int?, maximumCount: Int = 4) -> LongScreenshotFrame? {
         let candidates = frames.filter { frame in
             guard let sequenceNumber else { return true }
             return frame.sequenceNumber > sequenceNumber
         }
-        guard candidates.count >= 2 else { return nil }
-        let previous = candidates[candidates.count - 2]
-        let latest = candidates[candidates.count - 1]
-        guard Self.sampledDifference(previous.image, latest.image) <= maximumDifference else { return nil }
-        return latest
+        guard let newest = candidates.last else { return nil }
+        let recent = candidates.suffix(max(1, maximumCount))
+        let sharpest = recent.reduce(newest) { best, candidate in
+            Self.sampledSharpness(candidate.image) >= Self.sampledSharpness(best.image)
+                ? candidate
+                : best
+        }
+        return LongScreenshotFrame(
+            sequenceNumber: newest.sequenceNumber,
+            image: sharpest.image,
+            capturedAt: newest.capturedAt
+        )
+    }
+
+    func latestSettledFrame(
+        after sequenceNumber: Int?,
+        requiredConsecutiveFrames: Int = 3,
+        maximumDifference: Double = 1.4
+    ) -> LongScreenshotFrame? {
+        let candidates = frames.filter { frame in
+            guard let sequenceNumber else { return true }
+            return frame.sequenceNumber > sequenceNumber
+        }
+        let requiredCount = max(2, requiredConsecutiveFrames)
+        guard candidates.count >= requiredCount else { return nil }
+        let stableCandidates = Array(candidates.suffix(requiredCount))
+        for index in 1..<stableCandidates.count {
+            guard Self.sampledDifference(
+                stableCandidates[index - 1].image,
+                stableCandidates[index].image
+            ) <= maximumDifference else { return nil }
+        }
+
+        let sharpest = stableCandidates.reduce(stableCandidates[0]) { best, candidate in
+            Self.sampledSharpness(candidate.image) >= Self.sampledSharpness(best.image)
+                ? candidate
+                : best
+        }
+        let newest = stableCandidates[stableCandidates.count - 1]
+        return LongScreenshotFrame(
+            sequenceNumber: newest.sequenceNumber,
+            image: sharpest.image,
+            capturedAt: newest.capturedAt
+        )
     }
 
     static func sampledDifference(_ lhs: CGImage, _ rhs: CGImage) -> Double {
@@ -69,6 +108,34 @@ final class LongScreenshotFrameRing {
             }
         }
         return sampleCount > 0 ? total / Double(sampleCount * 3) : 255
+    }
+
+    static func sampledSharpness(_ image: CGImage) -> Double {
+        let width = 64
+        let height = 40
+        guard let pixels = sampledPixels(image, width: width, height: height) else { return 0 }
+        var total = 0.0
+        var count = 0
+        for y in 2..<(height - 2) {
+            for x in 2..<(width - 2) {
+                let center = (y * width + x) * 4
+                let left = (y * width + x - 1) * 4
+                let right = (y * width + x + 1) * 4
+                let above = ((y - 1) * width + x) * 4
+                let below = ((y + 1) * width + x) * 4
+                for channel in 0..<3 {
+                    total += Double(abs(Int(pixels[right + channel]) - Int(pixels[left + channel])))
+                    total += Double(abs(Int(pixels[below + channel]) - Int(pixels[above + channel])))
+                    total += Double(abs(
+                        Int(pixels[left + channel]) + Int(pixels[right + channel])
+                            + Int(pixels[above + channel]) + Int(pixels[below + channel])
+                            - Int(pixels[center + channel]) * 4
+                    ))
+                    count += 3
+                }
+            }
+        }
+        return count > 0 ? total / Double(count) : 0
     }
 
     func markCommitted(sequenceNumber: Int?) {

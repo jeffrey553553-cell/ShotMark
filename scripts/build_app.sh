@@ -79,10 +79,24 @@ if ! grep -q "flags=.*runtime" <<<"$SIGNATURE_DETAILS"; then
   exit 1
 fi
 
-SIGNED_ENTITLEMENTS="$(codesign -d --entitlements :- "$APP_DIR" 2>/dev/null)"
-if ! plutil -p - <<<"$SIGNED_ENTITLEMENTS" | grep -q '"com.apple.security.device.audio-input" => 1'; then
-    echo "error: the built app is missing the Audio Input entitlement." >&2
-    exit 1
+has_audio_input_entitlement() {
+  local signed_entitlements
+  signed_entitlements="$(codesign -d --entitlements :- "$APP_DIR" 2>/dev/null || true)"
+  plutil -p - <<<"$signed_entitlements" 2>/dev/null \
+    | grep -q '"com.apple.security.device.audio-input" => 1'
+}
+
+ENTITLEMENT_VERIFIED=0
+for _ in 1 2 3; do
+  if has_audio_input_entitlement; then
+    ENTITLEMENT_VERIFIED=1
+    break
+  fi
+  sleep 0.15
+done
+if [[ "$ENTITLEMENT_VERIFIED" != "1" ]]; then
+  echo "error: the built app is missing the Audio Input entitlement." >&2
+  exit 1
 fi
 
 if [[ "$PUBLIC_COPY" == "1" ]]; then
