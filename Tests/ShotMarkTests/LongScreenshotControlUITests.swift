@@ -18,7 +18,6 @@ final class LongScreenshotControlUITests: XCTestCase {
         view.mouseDown(with: try mouseEvent(at: CGPoint(x: 45, y: 20)))
 
         XCTAssertEqual(automaticToggleCount, 1)
-        XCTAssertTrue(view.acceptsFirstMouse(for: nil))
     }
 
     func testControlRendersManualAndRunningAutomaticStates() throws {

@@ -89,13 +89,11 @@ enum LongScreenshotAutomaticStartPolicy {
     static func decision(
         hasAccessibilityAccess: Bool,
         targetProcessIdentifier: pid_t?,
-        frontmostProcessIdentifier: pid_t?,
-        controllerProcessIdentifier: pid_t
+        frontmostProcessIdentifier: pid_t?
     ) -> LongScreenshotAutomaticStartDecision {
         guard hasAccessibilityAccess else { return .requestAccessibilityPermission }
         guard let targetProcessIdentifier,
-              frontmostProcessIdentifier == targetProcessIdentifier
-                || frontmostProcessIdentifier == controllerProcessIdentifier else {
+              targetProcessIdentifier == frontmostProcessIdentifier else {
             return .waitForTargetApplication
         }
         return .start
@@ -296,7 +294,6 @@ final class LongScreenshotSessionController {
     private var stabilityRetryCount = 0
     private var captureMode: LongScreenshotCaptureMode = .manual
     private var automaticStallCount = 0
-    private var automaticFocusRetryCount = 0
     private var didStartAutomaticScrolling = false
     private var isAwaitingAccessibilityAuthorization = false
     private var cropTopPixels = 0
@@ -540,7 +537,6 @@ final class LongScreenshotSessionController {
         automaticScrollWorkItem?.cancel()
         automaticScrollWorkItem = nil
         automaticStallCount = 0
-        automaticFocusRetryCount = 0
         automaticScrollDeltaPoints = LongScreenshotAutomaticScrollPolicy.initialStep(
             viewportHeightPoints: selection.rectInScreen.height
         )
@@ -579,28 +575,10 @@ final class LongScreenshotSessionController {
     }
 
     private func performAutomaticScrollStep() {
-        guard PermissionService.hasAccessibilityAccess else {
-            setCaptureMode(.manual, status: "辅助功能权限已失效，请重新授权")
+        guard automaticStartDecision() == .start else {
+            setCaptureMode(.manual, status: "已停止自动滚动，请返回原页面")
             return
         }
-        guard let targetProcessIdentifier,
-              let targetApplication = NSRunningApplication(processIdentifier: targetProcessIdentifier) else {
-            setCaptureMode(.manual, status: "原页面已关闭，请重新开始长截图")
-            return
-        }
-        if NSWorkspace.shared.frontmostApplication?.processIdentifier != targetProcessIdentifier {
-            automaticFocusRetryCount += 1
-            targetApplication.activate(options: [])
-            if automaticFocusRetryCount <= 3 {
-                updateControlView(status: "正在切回原页面...")
-                updatePreview(status: "准备自动滚动")
-                scheduleAutomaticScrollStep(after: 0.18)
-            } else {
-                setCaptureMode(.manual, status: "无法激活原页面，请手动滚动")
-            }
-            return
-        }
-        automaticFocusRetryCount = 0
         guard !isCapturing, alignmentRetryWorkItem == nil else {
             scheduleAutomaticScrollStep(after: 0.12)
             return
@@ -623,7 +601,11 @@ final class LongScreenshotSessionController {
             ?? CGDisplayBounds(CGMainDisplayID()).height
         event.location = CGPoint(x: center.x, y: mainScreenTop - center.y)
         event.setIntegerValueField(.eventSourceUserData, value: automaticEventMarker)
-        event.post(tap: .cghidEventTap)
+        guard let targetProcessIdentifier else {
+            setCaptureMode(.manual, status: "未找到滚动页面，请重新开始长截图")
+            return
+        }
+        event.postToPid(targetProcessIdentifier)
 
         let scale = max(1, selection.screen.backingScaleFactor)
         lastScrollDirectionSign = -1
@@ -1068,11 +1050,6 @@ final class LongScreenshotSessionController {
             updatePreview(status: "等待返回原页面")
         case .start:
             resumeCaptureAfterAccessibilityAuthorization()
-            guard activateTargetApplication() else {
-                updateControlView(status: "原页面已关闭，请重新开始长截图")
-                updatePreview(status: "未找到原页面")
-                return
-            }
             setCaptureMode(.automatic, status: "自动滚动准备中")
         }
     }
@@ -1081,34 +1058,17 @@ final class LongScreenshotSessionController {
         LongScreenshotAutomaticStartPolicy.decision(
             hasAccessibilityAccess: PermissionService.hasAccessibilityAccess,
             targetProcessIdentifier: targetProcessIdentifier,
-            frontmostProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier,
-            controllerProcessIdentifier: ProcessInfo.processInfo.processIdentifier
+            frontmostProcessIdentifier: NSWorkspace.shared.frontmostApplication?.processIdentifier
         )
     }
 
     private func refreshTargetProcessIdentifierIfNeeded() {
-        if let targetProcessIdentifier,
-           NSRunningApplication(processIdentifier: targetProcessIdentifier) != nil {
-            return
-        }
-        targetProcessIdentifier = nil
-        guard let application = NSWorkspace.shared.frontmostApplication,
+        guard targetProcessIdentifier == nil,
+              let application = NSWorkspace.shared.frontmostApplication,
               application.bundleIdentifier != Bundle.main.bundleIdentifier,
               application.bundleIdentifier != "com.apple.systempreferences",
               application.bundleIdentifier != "com.apple.systemsettings" else { return }
         targetProcessIdentifier = application.processIdentifier
-    }
-
-    @discardableResult
-    private func activateTargetApplication() -> Bool {
-        guard let targetProcessIdentifier,
-              let application = NSRunningApplication(processIdentifier: targetProcessIdentifier) else {
-            return false
-        }
-        if NSWorkspace.shared.frontmostApplication?.processIdentifier != targetProcessIdentifier {
-            application.activate(options: [])
-        }
-        return true
     }
 
     private func suspendCaptureForAccessibilityAuthorization() {
@@ -1420,7 +1380,6 @@ final class LongScreenshotSessionController {
         finishAfterCapture = false
         pendingCommitAction = nil
         automaticStallCount = 0
-        automaticFocusRetryCount = 0
         automaticScrollDeltaPoints = LongScreenshotAutomaticScrollPolicy.initialStep(
             viewportHeightPoints: selection.rectInScreen.height
         )
@@ -1476,10 +1435,6 @@ final class LongScreenshotControlView: NSView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
-    }
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-        true
     }
 
     override func updateTrackingAreas() {

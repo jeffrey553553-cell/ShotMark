@@ -76,8 +76,7 @@ final class LongScreenshotRetryPolicyTests: XCTestCase {
             LongScreenshotAutomaticStartPolicy.decision(
                 hasAccessibilityAccess: false,
                 targetProcessIdentifier: 101,
-                frontmostProcessIdentifier: 101,
-                controllerProcessIdentifier: 303
+                frontmostProcessIdentifier: 101
             ),
             .requestAccessibilityPermission
         )
@@ -85,8 +84,7 @@ final class LongScreenshotRetryPolicyTests: XCTestCase {
             LongScreenshotAutomaticStartPolicy.decision(
                 hasAccessibilityAccess: true,
                 targetProcessIdentifier: 101,
-                frontmostProcessIdentifier: 202,
-                controllerProcessIdentifier: 303
+                frontmostProcessIdentifier: 202
             ),
             .waitForTargetApplication
         )
@@ -94,28 +92,9 @@ final class LongScreenshotRetryPolicyTests: XCTestCase {
             LongScreenshotAutomaticStartPolicy.decision(
                 hasAccessibilityAccess: true,
                 targetProcessIdentifier: 101,
-                frontmostProcessIdentifier: 101,
-                controllerProcessIdentifier: 303
+                frontmostProcessIdentifier: 101
             ),
             .start
-        )
-        XCTAssertEqual(
-            LongScreenshotAutomaticStartPolicy.decision(
-                hasAccessibilityAccess: true,
-                targetProcessIdentifier: 101,
-                frontmostProcessIdentifier: 303,
-                controllerProcessIdentifier: 303
-            ),
-            .start
-        )
-        XCTAssertEqual(
-            LongScreenshotAutomaticStartPolicy.decision(
-                hasAccessibilityAccess: true,
-                targetProcessIdentifier: nil,
-                frontmostProcessIdentifier: 303,
-                controllerProcessIdentifier: 303
-            ),
-            .waitForTargetApplication
         )
     }
 }

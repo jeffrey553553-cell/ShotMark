@@ -151,10 +151,6 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "frozenCapture" Sources/ShotMark/SelectionOverlayController.swift
   rg -q "captureFrozenScreensAndShowOverlay" Sources/ShotMark/ScreenshotCoordinator.swift
   rg -q "LongScreenshotHotKeyService" Sources/ShotMark/LongScreenshotSessionController.swift
-  rg -q "acceptsFirstMouse" Sources/ShotMark/LongScreenshotSessionController.swift Tests/ShotMarkTests/LongScreenshotControlUITests.swift
-  rg -q "controllerProcessIdentifier" Sources/ShotMark/LongScreenshotSessionController.swift Tests/ShotMarkTests/LongScreenshotRetryPolicyTests.swift
-  rg -q "event.post\(tap: \.cghidEventTap\)" Sources/ShotMark/LongScreenshotSessionController.swift
-  rg -q "automaticFocusRetryCount" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "kVK_Escape" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "lastScrollDirectionSign" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "prepareForScrollDirectionChange" Sources/ShotMark/LongScreenshotSessionController.swift
@@ -351,8 +347,6 @@ Mark each item PASS/FAIL after running it.
 | Mosaic | Draw mosaic over text | Text under the drawn area is blurred, no visible border is drawn | |
 | Long screenshot | Start long screenshot and press Esc | Session cancels and returns without saving/copying | |
 | Long screenshot | Click Auto Down without Accessibility permission | Capture pauses while System Settings is visible; granting permission does not auto-start; returning to the original page and clicking Auto Down starts scrolling | |
-| Long screenshot | Click Auto Down while its floating toolbar does not have focus | The first click changes the button to Stop, returns focus to the original page and starts scrolling without a second click | |
-| Long screenshot | Start Auto Down in Chrome, Safari and an Electron app | The scroll container under the selection center responds through the HID event path | |
 | Long screenshot | Move and click the mouse during automatic scrolling | Pointer remains under user control; the original page keeps scrolling and switching to another app stops automatic scrolling | |
 | Long screenshot | Scroll down, then scroll upward repeatedly | Preview does not keep appending reversed/duplicate content | |
 | Long screenshot | Reverse direction through already captured content | Preview height stays unchanged while traversing covered content and resumes only after reaching new content | |
