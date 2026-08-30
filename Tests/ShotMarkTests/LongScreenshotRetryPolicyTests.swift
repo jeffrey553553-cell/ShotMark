@@ -97,4 +97,11 @@ final class LongScreenshotRetryPolicyTests: XCTestCase {
             .start
         )
     }
+
+    func testPreviewRenderingSlowsDownAsOutputGrows() {
+        XCTAssertEqual(LongScreenshotPreviewPolicy.minimumRenderInterval(outputHeight: 8_000), 0.18)
+        XCTAssertEqual(LongScreenshotPreviewPolicy.minimumRenderInterval(outputHeight: 20_000), 0.28)
+        XCTAssertEqual(LongScreenshotPreviewPolicy.minimumRenderInterval(outputHeight: 45_000), 0.45)
+        XCTAssertEqual(LongScreenshotPreviewPolicy.minimumRenderInterval(outputHeight: 90_000), 0.70)
+    }
 }

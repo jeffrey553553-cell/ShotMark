@@ -170,6 +170,10 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "frameSource\\.stop" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "LongScreenshotStitcher" Sources/ShotMark/LongScreenshotStitcher.swift Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "ContentSlice" Sources/ShotMark/LongScreenshotStitcher.swift
+  rg -q "croppedRows" Sources/ShotMark/LongScreenshotStitcher.swift
+  rg -q "retainedContentPixelBytes" Sources/ShotMark/LongScreenshotStitcher.swift Tests/ShotMarkTests/LongScreenshotStitcherTests.swift
+  rg -q "LongScreenshotPreviewPolicy.minimumRenderInterval" Sources/ShotMark/LongScreenshotSessionController.swift Tests/ShotMarkTests/LongScreenshotRetryPolicyTests.swift
+  rg -q '"nested", "lowtexture", "sticky-swap"' scripts/generate_longshot_benchmark.mjs
   rg -q "detectStaticBand" Sources/ShotMark/LongScreenshotStitcher.swift
   rg -q "detectStaticSideBand" Sources/ShotMark/LongScreenshotStitcher.swift
   rg -q "matchingColumnBounds" Sources/ShotMark/LongScreenshotStitcher.swift

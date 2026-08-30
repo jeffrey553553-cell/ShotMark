@@ -75,6 +75,27 @@ final class LongScreenshotStitcher {
             pixels = buffer
         }
 
+        private init(width: Int, height: Int, bytesPerRow: Int, pixels: [UInt8]) {
+            self.width = width
+            self.height = height
+            self.bytesPerRow = bytesPerRow
+            self.pixels = pixels
+        }
+
+        func croppedRows(startRow: Int, rowCount: Int) -> RasterImage? {
+            let safeStartRow = max(0, startRow)
+            let safeRowCount = min(rowCount, height - safeStartRow)
+            guard safeRowCount > 0 else { return nil }
+            let startIndex = safeStartRow * bytesPerRow
+            let byteCount = safeRowCount * bytesPerRow
+            return RasterImage(
+                width: width,
+                height: safeRowCount,
+                bytesPerRow: bytesPerRow,
+                pixels: Array(pixels[startIndex..<(startIndex + byteCount)])
+            )
+        }
+
         func blockDifference(
             comparedTo other: RasterImage,
             startRow: Int,
@@ -172,9 +193,10 @@ final class LongScreenshotStitcher {
 
     private struct ContentSlice {
         let raster: RasterImage
-        let startRow: Int
-        let rowCount: Int
+        let viewportStartRow: Int
         let documentStart: Int
+
+        var rowCount: Int { raster.height }
     }
 
     private struct ViewportAnchor {
@@ -214,6 +236,7 @@ final class LongScreenshotStitcher {
 
     private struct OverlapMetrics {
         let averageDifference: Double
+        let coreDifference: Double
         let strongBandCount: Int
         let bandCount: Int
         let worstDifference: Double
@@ -224,6 +247,7 @@ final class LongScreenshotStitcher {
         let direction: LongScreenshotStitchDirection
         let deltaY: Int
         let pixelScore: Double
+        let corePixelScore: Double
         let totalScore: Double
         let strongBandCount: Int
         let bandCount: Int
@@ -266,6 +290,14 @@ final class LongScreenshotStitcher {
 
     private(set) var acceptedFrameCount = 0
 
+    var retainedContentPixelBytes: Int {
+        contentSlices.reduce(0) { $0 + $1.raster.pixels.count }
+    }
+
+    var retainedViewportAnchorCount: Int {
+        viewportAnchors.count
+    }
+
     var outputHeight: Int {
         contentSlices.reduce(0) { $0 + $1.rowCount } + headerHeight + footerHeight
     }
@@ -301,7 +333,7 @@ final class LongScreenshotStitcher {
         guard let lastRaster, let baseRaster else {
             self.baseRaster = raster
             self.lastRaster = raster
-            contentSlices = [ContentSlice(raster: raster, startRow: 0, rowCount: raster.height, documentStart: 0)]
+            contentSlices = [ContentSlice(raster: raster, viewportStartRow: 0, documentStart: 0)]
             stitchDirection = .unresolved
             lastMatch = nil
             cachedMergedImage = image
@@ -531,10 +563,12 @@ final class LongScreenshotStitcher {
         }
 
         let documentStart = nextViewportStart + startRow - headerHeight
+        guard let sliceRaster = raster.croppedRows(startRow: startRow, rowCount: acceptedDelta) else {
+            return update(outcome: .ignoredAlignmentFailed, confidence: 0)
+        }
         let slice = ContentSlice(
-            raster: raster,
-            startRow: startRow,
-            rowCount: acceptedDelta,
+            raster: sliceRaster,
+            viewportStartRow: startRow,
             documentStart: documentStart
         )
         switch match.direction {
@@ -770,7 +804,7 @@ final class LongScreenshotStitcher {
         destinationRow: Int
     ) {
         slice.raster.copyRows(
-            startRow: slice.startRow,
+            startRow: 0,
             rowCount: slice.rowCount,
             into: &destination,
             destinationRow: destinationRow
@@ -781,8 +815,8 @@ final class LongScreenshotStitcher {
         var missingRows = 0
 
         for overlay in overlays {
-            let firstLocalRow = max(0, overlay.rowStart - slice.startRow)
-            let finalLocalRow = min(slice.rowCount, overlay.rowEnd - slice.startRow)
+            let firstLocalRow = max(0, overlay.rowStart - slice.viewportStartRow)
+            let finalLocalRow = min(slice.rowCount, overlay.rowEnd - slice.viewportStartRow)
             guard firstLocalRow < finalLocalRow else { continue }
             let xStart = max(0, overlay.xStart)
             let xEnd = min(slice.raster.width, overlay.xEnd)
@@ -866,7 +900,12 @@ final class LongScreenshotStitcher {
     private func bootstrapBaseContent(from raster: RasterImage) {
         let startRow = headerHeight
         let rowCount = max(1, raster.height - headerHeight - footerHeight)
-        contentSlices = [ContentSlice(raster: raster, startRow: startRow, rowCount: rowCount, documentStart: 0)]
+        guard let contentRaster = raster.croppedRows(startRow: startRow, rowCount: rowCount) else { return }
+        contentSlices = [ContentSlice(
+            raster: contentRaster,
+            viewportStartRow: startRow,
+            documentStart: 0
+        )]
         currentViewportStart = 0
         coveredStart = 0
         coveredEnd = rowCount
@@ -947,10 +986,23 @@ final class LongScreenshotStitcher {
         guard viewportAnchors.count > maximumAnchorCount else { return }
         let firstIndex = viewportAnchors.indices.min(by: { viewportAnchors[$0].start < viewportAnchors[$1].start })
         let lastIndex = viewportAnchors.indices.max(by: { viewportAnchors[$0].start < viewportAnchors[$1].start })
-        let protected = Set([firstIndex, lastIndex].compactMap { $0 })
-        if let removable = viewportAnchors.indices.first(where: { !protected.contains($0) }) {
+        let newestIndex = viewportAnchors.indices.last
+        let protected = Set([firstIndex, lastIndex, newestIndex].compactMap { $0 })
+        let removable = viewportAnchors.indices
+            .filter { !protected.contains($0) }
+            .min { lhs, rhs in
+                nearestAnchorDistance(at: lhs) < nearestAnchorDistance(at: rhs)
+            }
+        if let removable {
             viewportAnchors.remove(at: removable)
         }
+    }
+
+    private func nearestAnchorDistance(at index: Int) -> Int {
+        viewportAnchors.indices
+            .filter { $0 != index }
+            .map { abs(viewportAnchors[$0].start - viewportAnchors[index].start) }
+            .min() ?? .max
     }
 
     private func sliceStartRow(for direction: LongScreenshotStitchDirection, in raster: RasterImage, deltaY: Int) -> Int? {
@@ -1181,6 +1233,17 @@ final class LongScreenshotStitcher {
                 visionEstimate: visionEstimate
             )
         }()
+#if DEBUG
+        if ProcessInfo.processInfo.environment["SHOTMARK_STITCH_DIAGNOSTICS"] == "1",
+           let expectedHintMatch {
+            print(
+                "LONGSHOT_EXPECTED_HINT direction=\(expectedHintMatch.direction), delta=\(expectedHintMatch.deltaY), "
+                    + "pixel=\(expectedHintMatch.pixelScore), total=\(expectedHintMatch.totalScore), "
+                    + "bands=\(expectedHintMatch.strongBandCount)/\(expectedHintMatch.bandCount), "
+                    + "worst=\(expectedHintMatch.worstBandScore)"
+            )
+        }
+#endif
         if let expectedHintMatch,
            expectedHintMatch.pixelScore <= 0.35,
            expectedHintMatch.worstBandScore <= 1.2,
@@ -1254,10 +1317,10 @@ final class LongScreenshotStitcher {
         // A wheel delta is an input hint, not the resulting viewport movement.
         // Prefer substantially stronger image evidence even when momentum or
         // frame coalescing moved farther than the focused search expected.
-        if broad.pixelScore + 0.25 < focused.pixelScore {
+        if broad.pixelScore + 0.75 < focused.pixelScore {
             return true
         }
-        if abs(broad.pixelScore - focused.pixelScore) <= 0.25 {
+        if abs(broad.pixelScore - focused.pixelScore) <= 0.75 {
             return broad.totalScore < focused.totalScore
         }
         return false
@@ -1267,7 +1330,8 @@ final class LongScreenshotStitcher {
         let strongBandRatio = Double(match.strongBandCount) / Double(max(1, match.bandCount))
         return match.pixelScore <= 12.5
             && match.totalScore < 30
-            && strongBandRatio >= 0.66
+            && (strongBandRatio >= 0.66
+                || (strongBandRatio >= 0.5 && match.corePixelScore <= 4))
     }
 
     private func focusedDeltaRange(
@@ -1399,7 +1463,15 @@ final class LongScreenshotStitcher {
         expectedDeltaPixels: Int?,
         visionEstimate: VisionAlignmentEstimate?
     ) -> Match {
-        let totalScore = metrics.averageDifference
+        let strongBandRatio = Double(metrics.strongBandCount) / Double(max(1, metrics.bandCount))
+        let followsExpectedMovement = expectedDeltaPixels.map {
+            abs(deltaY - $0) <= max(12, $0 / 5)
+        } ?? false
+        let canIgnoreChangingRegions = followsExpectedMovement
+            && strongBandRatio >= 0.5
+            && metrics.coreDifference <= 4
+        let pixelScore = canIgnoreChangingRegions ? metrics.coreDifference : metrics.averageDifference
+        let totalScore = pixelScore
             + consistencyPenalty(for: metrics)
             + priorPenalty(
                 deltaY: deltaY,
@@ -1409,7 +1481,8 @@ final class LongScreenshotStitcher {
         return Match(
             direction: direction,
             deltaY: deltaY,
-            pixelScore: metrics.averageDifference,
+            pixelScore: pixelScore,
+            corePixelScore: metrics.coreDifference,
             totalScore: totalScore,
             strongBandCount: metrics.strongBandCount,
             bandCount: metrics.bandCount,
@@ -1477,6 +1550,9 @@ final class LongScreenshotStitcher {
         let retainedCount = max(3, Int(ceil(Double(sortedDifferences.count) * 0.75)))
         let retainedDifferences = sortedDifferences.prefix(retainedCount)
         let average = retainedDifferences.reduce(0, +) / Double(retainedDifferences.count)
+        let coreCount = max(3, Int(ceil(Double(sortedDifferences.count) * 0.50)))
+        let coreDifferences = sortedDifferences.prefix(coreCount)
+        let coreAverage = coreDifferences.reduce(0, +) / Double(coreDifferences.count)
         let median = sortedDifferences[sortedDifferences.count / 2]
         let strongThreshold = max(9.0, min(13.5, median * 1.35))
         let strongBandCount = differences.filter { $0 <= strongThreshold }.count
@@ -1487,6 +1563,7 @@ final class LongScreenshotStitcher {
         } / Double(differences.count)
         return OverlapMetrics(
             averageDifference: average,
+            coreDifference: coreAverage,
             strongBandCount: strongBandCount,
             bandCount: differences.count,
             worstDifference: worst,
@@ -1861,12 +1938,18 @@ final class LongScreenshotStitcher {
     private func isAcceptable(_ match: Match?, expectedDeltaPixels: Int?) -> Bool {
         guard let match else { return false }
         guard match.pixelScore < 18, match.totalScore < 30 else { return false }
+        let followsExpectedMovement = expectedDeltaPixels.map {
+            abs(match.deltaY - $0) <= max(12, $0 / 5)
+        } ?? false
         let requiredStrongBands = max(3, match.bandCount / 2)
         let strongBandRatio = Double(match.strongBandCount) / Double(max(1, match.bandCount))
         if match.strongBandCount < requiredStrongBands, match.pixelScore > 8.8 {
             return false
         }
-        if match.worstBandScore > 42, match.bandVariance > 36, strongBandRatio < 0.65 {
+        if match.worstBandScore > 42,
+           match.bandVariance > 36,
+           strongBandRatio < 0.65,
+           !(followsExpectedMovement && match.corePixelScore <= 4) {
             return false
         }
         if let expectedDeltaPixels, expectedDeltaPixels > 0 {
@@ -1917,10 +2000,18 @@ final class LongScreenshotStitcher {
         let baselineDelta = max(lastMatch?.deltaY ?? 0, expectedDeltaPixels ?? 0)
         let minimumMotion = max(18, min(36, max(baselineDelta / 2, (lastMatch?.deltaY ?? 0) / 3)))
         let strongBandRatio = Double(match.strongBandCount) / Double(max(1, match.bandCount))
-        return match.deltaY > minimumMotion
-            && match.pixelScore <= 3
+        let followsExpectedMovement = expectedDeltaPixels.map {
+            abs(match.deltaY - $0) <= max(12, $0 / 5)
+        } ?? false
+        let normalEvidence = match.pixelScore <= 3
             && match.totalScore <= 18
             && strongBandRatio >= 0.7
+        let expectedEvidence = followsExpectedMovement
+            && match.pixelScore <= 3
+            && match.totalScore <= 26
+            && strongBandRatio >= 0.5
+        return match.deltaY > minimumMotion
+            && (normalEvidence || expectedEvidence)
     }
 
     private func confidence(for match: Match) -> Double {

@@ -55,6 +55,14 @@
     .scenario-simple .page { padding-bottom: 24px; }
     .scenario-repeated .moving-ad, .scenario-repeated .fixed-footer { display: none; }
     .scenario-dynamic .sticky-section { display: none; }
+    .scenario-lowtexture .row { margin-top: 180px; }
+    .scenario-nested { overflow: hidden; }
+    .scenario-nested .page {
+      position: fixed; inset: 76px 24px 52px; width: auto; margin: 0; padding: 24px 0;
+      overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
+    }
+    .scenario-sticky-swap .sticky-section { transition: none; }
+    .scenario-sticky-swap .sticky-section.changed { background: #6d3fc0; }
   </style>
 </head>
 <body>
@@ -75,7 +83,7 @@
     document.getElementById('scenario-label').textContent = scenario.toUpperCase();
 
     const rows = document.getElementById('rows');
-    const count = scenario === 'lazy' ? 30 : 54;
+    const count = scenario === 'lazy' ? 30 : (scenario === 'lowtexture' ? 24 : 54);
     const addRow = index => {
       const row = document.createElement('article');
       row.className = `row ${scenario === 'dynamic' && index % 7 === 0 ? 'dynamic-card' : ''}`;
@@ -102,6 +110,15 @@
           rows.appendChild(marker);
           for (let index = count; index < count + 18; index++) addRow(index);
         }
+      }, { passive: true });
+    }
+
+    if (scenario === 'sticky-swap') {
+      addEventListener('scroll', () => {
+        const sticky = document.querySelector('.sticky-section');
+        const changed = scrollY > document.documentElement.scrollHeight * .42;
+        sticky.classList.toggle('changed', changed);
+        sticky.textContent = changed ? '章节导航 · 后半部分' : '章节导航固定栏';
       }, { passive: true });
     }
   </script>

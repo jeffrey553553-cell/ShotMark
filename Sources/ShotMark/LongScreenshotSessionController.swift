@@ -100,6 +100,21 @@ enum LongScreenshotAutomaticStartPolicy {
     }
 }
 
+enum LongScreenshotPreviewPolicy {
+    static func minimumRenderInterval(outputHeight: Int) -> TimeInterval {
+        switch outputHeight {
+        case ..<12_000:
+            return 0.18
+        case ..<30_000:
+            return 0.28
+        case ..<60_000:
+            return 0.45
+        default:
+            return 0.70
+        }
+    }
+}
+
 enum LongScreenshotCropGeometry {
     static func cropRect(
         imageWidth: Int,
@@ -823,9 +838,12 @@ final class LongScreenshotSessionController {
         isAlignmentRetry: Bool
     ) {
         let now = Date()
+        let minimumPreviewInterval = LongScreenshotPreviewPolicy.minimumRenderInterval(
+            outputHeight: stitcher.outputHeight
+        )
         let shouldRenderPreview = stitcher.acceptedFrameCount == 0
             || finishAfterCapture
-            || now.timeIntervalSince(lastMergedPreviewAt) >= 0.18
+            || now.timeIntervalSince(lastMergedPreviewAt) >= minimumPreviewInterval
         let update = stitcher.append(
             image,
             expectedDeltaPixels: expectedDeltaPixels,

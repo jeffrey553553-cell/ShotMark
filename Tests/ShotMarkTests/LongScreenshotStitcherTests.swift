@@ -73,6 +73,7 @@ final class LongScreenshotStitcherTests: XCTestCase {
             }
 
             XCTAssertEqual(alignmentFailures, 0, "\(manifest.scenario) had alignment failures")
+            XCTAssertLessThanOrEqual(stitcher.retainedViewportAnchorCount, 64, manifest.scenario)
             let merged = try XCTUnwrap(stitcher.mergedImage(), manifest.scenario)
             let expectedHeight = manifest.documentHeight * manifest.scale
             XCTAssertLessThanOrEqual(
@@ -117,6 +118,8 @@ final class LongScreenshotStitcherTests: XCTestCase {
 
         XCTAssertEqual(stitcher.acceptedFrameCount, 4)
         XCTAssertEqual(stitcher.outputHeight, 480)
+        XCTAssertEqual(stitcher.retainedContentPixelBytes, 440 * 180 * 4)
+        XCTAssertLessThan(stitcher.retainedContentPixelBytes, 4 * 240 * 180 * 4)
     }
 
     func testVisionRecoveryHandlesMisleadingScrollDistance() throws {
