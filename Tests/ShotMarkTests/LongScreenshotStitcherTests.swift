@@ -122,6 +122,40 @@ final class LongScreenshotStitcherTests: XCTestCase {
         XCTAssertLessThan(stitcher.retainedContentPixelBytes, 4 * 240 * 180 * 4)
     }
 
+    func testCapacityLimitKeepsCurrentImageExportableAndStopsFurtherGrowth() throws {
+        let stitcher = LongScreenshotStitcher()
+        _ = try XCTUnwrap(stitcher.append(
+            makeFrame(contentOffset: 200),
+            maxOutputHeight: 600,
+            renderMergedImage: false
+        ))
+        var finalAppend: LongScreenshotStitchUpdate?
+        for offset in [280, 360, 440, 520, 600] {
+            finalAppend = try XCTUnwrap(stitcher.append(
+                makeFrame(contentOffset: offset),
+                expectedDeltaPixels: 80,
+                expectedDirection: .downward,
+                renderMergedImage: false
+            ))
+            if finalAppend?.capacityLevel == .limit { break }
+        }
+
+        XCTAssertEqual(finalAppend?.outputHeight, 600)
+        XCTAssertEqual(finalAppend?.capacityLevel, .limit)
+        XCTAssertNotNil(stitcher.mergedImage())
+
+        let stopped = try XCTUnwrap(stitcher.append(
+            makeFrame(contentOffset: 680),
+            expectedDeltaPixels: 80,
+            expectedDirection: .downward,
+            renderMergedImage: false
+        ))
+        guard case .reachedMaximumHeight = stopped.outcome else {
+            return XCTFail("Expected an explicit capacity outcome, got \(stopped.outcome)")
+        }
+        XCTAssertEqual(stopped.outputHeight, 600)
+    }
+
     func testVisionRecoveryHandlesMisleadingScrollDistance() throws {
         let stitcher = LongScreenshotStitcher()
         _ = try XCTUnwrap(stitcher.append(makeFrame(contentOffset: 200)))

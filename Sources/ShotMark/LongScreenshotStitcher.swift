@@ -23,6 +23,7 @@ enum LongScreenshotStitchOutcome {
     case ignoredNoMovement
     case ignoredCoveredContent
     case ignoredAlignmentFailed
+    case reachedMaximumHeight
 }
 
 struct LongScreenshotStitchUpdate {
@@ -32,6 +33,14 @@ struct LongScreenshotStitchUpdate {
     let outputHeight: Int
     let direction: LongScreenshotStitchDirection
     let confidence: Double
+    let maximumOutputHeight: Int
+
+    var capacityLevel: LongScreenshotCapacityLevel {
+        LongScreenshotCapacityPolicy.level(
+            outputHeight: outputHeight,
+            maximumHeight: maximumOutputHeight
+        )
+    }
 }
 
 final class LongScreenshotStitcher {
@@ -289,6 +298,7 @@ final class LongScreenshotStitcher {
     private var rendersMergedImageOnUpdate = true
 
     private(set) var acceptedFrameCount = 0
+    private(set) var maximumOutputHeight = LongScreenshotCapacityPolicy.absoluteMaximumHeight
 
     var retainedContentPixelBytes: Int {
         contentSlices.reduce(0) { $0 + $1.raster.pixels.count }
@@ -319,18 +329,23 @@ final class LongScreenshotStitcher {
         viewportAnchors.removeAll()
         viewportOverlayRegions.removeAll()
         acceptedFrameCount = 0
+        maximumOutputHeight = LongScreenshotCapacityPolicy.absoluteMaximumHeight
     }
 
     func append(
         _ image: CGImage,
         expectedDeltaPixels: Int? = nil,
         expectedDirection: LongScreenshotStitchDirection? = nil,
-        maxOutputHeight: Int = 120_000,
+        maxOutputHeight: Int? = nil,
         renderMergedImage: Bool = true
     ) -> LongScreenshotStitchUpdate? {
         rendersMergedImageOnUpdate = renderMergedImage
         guard let raster = RasterImage(cgImage: image) else { return nil }
         guard let lastRaster, let baseRaster else {
+            maximumOutputHeight = maxOutputHeight ?? LongScreenshotCapacityPolicy.maximumHeight(
+                imageWidth: raster.width,
+                minimumHeight: raster.height
+            )
             self.baseRaster = raster
             self.lastRaster = raster
             contentSlices = [ContentSlice(raster: raster, viewportStartRow: 0, documentStart: 0)]
@@ -552,9 +567,9 @@ final class LongScreenshotStitcher {
             return update(outcome: .ignoredCoveredContent, confidence: confidence(for: match))
         }
 
-        let remainingHeight = maxOutputHeight - outputHeight
+        let remainingHeight = maximumOutputHeight - outputHeight
         guard remainingHeight > 0 else {
-            return update(outcome: .ignoredAlignmentFailed, confidence: confidence(for: match))
+            return update(outcome: .reachedMaximumHeight, confidence: confidence(for: match))
         }
 
         let acceptedDelta = min(novelRowCount, remainingHeight)
@@ -893,7 +908,8 @@ final class LongScreenshotStitcher {
             acceptedFrameCount: acceptedFrameCount,
             outputHeight: outputHeight,
             direction: stitchDirection,
-            confidence: confidence
+            confidence: confidence,
+            maximumOutputHeight: maximumOutputHeight
         )
     }
 

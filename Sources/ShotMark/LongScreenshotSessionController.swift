@@ -139,7 +139,7 @@ private extension LongScreenshotStitchUpdate {
         switch outcome {
         case .initialized, .appended:
             true
-        case .ignoredNoMovement, .ignoredCoveredContent, .ignoredAlignmentFailed:
+        case .ignoredNoMovement, .ignoredCoveredContent, .ignoredAlignmentFailed, .reachedMaximumHeight:
             false
         }
     }
@@ -156,6 +156,8 @@ private extension LongScreenshotStitchUpdate {
             "经过已采集区域，不重复拼接"
         case .ignoredAlignmentFailed:
             "拼接置信度低，放慢滚动"
+        case .reachedMaximumHeight:
+            "已达安全长度上限，请保存或复制"
         }
     }
 
@@ -171,6 +173,8 @@ private extension LongScreenshotStitchUpdate {
             "已采集区域"
         case .ignoredAlignmentFailed:
             "正在寻找稳定重叠区域"
+        case .reachedMaximumHeight:
+            "已停止采集，当前结果可正常导出"
         }
     }
 }
@@ -317,6 +321,7 @@ final class LongScreenshotSessionController {
     private var streamMotionReferenceImage: CGImage?
     private var didWriteStreamDiagnostics = false
     private var lastMergedPreviewAt = Date.distantPast
+    private var hasReachedOutputLimit = false
 
     private let trailingCaptureDelay: TimeInterval = 0.18
     private let scrollingPreviewCaptureInterval: TimeInterval = 0.2
@@ -527,6 +532,10 @@ final class LongScreenshotSessionController {
             return
         }
         guard !isAwaitingAccessibilityAuthorization else { return }
+        guard !hasReachedOutputLimit else {
+            updateControlView(status: "已达安全长度上限，请保存或复制")
+            return
+        }
         if captureMode == .automatic, didStartAutomaticScrolling {
             setCaptureMode(.manual, status: "已切换手动滚动")
         }
@@ -877,7 +886,7 @@ final class LongScreenshotSessionController {
             // A rejected frame is not a committed viewport. Keeping the last
             // successful reference lets a later stable frame recover.
             nextStreamMotionCaptureAllowedAt = Date().addingTimeInterval(0.45)
-        case .ignoredNoMovement, .none:
+        case .ignoredNoMovement, .reachedMaximumHeight, .none:
             // Smooth scrolling often moves less than the stitcher's minimum
             // useful overlap between adjacent stream frames. Do not consume
             // that motion; let it accumulate against the last accepted frame.
@@ -898,7 +907,7 @@ final class LongScreenshotSessionController {
                     expectedDirection: expectedDirection,
                     scrollDirectionSign: scrollDirectionSign
                 ))
-            case .initialized, .appended, .ignoredNoMovement, .ignoredCoveredContent:
+            case .initialized, .appended, .ignoredNoMovement, .ignoredCoveredContent, .reachedMaximumHeight:
                 alignmentRetryWorkItem?.cancel()
                 alignmentRetryWorkItem = nil
                 alignmentRetryCount = 0
@@ -920,7 +929,10 @@ final class LongScreenshotSessionController {
                 screenScale: selection.screen.backingScaleFactor,
                 createdAt: createdAt
             ))
-            if captureMode == .manual, case .initialized = update?.outcome {
+            if update?.capacityLevel == .warning {
+                updateControlView(status: "长图较大，建议尽快保存或复制")
+                updatePreview(status: "接近安全长度上限")
+            } else if captureMode == .manual, case .initialized = update?.outcome {
                 updateControlView(status: "首帧已采集，请滚动或点自动向下")
                 updatePreview(status: "可手动滚动或自动向下")
             } else {
@@ -930,6 +942,13 @@ final class LongScreenshotSessionController {
         } else {
             updateControlView(status: update?.statusText ?? "未检测到新内容")
             updatePreview(status: update?.previewStatusText ?? "未追加")
+        }
+        if let update {
+            if update.capacityLevel == .limit {
+                handleOutputLimitReached()
+            } else if case .reachedMaximumHeight = update.outcome {
+                handleOutputLimitReached()
+            }
         }
     }
 
@@ -962,7 +981,22 @@ final class LongScreenshotSessionController {
                 viewportHeightPoints: selection.rectInScreen.height
             )
             break
+        case .reachedMaximumHeight:
+            setCaptureMode(.manual, status: "已达安全长度上限，请保存或复制")
         }
+    }
+
+    private func handleOutputLimitReached() {
+        guard !hasReachedOutputLimit else { return }
+        hasReachedOutputLimit = true
+        automaticScrollWorkItem?.cancel()
+        automaticScrollWorkItem = nil
+        alignmentRetryWorkItem?.cancel()
+        alignmentRetryWorkItem = nil
+        captureMode = .manual
+        controlView?.captureMode = .manual
+        updateControlView(status: "已达安全长度上限，请保存或复制")
+        updatePreview(status: "当前长图可正常导出")
     }
 
     private func writeDiagnosticFrames(reference: CGImage, candidate: CGImage) {
@@ -1109,6 +1143,7 @@ final class LongScreenshotSessionController {
     private func resumeCaptureAfterAccessibilityAuthorization() {
         guard isAwaitingAccessibilityAuthorization else { return }
         isAwaitingAccessibilityAuthorization = false
+        hasReachedOutputLimit = false
         frameRing.reset()
         streamMotionReferenceImage = nil
         minimumCaptureSequenceNumber = nil

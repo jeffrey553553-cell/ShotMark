@@ -39,7 +39,7 @@ adapted because upstream projects can change.
 | Selection precision | Magnifier, color readout and physical-pixel keyboard movement implemented | Snapzy, Flameshot | Add optional standalone color picker |
 | Annotation | Editable rectangle, ellipse, arrow, freehand pen, non-compounding highlighter, number, text, callout and blur | capcap, Snapzy, Flameshot | Add constrained geometry, spotlight and multi-selection |
 | OCR and translation | Implemented with Vision and Translation | Snapzy, Apple Vision | Preserve layout and add language chooser |
-| Scrolling capture | Bidirectional stitching with pixel matching and Vision recovery | Snapzy, ScrollSnap, ShareX | Add session metrics, safety state and fixture benchmark corpus |
+| Scrolling capture | Bidirectional stitching, dynamic-region consensus, fixed-element cleanup, live crop and width-aware safety limits | Snapzy, ScrollSnap, ShareX | Add real-app success metrics and horizontal scrolling capture |
 | Recording | Native-size MP4, four audio modes, system click highlight, pause/resume with H.264 segment merging | Kap, Snapzy, Apple ScreenCaptureKit | GIF export, keystroke overlay and lightweight trim |
 | Pinning | Independent windows with constrained zoom, opacity, copy/save, mouse pass-through lock and multi-pin management | Snapzy, Shotnix | Pin groups and persisted workspaces |
 | Export | Reliable PNG clipboard and PNG save to Downloads | Snapzy, Apple AppKit | Keep the confirmation path fast and predictable |
@@ -47,7 +47,7 @@ adapted because upstream projects can change.
 
 ## Priority
 
-1. Capture precision and activation latency.
-2. Recording GIF export, keystroke overlay and lightweight trim.
-3. Constrained geometry, spotlight and annotation multi-selection.
-4. Signed, notarized automatic updates.
+1. Real-app long screenshot success metrics and failure recovery.
+2. Signed, notarized automatic updates.
+3. Recording GIF export, keystroke overlay and lightweight trim.
+4. Trial, licensing, privacy and paid-support readiness.
