@@ -312,6 +312,10 @@ final class LongScreenshotStitcher {
         contentSlices.reduce(0) { $0 + $1.rowCount } + headerHeight + footerHeight
     }
 
+    var outputWidth: Int {
+        baseRaster?.width ?? 0
+    }
+
     func reset() {
         baseRaster = nil
         lastRaster = nil

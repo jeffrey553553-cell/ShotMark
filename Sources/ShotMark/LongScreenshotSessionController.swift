@@ -115,6 +115,27 @@ enum LongScreenshotPreviewPolicy {
     }
 }
 
+enum LongScreenshotRecoveryAdvice {
+    static func controlStatus(
+        consecutiveAlignmentFailures: Int,
+        expectedDirection: LongScreenshotStitchDirection?
+    ) -> String {
+        guard consecutiveAlignmentFailures >= 2 else { return "暂未对齐，请继续缓慢滚动" }
+        switch expectedDirection {
+        case .downward:
+            return "重叠不足，向上回滚少许后慢滚"
+        case .upward:
+            return "重叠不足，向下回滚少许后慢滚"
+        case .unresolved, .none:
+            return "重叠不足，回到上一屏末尾后慢滚"
+        }
+    }
+
+    static func previewStatus(consecutiveAlignmentFailures: Int) -> String {
+        consecutiveAlignmentFailures >= 2 ? "当前结果安全，可回滚恢复或直接导出" : "等待新的重叠内容"
+    }
+}
+
 enum LongScreenshotCropGeometry {
     static func cropRect(
         imageWidth: Int,
@@ -275,6 +296,7 @@ final class LongScreenshotSessionController {
     private let frameSource = LongScreenshotFrameSource()
     private let frameRing = LongScreenshotFrameRing()
     private let retryPolicy = LongScreenshotRetryPolicy()
+    private let qualityTracker: LongScreenshotQualityTracker
     private let selection: CaptureSelection
     private var targetProcessIdentifier: pid_t?
     private var captures: [CaptureResult] = []
@@ -322,6 +344,8 @@ final class LongScreenshotSessionController {
     private var didWriteStreamDiagnostics = false
     private var lastMergedPreviewAt = Date.distantPast
     private var hasReachedOutputLimit = false
+    private var consecutiveAlignmentFailureCount = 0
+    private var isSessionActive = true
 
     private let trailingCaptureDelay: TimeInterval = 0.18
     private let scrollingPreviewCaptureInterval: TimeInterval = 0.2
@@ -336,6 +360,7 @@ final class LongScreenshotSessionController {
     init(selection: CaptureSelection, targetProcessIdentifier: pid_t? = nil) {
         self.selection = selection
         self.targetProcessIdentifier = targetProcessIdentifier
+        qualityTracker = LongScreenshotQualityTracker(viewportSize: selection.nativePixelSize)
         automaticScrollDeltaPoints = LongScreenshotAutomaticScrollPolicy.initialStep(
             viewportHeightPoints: selection.rectInScreen.height
         )
@@ -343,6 +368,7 @@ final class LongScreenshotSessionController {
     }
 
     func start() {
+        guard isSessionActive else { return }
         showSelectionFrameWindow()
         showControlWindow()
         showPreviewWindow()
@@ -354,11 +380,17 @@ final class LongScreenshotSessionController {
     }
 
     func cancel() {
+        guard isSessionActive else { return }
+        qualityTracker.finish(
+            completion: .cancelled,
+            outputSize: CGSize(width: stitcher.outputWidth, height: stitcher.outputHeight)
+        )
         cleanup()
         onCancel?()
     }
 
     private func finish(action: LongScreenshotCommitAction) {
+        guard isSessionActive else { return }
         if isCapturing {
             finishAfterCapture = true
             pendingCommitAction = action
@@ -367,12 +399,14 @@ final class LongScreenshotSessionController {
         }
 
         guard stitcher.acceptedFrameCount > 0 else {
+            qualityTracker.finish(completion: .failed)
             cleanup()
             onFinish?(.failure(LongScreenshotSessionError.noFrames))
             return
         }
 
         guard let stitched = stitcher.mergedImage() ?? stitchedImageCache else {
+            qualityTracker.finish(completion: .failed)
             cleanup()
             onFinish?(.failure(LongScreenshotSessionError.stitchingFailed))
             return
@@ -384,6 +418,7 @@ final class LongScreenshotSessionController {
             bottomPixels: cropBottomPixels
         )
         guard let finalImage = stitched.cropping(to: cropRect) else {
+            qualityTracker.finish(completion: .failed)
             cleanup()
             onFinish?(.failure(LongScreenshotSessionError.stitchingFailed))
             return
@@ -394,6 +429,10 @@ final class LongScreenshotSessionController {
             selectionRectInScreen: selection.rectInScreen,
             screenScale: selection.screen.backingScaleFactor,
             createdAt: Date()
+        )
+        qualityTracker.finish(
+            completion: action == .saveToFile ? .completedForSave : .completedForCopy,
+            outputSize: CGSize(width: finalImage.width, height: finalImage.height)
         )
         cleanup()
         onFinish?(.success((result, action)))
@@ -433,21 +472,25 @@ final class LongScreenshotSessionController {
 
     private func startFrameSourceIfNeeded() {
         guard isStreamCaptureEnabled else {
+            qualityTracker.recordCompatibilityCaptureUsed()
             updatePreview(status: "兼容模式采集")
             return
         }
 
         frameSource.onFrame = { [weak self] frame in
+            guard self?.isSessionActive == true else { return }
             self?.handleStreamFrame(frame)
         }
         frameSource.onFailure = { [weak self] error in
+            guard self?.isSessionActive == true else { return }
             self?.isStreamSourceReady = false
             self?.isStreamCaptureEnabled = false
+            self?.qualityTracker.recordCompatibilityCaptureUsed()
             self?.updatePreview(status: "帧流异常，已回退")
             Self.logger.error("Frame stream stopped: \(error.localizedDescription, privacy: .public)")
         }
         frameSource.start(selection: selection) { [weak self] result in
-            guard let self else { return }
+            guard let self, self.isSessionActive else { return }
             switch result {
             case .success:
                 self.isStreamSourceReady = true
@@ -457,6 +500,7 @@ final class LongScreenshotSessionController {
             case .failure(let error):
                 self.isStreamSourceReady = false
                 self.isStreamCaptureEnabled = false
+                self.qualityTracker.recordCompatibilityCaptureUsed()
                 Self.logger.error("Frame stream failed: \(error.localizedDescription, privacy: .public)")
                 self.updatePreview(status: "帧流不可用，兼容采集")
             }
@@ -464,7 +508,7 @@ final class LongScreenshotSessionController {
     }
 
     private func handleStreamFrame(_ frame: LongScreenshotFrame) {
-        guard !isAwaitingAccessibilityAuthorization else { return }
+        guard isSessionActive, !isAwaitingAccessibilityAuthorization else { return }
         let cleanedFrame = LongScreenshotFrame(
             sequenceNumber: frame.sequenceNumber,
             image: cleanedImage(frame.image, scale: selection.screen.backingScaleFactor),
@@ -580,6 +624,7 @@ final class LongScreenshotSessionController {
             return
         }
         didStartAutomaticScrolling = true
+        qualityTracker.recordAutomaticScrollingUsed()
         scheduleAutomaticScrollStep(after: 0.28)
     }
 
@@ -717,7 +762,7 @@ final class LongScreenshotSessionController {
         retryContext: LongScreenshotAlignmentRetryContext? = nil,
         requireStableFrame: Bool = false
     ) {
-        guard !finishAfterCapture, !isAwaitingAccessibilityAuthorization else { return }
+        guard isSessionActive, !finishAfterCapture, !isAwaitingAccessibilityAuthorization else { return }
         if isCapturing {
             needsCaptureAfterCurrent = true
             needsStableCaptureAfterCurrent = needsStableCaptureAfterCurrent || requireStableFrame
@@ -784,7 +829,7 @@ final class LongScreenshotSessionController {
             guard let self else { return }
             self.captureService.capture(selection: self.selection) { [weak self] result in
                 DispatchQueue.main.async {
-                    guard let self else { return }
+                    guard let self, self.isSessionActive else { return }
                     self.isCapturing = false
                     guard !self.isAwaitingAccessibilityAuthorization else { return }
 
@@ -801,6 +846,13 @@ final class LongScreenshotSessionController {
                             isAlignmentRetry: retryContext != nil
                         )
                     case .failure(let error):
+                        self.qualityTracker.finish(
+                            completion: .failed,
+                            outputSize: CGSize(
+                                width: self.stitcher.outputWidth,
+                                height: self.stitcher.outputHeight
+                            )
+                        )
                         self.cleanup()
                         self.onFinish?(.failure(error))
                         return
@@ -865,6 +917,15 @@ final class LongScreenshotSessionController {
             writeDiagnosticFrames(reference: referenceImage, candidate: image)
         }
         if let update {
+            qualityTracker.record(update)
+            switch update.outcome {
+            case .ignoredAlignmentFailed:
+                consecutiveAlignmentFailureCount += 1
+            case .initialized, .appended, .ignoredCoveredContent:
+                consecutiveAlignmentFailureCount = 0
+            case .ignoredNoMovement, .reachedMaximumHeight:
+                break
+            }
             Self.logger.info(
                 "Stitch \(update.statusText, privacy: .public), height=\(update.outputHeight), accepted=\(update.acceptedFrameCount)"
             )
@@ -1015,8 +1076,13 @@ final class LongScreenshotSessionController {
         alignmentRetryWorkItem?.cancel()
         let nextAttempt = alignmentRetryCount + 1
         guard let delay = retryPolicy.delay(forAttempt: nextAttempt) else {
-            updateControlView(status: "暂未对齐，继续缓慢滚动")
-            updatePreview(status: "等待新的重叠内容")
+            updateControlView(status: LongScreenshotRecoveryAdvice.controlStatus(
+                consecutiveAlignmentFailures: consecutiveAlignmentFailureCount,
+                expectedDirection: context.expectedDirection
+            ))
+            updatePreview(status: LongScreenshotRecoveryAdvice.previewStatus(
+                consecutiveAlignmentFailures: consecutiveAlignmentFailureCount
+            ))
             if captureMode == .automatic {
                 automaticStallCount += 1
                 if automaticStallCount >= 3 {
@@ -1028,6 +1094,7 @@ final class LongScreenshotSessionController {
             return
         }
         alignmentRetryCount = nextAttempt
+        qualityTracker.recordRetry()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self, !self.finishAfterCapture else { return }
             self.alignmentRetryWorkItem = nil
@@ -1370,6 +1437,8 @@ final class LongScreenshotSessionController {
     }
 
     private func cleanup() {
+        guard isSessionActive else { return }
+        isSessionActive = false
         automaticScrollWorkItem?.cancel()
         automaticScrollWorkItem = nil
         throttledScrollCaptureWorkItem?.cancel()
@@ -1417,6 +1486,7 @@ final class LongScreenshotSessionController {
         minimumCaptureSequenceNumber = nil
         latestScrollEventSequenceNumber = nil
         alignmentRetryCount = 0
+        consecutiveAlignmentFailureCount = 0
         stabilityRetryCount = 0
         lastScrollCaptureAt = .distantPast
         streamFrameCount = 0

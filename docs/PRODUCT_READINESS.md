@@ -45,11 +45,18 @@ permissions, multi-display behavior, and regression coverage are all verified.
 
 ## Current Iteration
 
-- Added width-aware long screenshot capacity limits based on estimated merged
-  image memory instead of a single height for every selection.
-- Added an 80% warning state and a distinct safe-limit state.
-- Reaching the limit stops capture and retries while preserving save/copy.
-- Added policy and stitcher regression coverage for warning and limit behavior.
+- Added bounded, local-only long screenshot quality reports. They retain only
+  dimensions, timings and stitch statistics; no image, text, application name
+  or file path is recorded.
+- Added a privacy-visible Settings section to copy a support summary or clear
+  all retained diagnostics. Corrupt report data self-recovers and never blocks
+  capture.
+- Added directional recovery instructions after repeated alignment failures,
+  while keeping the current stitched result exportable.
+- Added a session lifecycle gate so late asynchronous frames cannot complete a
+  capture after the user has cancelled, saved or encountered an error.
+- Added regression coverage for retention, corruption recovery, privacy text,
+  quality aggregation, idempotent completion and recovery advice.
 
 ## References
 

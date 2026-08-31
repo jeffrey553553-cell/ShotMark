@@ -175,6 +175,9 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "LongScreenshotPreviewPolicy.minimumRenderInterval" Sources/ShotMark/LongScreenshotSessionController.swift Tests/ShotMarkTests/LongScreenshotRetryPolicyTests.swift
   rg -q "LongScreenshotCapacityPolicy" Sources/ShotMark/LongScreenshotCapacityPolicy.swift Sources/ShotMark/LongScreenshotStitcher.swift Tests/ShotMarkTests/LongScreenshotCapacityPolicyTests.swift
   rg -q "reachedMaximumHeight" Sources/ShotMark/LongScreenshotStitcher.swift Sources/ShotMark/LongScreenshotSessionController.swift Tests/ShotMarkTests/LongScreenshotStitcherTests.swift
+  rg -q "LongScreenshotQualityReportStore" Sources/ShotMark/LongScreenshotQualityReport.swift Sources/ShotMark/SettingsWindowController.swift Tests/ShotMarkTests/LongScreenshotQualityReportTests.swift
+  rg -q "consecutiveAlignmentFailureCount" Sources/ShotMark/LongScreenshotSessionController.swift Tests/ShotMarkTests/LongScreenshotQualityReportTests.swift
+  rg -q "isSessionActive" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q '"nested", "lowtexture", "sticky-swap"' scripts/generate_longshot_benchmark.mjs
   rg -q "detectStaticBand" Sources/ShotMark/LongScreenshotStitcher.swift
   rg -q "detectStaticSideBand" Sources/ShotMark/LongScreenshotStitcher.swift
@@ -363,6 +366,9 @@ Mark each item PASS/FAIL after running it.
 | Long screenshot | Auto-scroll through short and tall viewports | Scroll distance adapts to accepted content and confidence without large jumps or repeatedly tiny steps | |
 | Long screenshot | Capture down, then beyond the original viewport upward | Every content row appears once in the final image, with no duplicated or missing seam pixels | |
 | Long screenshot | Continue scrolling until the safe capacity limit | A warning appears before the limit; capture stops at the limit and the current image can still be saved or copied | |
+| Long screenshot | Scroll too far until alignment retries are exhausted | The UI gives a directional rollback instruction; the current result remains exportable | |
+| Long screenshot | Cancel while a frame capture is still in flight | The late frame is ignored and no second completion or error appears | |
+| Settings | Complete several long screenshots, then copy and clear diagnostics | Summary contains only dimensions, timings and quality counts; clearing removes all retained reports | |
 | Edit | Draw rectangle/arrow/text/mosaic, then Cmd+Z/Cmd+Shift+Z | Undo and redo restore the previous annotation state | |
 | Edit | Select an annotation and press Delete | The selected annotation is removed only after selection | |
 | Edit | Select rectangle/mosaic and drag corner handles | The object resizes without moving unrelated annotations | |

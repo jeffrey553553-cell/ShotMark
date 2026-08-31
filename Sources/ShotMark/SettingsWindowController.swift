@@ -43,6 +43,8 @@ struct SettingsView: View {
     @State private var shortcutMessage = "点击修改后按下新的截图快捷键。"
     @State private var shortcutMessageIsError = false
     @State private var shortcutRecorderMonitor: Any?
+    @State private var longScreenshotReportCount = 0
+    @State private var diagnosticsMessage = "仅在本机保留最近 50 次长截图的尺寸、耗时和拼接统计，不保存截图内容或应用信息。"
 
     var body: some View {
         ScrollView {
@@ -106,6 +108,33 @@ struct SettingsView: View {
                             Button("麦克风设置") {
                                 PermissionService.openMicrophoneSettings()
                             }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                SettingsSection(title: "诊断与隐私") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(diagnosticsMessage)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        HStack(spacing: 10) {
+                            Text("长截图诊断：\(longScreenshotReportCount) 条")
+                                .font(.system(size: 13))
+                            Spacer()
+                            Button("复制诊断摘要") {
+                                copyLongScreenshotDiagnostics()
+                            }
+                            .disabled(longScreenshotReportCount == 0)
+
+                            Button("清除") {
+                                LongScreenshotQualityReportStore.shared.clear()
+                                longScreenshotReportCount = 0
+                                diagnosticsMessage = "长截图诊断数据已清除。"
+                            }
+                            .disabled(longScreenshotReportCount == 0)
                         }
                     }
                     .padding(.vertical, 4)
@@ -232,6 +261,14 @@ struct SettingsView: View {
         accessibilityAccess = PermissionService.hasAccessibilityAccess
         microphonePermission = PermissionService.microphonePermissionState
         shortcut = AppSettings.shared.shortcut
+        longScreenshotReportCount = LongScreenshotQualityReportStore.shared.reports().count
+    }
+
+    private func copyLongScreenshotDiagnostics() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(LongScreenshotQualityReportStore.shared.summaryText(), forType: .string)
+        diagnosticsMessage = "诊断摘要已复制，其中不包含截图内容、识别文字、应用名或文件路径。"
     }
 
     private func startShortcutRecording() {
