@@ -218,6 +218,8 @@ final class AppSettings {
     private let toolbarShortcutPreferencesKey = "shotmark.toolbarShortcutPreferences.v1"
     private let automaticallyChecksForUpdatesKey = "shotmark.automaticallyChecksForUpdates"
     private let lastUpdateCheckAtKey = "shotmark.lastUpdateCheckAt"
+    private let hasPresentedOnboardingKey = "shotmark.hasPresentedOnboarding.v1"
+    private let hasCompletedOnboardingKey = "shotmark.hasCompletedOnboarding.v1"
 
     init(defaults: UserDefaults) {
         self.defaults = defaults
@@ -261,6 +263,16 @@ final class AppSettings {
     var lastUpdateCheckAt: Date? {
         get { defaults.object(forKey: lastUpdateCheckAtKey) as? Date }
         set { defaults.set(newValue, forKey: lastUpdateCheckAtKey) }
+    }
+
+    var hasPresentedOnboarding: Bool {
+        get { defaults.bool(forKey: hasPresentedOnboardingKey) }
+        set { defaults.set(newValue, forKey: hasPresentedOnboardingKey) }
+    }
+
+    var hasCompletedOnboarding: Bool {
+        get { defaults.bool(forKey: hasCompletedOnboardingKey) }
+        set { defaults.set(newValue, forKey: hasCompletedOnboardingKey) }
     }
 
     var toolbarShortcutPreferences: ToolbarShortcutPreferences {

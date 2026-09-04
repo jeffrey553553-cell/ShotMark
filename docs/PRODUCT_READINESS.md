@@ -45,6 +45,13 @@ permissions, multi-display behavior, and regression coverage are all verified.
 
 ## Current Iteration
 
+- Added a first-run setup guide that explains the required screen-recording
+  permission before requesting it, keeps Accessibility optional, rechecks
+  permission after returning from System Settings, offers a one-click relaunch,
+  and starts the first capture directly once ready.
+- Existing authorized users are migrated without seeing first-run UI. An
+  interrupted setup remains recoverable after relaunch, while the status menu
+  keeps a permanent entry for reopening the guide.
 - Added user-initiated update checks in the status menu and Settings, plus a
   persisted opt-out for at-most-daily automatic checks.
 - Update metadata is accepted only from the official GitHub repository over

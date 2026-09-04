@@ -35,6 +35,17 @@ verify_dmg_install_layout() {
   )
 }
 
+verify_dmg_image() {
+  (
+    set -euo pipefail
+    local verify_dir
+    verify_dir="$(mktemp -d "${TMPDIR:-/tmp}/shotmark-dmg-independent-verify.XXXXXX")"
+    trap 'rm -rf "$verify_dir"' EXIT
+    cp "$ROOT_DIR/dist/ShotMark.dmg" "$verify_dir/ShotMark.dmg"
+    hdiutil verify "$verify_dir/ShotMark.dmg"
+  )
+}
+
 run_step "Swift debug build" swift build --disable-sandbox
 run_step "Swift tests" swift test --disable-sandbox
 run_step "Rendered long screenshot benchmark" "$ROOT_DIR/scripts/run_longshot_benchmark.sh"
@@ -80,7 +91,7 @@ SWIFT
   )
 '
 run_step "DMG package" "$ROOT_DIR/scripts/package_dmg.sh"
-run_step "DMG verify" hdiutil verify "$ROOT_DIR/dist/ShotMark.dmg"
+run_step "DMG verify" verify_dmg_image
 run_step "DMG install layout verify" verify_dmg_install_layout
 run_step "P1 editing and recording static checks" bash -c '
   set -euo pipefail
@@ -181,6 +192,9 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "UpdateCheckService" Sources/ShotMark/UpdateCheckService.swift Sources/ShotMark/AppDelegate.swift Tests/ShotMarkTests/UpdateCheckServiceTests.swift
   rg -q "automaticallyChecksForUpdates" Sources/ShotMark/Models.swift Sources/ShotMark/SettingsWindowController.swift Tests/ShotMarkTests/UpdateCheckServiceTests.swift
   rg -q "SHOTMARK_RELEASE_MODE" scripts/build_app.sh scripts/package_dmg.sh scripts/release_readiness.sh scripts/publish_public_release.sh
+  rg -q "OnboardingLaunchPolicy" Sources/ShotMark/OnboardingLaunchPolicy.swift Sources/ShotMark/AppDelegate.swift Tests/ShotMarkTests/OnboardingLaunchPolicyTests.swift
+  rg -q "hasCompletedOnboarding" Sources/ShotMark/Models.swift Sources/ShotMark/AppDelegate.swift Tests/ShotMarkTests/OnboardingLaunchPolicyTests.swift
+  rg -q "设置指南" Sources/ShotMark/AppDelegate.swift Sources/ShotMark/OnboardingWindowController.swift
   rg -q '"nested", "lowtexture", "sticky-swap"' scripts/generate_longshot_benchmark.mjs
   rg -q "detectStaticBand" Sources/ShotMark/LongScreenshotStitcher.swift
   rg -q "detectStaticSideBand" Sources/ShotMark/LongScreenshotStitcher.swift
@@ -321,6 +335,10 @@ Mark each item PASS/FAIL after running it.
 
 | Area | Case | Expected | Result |
 | --- | --- | --- | --- |
+| First launch | Launch a fresh install without Screen Recording permission | Setup guide appears before the system prompt, explains why the required permission is needed, and does not request microphone access | |
+| First launch | Grant Screen Recording, return to ShotMark, then relaunch if requested | Permission turns green after recheck/relaunch and Start Capture opens the normal selection overlay | |
+| First launch | Upgrade an already authorized ShotMark installation | Existing user is migrated without an unexpected setup window | |
+| First launch | Close or defer setup, then use the status menu | ShotMark remains running and Setup Guide can be reopened from the status menu | |
 | Permissions | Status bar -> permission rows | Screen Recording and Microphone show allowed after permission is granted; if not, menu offers settings and restart/quit path | |
 | Settings | Change screenshot shortcut, then restore default | New shortcut triggers capture; occupied/reserved shortcuts show an error; default returns to Option+A after restore | |
 | Single screen | Configured screenshot shortcut on built-in/main screen | Selection overlay appears; selection can move and resize | |

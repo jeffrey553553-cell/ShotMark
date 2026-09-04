@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hotKeyService: HotKeyService?
     private var coordinator: ScreenshotCoordinator?
     private var settingsWindowController: SettingsWindowController?
+    private var onboardingWindowController: OnboardingWindowController?
     private var shortcutObserver: NSObjectProtocol?
     private let updateCheckService = UpdateCheckService()
     private var isCheckingForUpdates = false
@@ -42,10 +43,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         if CommandLine.arguments.contains("--demo") {
             coordinator.showDemo()
+        } else if CommandLine.arguments.contains("--onboarding-preview") {
+            presentOnboarding(markAsPresented: false)
         } else if CommandLine.arguments.contains("--settings-preview") {
             openSettings()
         } else {
-            scheduleAutomaticUpdateCheckIfNeeded()
+            if !handleOnboardingAtLaunch() {
+                scheduleAutomaticUpdateCheckIfNeeded()
+            }
         }
     }
 
@@ -88,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(NSMenuItem(title: "打开辅助功能设置（提升窗口识别）...", action: #selector(openAccessibilitySettings), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "打开麦克风设置...", action: #selector(openMicrophoneSettings), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "权限与设置...", action: #selector(openSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem(title: "设置指南...", action: #selector(openOnboarding), keyEquivalent: ""))
         menu.addItem(.separator())
         let updateItem = NSMenuItem(title: "检查更新...", action: #selector(checkForUpdatesMenuItem), keyEquivalent: "")
         menu.addItem(updateItem)
@@ -154,6 +160,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settingsWindowController?.showWindow(nil)
         settingsWindowController?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func openOnboarding() {
+        presentOnboarding(markAsPresented: true)
+    }
+
+    private func presentOnboarding(markAsPresented: Bool) {
+        if markAsPresented {
+            AppSettings.shared.hasPresentedOnboarding = true
+        }
+        if onboardingWindowController == nil {
+            onboardingWindowController = OnboardingWindowController(
+                shortcut: AppSettings.shared.shortcut,
+                onStartCapture: { [weak self] in
+                    self?.completeOnboarding(startCapture: true)
+                },
+                onDismiss: { [weak self] in
+                    self?.completeOnboarding(startCapture: false)
+                }
+            )
+        }
+        onboardingWindowController?.showWindow(nil)
+    }
+
+    @discardableResult
+    private func handleOnboardingAtLaunch() -> Bool {
+        let settings = AppSettings.shared
+        switch OnboardingLaunchPolicy.decision(
+            hasCompletedOnboarding: settings.hasCompletedOnboarding,
+            hasPresentedOnboarding: settings.hasPresentedOnboarding,
+            hasScreenRecordingAccess: PermissionService.hasScreenRecordingAccess
+        ) {
+        case .skip:
+            return false
+        case .present:
+            openOnboarding()
+            return true
+        case .migrateExistingUser:
+            settings.hasCompletedOnboarding = true
+            return false
+        }
+    }
+
+    private func completeOnboarding(startCapture: Bool) {
+        AppSettings.shared.hasCompletedOnboarding = true
+        onboardingWindowController?.window?.delegate = nil
+        onboardingWindowController?.close()
+        onboardingWindowController = nil
+        scheduleAutomaticUpdateCheckIfNeeded()
+        if startCapture {
+            DispatchQueue.main.async { [weak self] in
+                self?.performPrimaryAction()
+            }
+        }
     }
 
     @objc private func openScreenRecordingSettings() {

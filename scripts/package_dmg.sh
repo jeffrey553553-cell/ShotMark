@@ -20,16 +20,20 @@ DIST_DIR="$ROOT_DIR/dist"
 DMG_PATH="$DIST_DIR/ShotMark.dmg"
 VOLUME_NAME="ShotMark"
 DMG_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/shotmark-dmg-root.XXXXXX")"
+VERIFY_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/shotmark-dmg-verify.XXXXXX")"
 
 cleanup() {
   rm -rf "$DMG_ROOT"
+  rm -rf "$VERIFY_ROOT"
 }
 trap cleanup EXIT
 
 mkdir -p "$DIST_DIR"
 ditto --norsrc "$APP_PATH" "$DMG_ROOT/ShotMark.app"
 ln -s /Applications "$DMG_ROOT/Applications"
-hdiutil create -volname "$VOLUME_NAME" -srcfolder "$DMG_ROOT" -ov -format UDZO "$DMG_PATH"
+hdiutil create -volname "$VOLUME_NAME" -srcfolder "$DMG_ROOT" -ov -format UDZO "$DMG_PATH" >&2
+cp "$DMG_PATH" "$VERIFY_ROOT/ShotMark.dmg"
+hdiutil verify "$VERIFY_ROOT/ShotMark.dmg" >&2
 
 if [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
   codesign --force --timestamp --sign "$DEVELOPER_ID_APPLICATION" "$DMG_PATH"
