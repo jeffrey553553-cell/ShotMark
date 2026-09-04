@@ -216,6 +216,8 @@ final class AppSettings {
     private let shortcutKey = "shotmark.captureShortcut"
     private let recordingShowsMouseClicksKey = "shotmark.recordingShowsMouseClicks"
     private let toolbarShortcutPreferencesKey = "shotmark.toolbarShortcutPreferences.v1"
+    private let automaticallyChecksForUpdatesKey = "shotmark.automaticallyChecksForUpdates"
+    private let lastUpdateCheckAtKey = "shotmark.lastUpdateCheckAt"
 
     init(defaults: UserDefaults) {
         self.defaults = defaults
@@ -245,6 +247,20 @@ final class AppSettings {
     var recordingShowsMouseClicks: Bool {
         get { defaults.bool(forKey: recordingShowsMouseClicksKey) }
         set { defaults.set(newValue, forKey: recordingShowsMouseClicksKey) }
+    }
+
+    var automaticallyChecksForUpdates: Bool {
+        get {
+            defaults.object(forKey: automaticallyChecksForUpdatesKey) == nil
+                ? true
+                : defaults.bool(forKey: automaticallyChecksForUpdatesKey)
+        }
+        set { defaults.set(newValue, forKey: automaticallyChecksForUpdatesKey) }
+    }
+
+    var lastUpdateCheckAt: Date? {
+        get { defaults.object(forKey: lastUpdateCheckAtKey) as? Date }
+        set { defaults.set(newValue, forKey: lastUpdateCheckAtKey) }
     }
 
     var toolbarShortcutPreferences: ToolbarShortcutPreferences {

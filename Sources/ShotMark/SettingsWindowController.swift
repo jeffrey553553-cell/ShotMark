@@ -4,11 +4,15 @@ import SwiftUI
 final class SettingsWindowController: NSWindowController {
     init(
         onShortcutChange: @escaping (GlobalShortcut) throws -> Void,
-        onShortcutRecordingStateChange: @escaping (Bool) -> Void
+        onShortcutRecordingStateChange: @escaping (Bool) -> Void,
+        onCheckForUpdates: @escaping () -> Void = {},
+        currentVersion: String = AppMetadata.currentVersion
     ) {
         let root = SettingsView(
             onShortcutChange: onShortcutChange,
-            onShortcutRecordingStateChange: onShortcutRecordingStateChange
+            onShortcutRecordingStateChange: onShortcutRecordingStateChange,
+            onCheckForUpdates: onCheckForUpdates,
+            currentVersion: currentVersion
         )
         let hosting = NSHostingController(rootView: root)
         let window = NSWindow(contentViewController: hosting)
@@ -33,6 +37,8 @@ final class SettingsWindowController: NSWindowController {
 struct SettingsView: View {
     let onShortcutChange: (GlobalShortcut) throws -> Void
     let onShortcutRecordingStateChange: (Bool) -> Void
+    let onCheckForUpdates: () -> Void
+    let currentVersion: String
 
     @State private var screenRecordingAccess = PermissionService.hasScreenRecordingAccess
     @State private var accessibilityAccess = PermissionService.hasAccessibilityAccess
@@ -45,6 +51,7 @@ struct SettingsView: View {
     @State private var shortcutRecorderMonitor: Any?
     @State private var longScreenshotReportCount = 0
     @State private var diagnosticsMessage = "仅在本机保留最近 50 次长截图的尺寸、耗时和拼接统计，不保存截图内容或应用信息。"
+    @State private var automaticallyChecksForUpdates = AppSettings.shared.automaticallyChecksForUpdates
 
     var body: some View {
         ScrollView {
@@ -60,6 +67,31 @@ struct SettingsView: View {
                         Text("录制：顶部控制条或状态栏可暂停、继续和停止；\(shortcut.displayName) 停止")
                     }
                     .font(.system(size: 13))
+                    .padding(.vertical, 4)
+                }
+
+                SettingsSection(title: "更新") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 10) {
+                            Toggle("自动检查更新", isOn: Binding(
+                                get: { automaticallyChecksForUpdates },
+                                set: { value in
+                                    automaticallyChecksForUpdates = value
+                                    AppSettings.shared.automaticallyChecksForUpdates = value
+                                }
+                            ))
+                            .toggleStyle(.checkbox)
+                            Spacer()
+                            Button("检查更新") {
+                                onCheckForUpdates()
+                            }
+                        }
+
+                        Text("当前版本 \(currentVersion)。自动检查最多每天一次；发现新版后打开 ShotMark 官方 GitHub Release 页面。")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     .padding(.vertical, 4)
                 }
 
@@ -262,6 +294,7 @@ struct SettingsView: View {
         microphonePermission = PermissionService.microphonePermissionState
         shortcut = AppSettings.shared.shortcut
         longScreenshotReportCount = LongScreenshotQualityReportStore.shared.reports().count
+        automaticallyChecksForUpdates = AppSettings.shared.automaticallyChecksForUpdates
     }
 
     private func copyLongScreenshotDiagnostics() {

@@ -35,6 +35,7 @@ ShotMark 是一个 macOS 15+ 原生菜单栏截图、标注和区域录屏工具
 - 激活文字工具后，点击选区内任意位置可直接输入文本评论；已落成的文字可再次点击编辑。
 - OCR 面板支持自由选择文本，点击“复制全部”后自动关闭并反馈复制成功。
 - 状态栏菜单提供屏幕录制、辅助功能、麦克风权限状态，提供打开系统设置、应用设置和退出入口；权限修改后请退出并重新打开 App。
+- 状态栏和设置页支持检查更新；默认最多每天查询一次官方 GitHub Release，仅接受正式版本、官方 GitHub HTTPS 地址和名为 `ShotMark.dmg` 的安装包，不会静默执行下载内容。
 
 ## 本地运行
 
@@ -81,6 +82,22 @@ DEVELOPER_ID_APPLICATION="Developer ID Application: Your Name (TEAMID)" \
 NOTARY_PROFILE="your-notarytool-profile" \
 scripts/package_dmg.sh
 ```
+
+正式公开发行必须显式启用严格模式。缺少 Developer ID Application、
+`notarytool` 钥匙串凭据、干净且已推送的 `main` 分支时，脚本会直接终止：
+
+```bash
+export DEVELOPER_ID_APPLICATION="Developer ID Application: Your Name (TEAMID)"
+export NOTARY_PROFILE="shotmark-notary"
+SHOTMARK_RELEASE_MODE=public scripts/release_readiness.sh
+scripts/publish_public_release.sh /path/to/release-notes.md
+```
+
+公开发行脚本会依次执行 Developer ID 签名、Hardened Runtime 校验、DMG
+公证、票据装订、Gatekeeper 评估、GitHub Release 上传和远端 SHA-256
+复核。当前只有本地开发证书时，仍可生成测试 DMG，但不能通过公开发行门禁。
+完整的一次性 Apple 配置、发布条件和 Sparkle 接入边界见
+[`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md)。
 
 ## 权限修复
 

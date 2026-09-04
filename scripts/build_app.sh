@@ -12,6 +12,18 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 PUBLIC_COPY="${SHOTMARK_PUBLIC_COPY:-1}"
 LOCAL_SIGNING_NAME="${LOCAL_SIGNING_NAME:-ShotMark Local Developer}"
+RELEASE_MODE="${SHOTMARK_RELEASE_MODE:-development}"
+
+if [[ "$RELEASE_MODE" == "public" ]]; then
+  if [[ -z "${DEVELOPER_ID_APPLICATION:-}" ]]; then
+    echo "error: public releases require DEVELOPER_ID_APPLICATION." >&2
+    exit 1
+  fi
+  if [[ "$DEVELOPER_ID_APPLICATION" != Developer\ ID\ Application:* ]]; then
+    echo "error: public releases must use a Developer ID Application identity." >&2
+    exit 1
+  fi
+fi
 
 cd "$ROOT_DIR"
 mkdir -p "$ROOT_DIR/.build/module-cache"
@@ -38,6 +50,9 @@ clear_extended_attrs() {
 clear_extended_attrs
 
 SIGNING_IDENTITY="${CODE_SIGN_IDENTITY:-${DEVELOPER_ID_APPLICATION:-}}"
+if [[ "$RELEASE_MODE" == "public" ]]; then
+  SIGNING_IDENTITY="$DEVELOPER_ID_APPLICATION"
+fi
 if [[ -z "$SIGNING_IDENTITY" ]]; then
   SIGNING_IDENTITIES="$(security find-identity -v -p codesigning 2>/dev/null || true)"
   if grep -q "$LOCAL_SIGNING_NAME" <<<"$SIGNING_IDENTITIES"; then
@@ -76,6 +91,10 @@ fi
 SIGNATURE_DETAILS="$(codesign -dv --verbose=4 "$APP_DIR" 2>&1)"
 if ! grep -q "flags=.*runtime" <<<"$SIGNATURE_DETAILS"; then
   echo "error: the built app is missing Hardened Runtime." >&2
+  exit 1
+fi
+if [[ "$RELEASE_MODE" == "public" ]] && ! grep -q "Authority=Developer ID Application:" <<<"$SIGNATURE_DETAILS"; then
+  echo "error: public app is not signed by Developer ID Application." >&2
   exit 1
 fi
 

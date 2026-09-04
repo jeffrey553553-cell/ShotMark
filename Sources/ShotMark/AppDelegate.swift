@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var screenRecordingStatusMenuItem: NSMenuItem?
     private var accessibilityStatusMenuItem: NSMenuItem?
     private var microphoneStatusMenuItem: NSMenuItem?
+    private var updateMenuItem: NSMenuItem?
     private var pinnedMenuItem: NSMenuItem?
     private var showPinnedMenuItem: NSMenuItem?
     private var closePinnedMenuItem: NSMenuItem?
@@ -16,6 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var coordinator: ScreenshotCoordinator?
     private var settingsWindowController: SettingsWindowController?
     private var shortcutObserver: NSObjectProtocol?
+    private let updateCheckService = UpdateCheckService()
+    private var isCheckingForUpdates = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let coordinator = ScreenshotCoordinator()
@@ -41,6 +44,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             coordinator.showDemo()
         } else if CommandLine.arguments.contains("--settings-preview") {
             openSettings()
+        } else {
+            scheduleAutomaticUpdateCheckIfNeeded()
         }
     }
 
@@ -84,6 +89,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(NSMenuItem(title: "打开麦克风设置...", action: #selector(openMicrophoneSettings), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "权限与设置...", action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(.separator())
+        let updateItem = NSMenuItem(title: "检查更新...", action: #selector(checkForUpdatesMenuItem), keyEquivalent: "")
+        menu.addItem(updateItem)
         menu.addItem(NSMenuItem(title: "Demo 预览", action: #selector(openDemo), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出 ShotMark（权限变更后重启）", action: #selector(quit), keyEquivalent: "q"))
@@ -93,6 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         screenRecordingStatusMenuItem = screenRecordingStatusItem
         accessibilityStatusMenuItem = accessibilityStatusItem
         microphoneStatusMenuItem = microphoneStatusItem
+        updateMenuItem = updateItem
         pinnedMenuItem = pinnedItem
         showPinnedMenuItem = showPinnedItem
         closePinnedMenuItem = closePinnedItem
@@ -137,6 +145,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 },
                 onShortcutRecordingStateChange: { [weak self] isRecording in
                     self?.setShortcutRecorderActive(isRecording)
+                },
+                onCheckForUpdates: { [weak self] in
+                    self?.checkForUpdates(isUserInitiated: true)
                 }
             )
         }
@@ -155,6 +166,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openMicrophoneSettings() {
         PermissionService.openMicrophoneSettings()
+    }
+
+    @objc private func checkForUpdatesMenuItem() {
+        checkForUpdates(isUserInitiated: true)
     }
 
     @objc private func quit() {
@@ -319,6 +334,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         pinnedMenuItem?.title = "钉图（\(count)）"
         showPinnedMenuItem?.isEnabled = count > 0
         closePinnedMenuItem?.isEnabled = count > 0
+    }
+
+    private func scheduleAutomaticUpdateCheckIfNeeded() {
+        let settings = AppSettings.shared
+        guard UpdateCheckPolicy.shouldAutomaticallyCheck(
+            enabled: settings.automaticallyChecksForUpdates,
+            lastCheckedAt: settings.lastUpdateCheckAt
+        ) else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            self?.checkForUpdates(isUserInitiated: false)
+        }
+    }
+
+    private func checkForUpdates(isUserInitiated: Bool) {
+        guard !isCheckingForUpdates else { return }
+        isCheckingForUpdates = true
+        updateMenuItem?.title = "正在检查更新..."
+        updateMenuItem?.isEnabled = false
+        let currentVersion = AppMetadata.currentVersion
+
+        updateCheckService.check(currentVersion: currentVersion) { [weak self] result in
+            guard let self else { return }
+            self.isCheckingForUpdates = false
+            self.updateMenuItem?.isEnabled = true
+            switch result {
+            case .success(.upToDate(let version)):
+                AppSettings.shared.lastUpdateCheckAt = Date()
+                self.updateMenuItem?.title = "检查更新..."
+                if isUserInitiated {
+                    self.showInformation(
+                        title: "ShotMark 已是最新版本",
+                        message: "当前版本为 \(version)。"
+                    )
+                }
+            case .success(.updateAvailable(let release)):
+                AppSettings.shared.lastUpdateCheckAt = Date()
+                self.updateMenuItem?.title = "下载 ShotMark \(release.displayVersion)..."
+                self.presentUpdate(release)
+            case .failure(let error):
+                self.updateMenuItem?.title = "检查更新..."
+                if isUserInitiated {
+                    self.showError(
+                        title: "检查更新失败",
+                        message: error.localizedDescription
+                    )
+                }
+            }
+        }
+    }
+
+    private func presentUpdate(_ release: ShotMarkUpdateRelease) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "ShotMark \(release.displayVersion) 可用"
+        alert.informativeText = "新版安装包已发布。打开官方 GitHub Release 页面查看更新内容并下载。"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "查看并下载")
+        alert.addButton(withTitle: "稍后")
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(release.releasePageURL)
+        }
+    }
+
+    private func showInformation(title: String, message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .informational
+        alert.runModal()
     }
 
     private func showError(title: String, message: String) {

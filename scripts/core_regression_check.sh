@@ -178,6 +178,9 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "LongScreenshotQualityReportStore" Sources/ShotMark/LongScreenshotQualityReport.swift Sources/ShotMark/SettingsWindowController.swift Tests/ShotMarkTests/LongScreenshotQualityReportTests.swift
   rg -q "consecutiveAlignmentFailureCount" Sources/ShotMark/LongScreenshotSessionController.swift Tests/ShotMarkTests/LongScreenshotQualityReportTests.swift
   rg -q "isSessionActive" Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "UpdateCheckService" Sources/ShotMark/UpdateCheckService.swift Sources/ShotMark/AppDelegate.swift Tests/ShotMarkTests/UpdateCheckServiceTests.swift
+  rg -q "automaticallyChecksForUpdates" Sources/ShotMark/Models.swift Sources/ShotMark/SettingsWindowController.swift Tests/ShotMarkTests/UpdateCheckServiceTests.swift
+  rg -q "SHOTMARK_RELEASE_MODE" scripts/build_app.sh scripts/package_dmg.sh scripts/release_readiness.sh scripts/publish_public_release.sh
   rg -q '"nested", "lowtexture", "sticky-swap"' scripts/generate_longshot_benchmark.mjs
   rg -q "detectStaticBand" Sources/ShotMark/LongScreenshotStitcher.swift
   rg -q "detectStaticSideBand" Sources/ShotMark/LongScreenshotStitcher.swift
@@ -369,6 +372,10 @@ Mark each item PASS/FAIL after running it.
 | Long screenshot | Scroll too far until alignment retries are exhausted | The UI gives a directional rollback instruction; the current result remains exportable | |
 | Long screenshot | Cancel while a frame capture is still in flight | The late frame is ignored and no second completion or error appears | |
 | Settings | Complete several long screenshots, then copy and clear diagnostics | Summary contains only dimensions, timings and quality counts; clearing removes all retained reports | |
+| Updates | Check with the latest version installed | A clear up-to-date message appears and no browser page opens | |
+| Updates | Check while a newer stable GitHub Release exists | The version prompt appears and opens only the official Release page after confirmation | |
+| Updates | Disable automatic checks, relaunch, then re-enable | The preference persists; enabled checks run no more than once per 24 hours | |
+| Updates | Disconnect the network and check manually | A concise retryable error appears without affecting screenshot features | |
 | Edit | Draw rectangle/arrow/text/mosaic, then Cmd+Z/Cmd+Shift+Z | Undo and redo restore the previous annotation state | |
 | Edit | Select an annotation and press Delete | The selected annotation is removed only after selection | |
 | Edit | Select rectangle/mosaic and drag corner handles | The object resizes without moving unrelated annotations | |

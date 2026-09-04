@@ -1,0 +1,52 @@
+name: macOS CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shotmark-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Validate release scripts
+        run: |
+          bash -n scripts/build_app.sh
+          bash -n scripts/package_dmg.sh
+          bash -n scripts/release_readiness.sh
+          bash -n scripts/publish_public_release.sh
+
+      - name: Run tests
+        run: swift test --disable-sandbox
+
+      - name: Run live update feed test
+        env:
+          SHOTMARK_UPDATE_INTEGRATION: "1"
+        run: swift test --disable-sandbox --filter UpdateCheckServiceTests/testLiveOfficialReleaseFeedWhenEnabled
+
+      - name: Build app bundle
+        run: scripts/build_app.sh
+
+      - name: Verify app bundle
+        run: |
+          codesign --verify --deep --strict --verbose=2 dist/ShotMark.app
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' dist/ShotMark.app/Contents/Info.plist)" = "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
+          test -s dist/ShotMark.app/Contents/Resources/ShotMark.icns

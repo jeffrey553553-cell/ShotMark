@@ -45,18 +45,23 @@ permissions, multi-display behavior, and regression coverage are all verified.
 
 ## Current Iteration
 
-- Added bounded, local-only long screenshot quality reports. They retain only
-  dimensions, timings and stitch statistics; no image, text, application name
-  or file path is recorded.
-- Added a privacy-visible Settings section to copy a support summary or clear
-  all retained diagnostics. Corrupt report data self-recovers and never blocks
-  capture.
-- Added directional recovery instructions after repeated alignment failures,
-  while keeping the current stitched result exportable.
-- Added a session lifecycle gate so late asynchronous frames cannot complete a
-  capture after the user has cancelled, saved or encountered an error.
-- Added regression coverage for retention, corruption recovery, privacy text,
-  quality aggregation, idempotent completion and recovery advice.
+- Added user-initiated update checks in the status menu and Settings, plus a
+  persisted opt-out for at-most-daily automatic checks.
+- Update metadata is accepted only from the official GitHub repository over
+  HTTPS. Drafts, prereleases, malformed versions, oversized responses, foreign
+  download hosts and releases without `ShotMark.dmg` are rejected.
+- Added strict public-release gates for Developer ID Application signing,
+  Hardened Runtime, notarytool authentication, stapling, Gatekeeper assessment,
+  clean/pushed `main`, authenticated GitHub CLI and duplicate release tags.
+- Added one-command notarized release publishing with local/remote SHA-256
+  verification. Development packages remain possible but cannot pass the
+  public-release gate.
+- Added a least-privilege `macos-15` CI workflow for every main push and pull
+  request. The checkout action is pinned to an immutable commit and CI runs the
+  complete Swift test suite plus a distributable app-bundle verification.
+- Sparkle installation remains intentionally disabled until a real Developer ID
+  identity and EdDSA update key are provisioned; update discovery opens the
+  verified official Release page instead of executing an untrusted installer.
 
 ## References
 
