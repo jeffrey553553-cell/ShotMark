@@ -40,6 +40,7 @@ jobs:
       - name: Run live update feed test
         env:
           SHOTMARK_UPDATE_INTEGRATION: "1"
+          SHOTMARK_UPDATE_TEST_TOKEN: ${{ github.token }}
         run: swift test --disable-sandbox --filter UpdateCheckServiceTests/testLiveOfficialReleaseFeedWhenEnabled
 
       - name: Build app bundle

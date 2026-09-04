@@ -7,7 +7,8 @@ final class UpdateCheckServiceTests: XCTestCase {
             throw XCTSkip("Live GitHub update integration is disabled")
         }
         let expectation = expectation(description: "Official release feed")
-        UpdateCheckService().check(currentVersion: "0.0.0") { result in
+        let token = ProcessInfo.processInfo.environment["SHOTMARK_UPDATE_TEST_TOKEN"]
+        UpdateCheckService(authorizationToken: token).check(currentVersion: "0.0.0") { result in
             guard case .success(.updateAvailable(let release)) = result else {
                 XCTFail("Expected the official feed to return a stable release, got \(result)")
                 expectation.fulfill()

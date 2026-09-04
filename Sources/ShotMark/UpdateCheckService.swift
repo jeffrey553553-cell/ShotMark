@@ -102,9 +102,14 @@ final class UpdateCheckService {
     static let maximumResponseBytes = 2 * 1_024 * 1_024
 
     private let loader: Loader
+    private let authorizationToken: String?
 
-    init(loader: @escaping Loader = UpdateCheckService.defaultLoader) {
+    init(
+        loader: @escaping Loader = UpdateCheckService.defaultLoader,
+        authorizationToken: String? = nil
+    ) {
         self.loader = loader
+        self.authorizationToken = authorizationToken
     }
 
     func check(
@@ -122,6 +127,9 @@ final class UpdateCheckService {
         request.setValue("ShotMark/\(currentVersion)", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+        if let authorizationToken, !authorizationToken.isEmpty {
+            request.setValue("Bearer \(authorizationToken)", forHTTPHeaderField: "Authorization")
+        }
 
         loader(request) { result in
             let checked: Result<UpdateCheckResult, UpdateCheckError>
