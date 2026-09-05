@@ -220,6 +220,7 @@ final class AppSettings {
     private let lastUpdateCheckAtKey = "shotmark.lastUpdateCheckAt"
     private let hasPresentedOnboardingKey = "shotmark.hasPresentedOnboarding.v1"
     private let hasCompletedOnboardingKey = "shotmark.hasCompletedOnboarding.v1"
+    private let previousCaptureAreaKey = "shotmark.previousCaptureArea.v1"
 
     init(defaults: UserDefaults) {
         self.defaults = defaults
@@ -273,6 +274,25 @@ final class AppSettings {
     var hasCompletedOnboarding: Bool {
         get { defaults.bool(forKey: hasCompletedOnboardingKey) }
         set { defaults.set(newValue, forKey: hasCompletedOnboardingKey) }
+    }
+
+    var previousCaptureArea: StoredCaptureArea? {
+        guard
+            let data = defaults.data(forKey: previousCaptureAreaKey),
+            let area = try? JSONDecoder().decode(StoredCaptureArea.self, from: data)
+        else {
+            return nil
+        }
+        return area
+    }
+
+    func setPreviousCaptureArea(_ selection: CaptureSelection) {
+        setPreviousCaptureArea(StoredCaptureArea(selection: selection))
+    }
+
+    func setPreviousCaptureArea(_ area: StoredCaptureArea) {
+        guard let data = try? JSONEncoder().encode(area) else { return }
+        defaults.set(data, forKey: previousCaptureAreaKey)
     }
 
     var toolbarShortcutPreferences: ToolbarShortcutPreferences {

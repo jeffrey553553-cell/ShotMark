@@ -32,18 +32,25 @@ final class SelectionOverlayController {
     weak var delegate: SelectionOverlayControllerDelegate?
     private var windows: [NSWindow] = []
     private let frozenSnapshots: [ScreenSnapshot]
+    private let initialSelection: CaptureSelection?
     private var activeSelectionView: SelectionOverlayView?
     private var interactionEventMonitor: Any?
     private let interactionGate = SelectionInteractionGate()
 
-    init(frozenSnapshots: [ScreenSnapshot] = []) {
+    init(frozenSnapshots: [ScreenSnapshot] = [], initialSelection: CaptureSelection? = nil) {
         self.frozenSnapshots = frozenSnapshots
+        self.initialSelection = initialSelection
     }
 
     func show() {
         NSApp.activate()
         windows = NSScreen.screens.map { screen in
-            let view = SelectionOverlayView(screen: screen, frozenSnapshot: frozenSnapshot(for: screen))
+            let initialRect = screensMatch(screen, initialSelection?.screen) ? initialSelection?.rectInScreen : nil
+            let view = SelectionOverlayView(
+                screen: screen,
+                frozenSnapshot: frozenSnapshot(for: screen),
+                initialSelectionRectInScreen: initialRect
+            )
             view.onCancel = { [weak self] in self?.cancel() }
             view.onInteractionStarted = { [weak self, weak view] in
                 guard let self, let view else { return false }
@@ -96,7 +103,14 @@ final class SelectionOverlayController {
             return window
         }
         installInteractionEventMonitor()
-        bringWindowsToFront()
+        if let initialWindow = windows.first(where: {
+            guard let view = $0.contentView as? SelectionOverlayView else { return false }
+            return view.hasSelection
+        }), let initialView = initialWindow.contentView as? SelectionOverlayView {
+            _ = activateSelectionView(initialView)
+        } else {
+            bringWindowsToFront()
+        }
     }
 
     func cancel() {
@@ -197,6 +211,14 @@ final class SelectionOverlayController {
             }
             return snapshot.screen.frame == screen.frame
         }
+    }
+
+    private func screensMatch(_ first: NSScreen, _ second: NSScreen?) -> Bool {
+        guard let second else { return false }
+        if let firstID = first.shotMarkDisplayID, let secondID = second.shotMarkDisplayID {
+            return firstID == secondID
+        }
+        return first.frame == second.frame
     }
 }
 
@@ -490,7 +512,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         .black
     ]
 
-    init(screen: NSScreen, frozenSnapshot: ScreenSnapshot?) {
+    init(screen: NSScreen, frozenSnapshot: ScreenSnapshot?, initialSelectionRectInScreen: CGRect? = nil) {
         targetScreen = screen
         self.frozenSnapshot = frozenSnapshot
         let shortcutPreferences = AppSettings.shared.toolbarShortcutPreferences
@@ -502,6 +524,16 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
             shortcutPreferences.clearedButtonIDs.compactMap(OverlayButton.init(persistenceID:))
         )
         super.init(frame: CGRect(origin: .zero, size: screen.frame.size))
+        if let initialSelectionRectInScreen {
+            let localRect = initialSelectionRectInScreen.offsetBy(
+                dx: -screen.frame.minX,
+                dy: -screen.frame.minY
+            )
+            let clipped = localRect.intersection(CGRect(origin: .zero, size: screen.frame.size))
+            if !clipped.isNull, clipped.width >= 8, clipped.height >= 8 {
+                selectionRect = clipped
+            }
+        }
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
         windowCandidates = windowDetectionService.candidatesSynchronously(for: screen)
@@ -514,6 +546,7 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
 
     override var acceptsFirstResponder: Bool { true }
     override var isFlipped: Bool { false }
+    var hasSelection: Bool { selectionRect != nil }
 
     override func viewDidMoveToWindow() {
         prepareForCaptureFocus()

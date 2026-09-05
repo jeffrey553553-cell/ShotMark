@@ -4,6 +4,7 @@ import Foundation
 final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
     var onRecordingStateChanged: ((RecordingUIState) -> Void)?
     var onPinnedCountChanged: ((Int) -> Void)?
+    var onDelayedCaptureCountdownChanged: ((Int?) -> Void)?
 
     private var overlayController: SelectionOverlayController?
     private var editorController: EditorWindowController?
@@ -14,6 +15,9 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
     private let videoRecordingService = VideoRecordingService()
     private var recordingResultScreen: NSScreen?
     private var captureSourceProcessIdentifier: pid_t?
+    private var pendingCaptureDelaySeconds: Int?
+    private var delayedCaptureTimer: Timer?
+    private var delayedCaptureWorkItem: DispatchWorkItem?
     private var recordingState: RecordingUIState = .idle {
         didSet {
             recordingOverlayController?.update(state: recordingState)
@@ -38,6 +42,14 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
         pinnedControllers.count
     }
 
+    var canRepeatPreviousCaptureArea: Bool {
+        AppSettings.shared.previousCaptureArea?.resolve(in: NSScreen.screens) != nil
+    }
+
+    var hasActiveDelayedCapture: Bool {
+        delayedCaptureTimer != nil || delayedCaptureWorkItem != nil
+    }
+
     func bringPinnedScreenshotsToFront() {
         pinnedControllers.forEach { $0.bringToFront() }
     }
@@ -48,6 +60,10 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
     }
 
     func handlePrimaryShortcut() {
+        if hasActiveDelayedCapture {
+            cancelDelayedCapture(showFeedback: true)
+            return
+        }
         switch recordingState {
         case .idle:
             beginCapture()
@@ -59,18 +75,50 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
     }
 
     func beginCapture() {
-        guard case .idle = recordingState else { return }
+        beginCapture(delaySeconds: nil)
+    }
 
-        let frontmostApplication = NSWorkspace.shared.frontmostApplication
-        captureSourceProcessIdentifier = frontmostApplication?.bundleIdentifier == Bundle.main.bundleIdentifier
-            ? nil
-            : frontmostApplication?.processIdentifier
+    func beginDelayedCapture(_ preset: CaptureDelayPreset) {
+        beginCapture(delaySeconds: preset.rawValue)
+    }
+
+    private func beginCapture(delaySeconds: Int?) {
+        guard case .idle = recordingState, !hasActiveDelayedCapture else { return }
+        pendingCaptureDelaySeconds = delaySeconds
+
+        rememberCaptureSourceApplication()
 
         PermissionService.verifyScreenRecordingAccess { [weak self] isGranted in
             DispatchQueue.main.async {
                 guard let self else { return }
                 if isGranted {
                     self.captureFrozenScreensAndShowOverlay()
+                } else {
+                    self.pendingCaptureDelaySeconds = nil
+                    self.captureSourceProcessIdentifier = nil
+                    PermissionService.requestScreenRecordingAccess()
+                    self.showPermissionHelp()
+                }
+            }
+        }
+    }
+
+    func beginPreviousAreaCapture() {
+        guard case .idle = recordingState, !hasActiveDelayedCapture else { return }
+        guard let selection = AppSettings.shared.previousCaptureArea?.resolve(in: NSScreen.screens) else {
+            showError(
+                CaptureAreaError.previousDisplayUnavailable,
+                title: "无法恢复上次区域"
+            )
+            return
+        }
+
+        rememberCaptureSourceApplication()
+        PermissionService.verifyScreenRecordingAccess { [weak self] isGranted in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if isGranted {
+                    self.captureFrozenScreensAndShowOverlay(initialSelection: selection)
                 } else {
                     PermissionService.requestScreenRecordingAccess()
                     self.showPermissionHelp()
@@ -79,24 +127,32 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
         }
     }
 
-    private func captureFrozenScreensAndShowOverlay() {
+    private func captureFrozenScreensAndShowOverlay(initialSelection: CaptureSelection? = nil) {
         let screens = NSScreen.screens
         captureService.captureSnapshots(screens: screens) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
                 switch result {
                 case .success(let snapshots):
-                    self.showSelectionOverlay(frozenSnapshots: snapshots)
+                    self.showSelectionOverlay(frozenSnapshots: snapshots, initialSelection: initialSelection)
                 case .failure(let error):
+                    self.pendingCaptureDelaySeconds = nil
+                    self.captureSourceProcessIdentifier = nil
                     self.showError(error, title: "截图失败")
                 }
             }
         }
     }
 
-    private func showSelectionOverlay(frozenSnapshots: [ScreenSnapshot]) {
+    private func showSelectionOverlay(
+        frozenSnapshots: [ScreenSnapshot],
+        initialSelection: CaptureSelection? = nil
+    ) {
         overlayController?.cancel()
-        let controller = SelectionOverlayController(frozenSnapshots: frozenSnapshots)
+        let controller = SelectionOverlayController(
+            frozenSnapshots: frozenSnapshots,
+            initialSelection: initialSelection
+        )
         controller.delegate = self
         overlayController = controller
         controller.show()
@@ -112,12 +168,16 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
     func selectionOverlayControllerDidCancel(_ controller: SelectionOverlayController) {
         overlayController = nil
         captureSourceProcessIdentifier = nil
+        pendingCaptureDelaySeconds = nil
     }
 
     func selectionOverlayController(_ controller: SelectionOverlayController, didCommit selection: CaptureSelection, frozenCapture: CaptureResult?, annotations: [Annotation], action: CaptureCommitAction) {
         overlayController = nil
+        AppSettings.shared.setPreviousCaptureArea(selection)
         let sourceProcessIdentifier = captureSourceProcessIdentifier
         captureSourceProcessIdentifier = nil
+        let delaySeconds = pendingCaptureDelaySeconds
+        pendingCaptureDelaySeconds = nil
         switch action {
         case .recordVideo(let options):
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
@@ -131,6 +191,16 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
                 )
             }
         case .copyToClipboard, .saveToFile, .pinToScreen:
+            if let delaySeconds, delaySeconds > 0 {
+                startDelayedCaptureCountdown(
+                    seconds: delaySeconds,
+                    selection: selection,
+                    annotations: annotations,
+                    action: action,
+                    sourceProcessIdentifier: sourceProcessIdentifier
+                )
+                return
+            }
             if let frozenCapture {
                 handle(frozenCapture, annotations: annotations, action: action)
                 return
@@ -138,6 +208,71 @@ final class ScreenshotCoordinator: SelectionOverlayControllerDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
                 self?.capture(selection, annotations: annotations, action: action)
             }
+        }
+    }
+
+    private func rememberCaptureSourceApplication() {
+        let frontmostApplication = NSWorkspace.shared.frontmostApplication
+        captureSourceProcessIdentifier = frontmostApplication?.bundleIdentifier == Bundle.main.bundleIdentifier
+            ? nil
+            : frontmostApplication?.processIdentifier
+    }
+
+    private func startDelayedCaptureCountdown(
+        seconds: Int,
+        selection: CaptureSelection,
+        annotations: [Annotation],
+        action: CaptureCommitAction,
+        sourceProcessIdentifier: pid_t?
+    ) {
+        cancelDelayedCapture(showFeedback: false)
+        if let sourceProcessIdentifier {
+            NSRunningApplication(processIdentifier: sourceProcessIdentifier)?.activate()
+        }
+
+        var remaining = seconds
+        onDelayedCaptureCountdownChanged?(remaining)
+        ToastWindowController.show(
+            message: "\(remaining) 秒后截图 · 再按快捷键取消",
+            screen: selection.screen
+        )
+
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] timer in
+            guard let self else {
+                timer.invalidate()
+                return
+            }
+            remaining -= 1
+            guard remaining <= 0 else {
+                self.onDelayedCaptureCountdownChanged?(remaining)
+                return
+            }
+
+            timer.invalidate()
+            self.delayedCaptureTimer = nil
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.delayedCaptureWorkItem = nil
+                self.onDelayedCaptureCountdownChanged?(nil)
+                self.capture(selection, annotations: annotations, action: action)
+            }
+            self.delayedCaptureWorkItem = workItem
+            self.onDelayedCaptureCountdownChanged?(0)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: workItem)
+        }
+        delayedCaptureTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func cancelDelayedCapture(showFeedback: Bool) {
+        let hadActiveCapture = hasActiveDelayedCapture
+        delayedCaptureTimer?.invalidate()
+        delayedCaptureTimer = nil
+        delayedCaptureWorkItem?.cancel()
+        delayedCaptureWorkItem = nil
+        onDelayedCaptureCountdownChanged?(nil)
+        if showFeedback, hadActiveCapture {
+            ToastWindowController.show(message: "已取消延时截图")
         }
     }
 

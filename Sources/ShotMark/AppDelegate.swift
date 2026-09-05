@@ -3,6 +3,8 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var primaryMenuItem: NSMenuItem?
+    private var previousAreaMenuItem: NSMenuItem?
+    private var delayedCaptureMenuItem: NSMenuItem?
     private var recordingPauseMenuItem: NSMenuItem?
     private var screenRecordingStatusMenuItem: NSMenuItem?
     private var accessibilityStatusMenuItem: NSMenuItem?
@@ -28,6 +30,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         coordinator.onPinnedCountChanged = { [weak self] count in
             self?.updatePinnedMenuItems(count: count)
+        }
+        coordinator.onDelayedCaptureCountdownChanged = { [weak self] remaining in
+            self?.updateDelayedCaptureCountdown(remaining)
         }
         self.coordinator = coordinator
         configureStatusItem()
@@ -62,6 +67,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.delegate = self
         let primaryItem = NSMenuItem(title: primaryMenuTitle(), action: #selector(primaryActionMenuItem), keyEquivalent: "")
         menu.addItem(primaryItem)
+        let previousAreaItem = NSMenuItem(
+            title: "重复上次区域",
+            action: #selector(capturePreviousArea),
+            keyEquivalent: ""
+        )
+        previousAreaItem.image = NSImage(systemSymbolName: "rectangle.on.rectangle", accessibilityDescription: "重复上次区域")
+        previousAreaItem.isEnabled = false
+        menu.addItem(previousAreaItem)
+        let delayedCaptureItem = NSMenuItem(title: "延时截图", action: nil, keyEquivalent: "")
+        delayedCaptureItem.image = NSImage(systemSymbolName: "timer", accessibilityDescription: "延时截图")
+        let delayedCaptureMenu = NSMenu()
+        for preset in CaptureDelayPreset.allCases {
+            let presetItem = NSMenuItem(
+                title: preset.title,
+                action: #selector(beginDelayedCapture(_:)),
+                keyEquivalent: ""
+            )
+            presetItem.representedObject = preset.rawValue
+            delayedCaptureMenu.addItem(presetItem)
+        }
+        delayedCaptureItem.submenu = delayedCaptureMenu
+        menu.addItem(delayedCaptureItem)
         let recordingPauseItem = NSMenuItem(
             title: "暂停录制",
             action: #selector(toggleRecordingPause),
@@ -102,6 +129,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(NSMenuItem(title: "退出 ShotMark（权限变更后重启）", action: #selector(quit), keyEquivalent: "q"))
         item.menu = menu
         primaryMenuItem = primaryItem
+        previousAreaMenuItem = previousAreaItem
+        delayedCaptureMenuItem = delayedCaptureItem
         recordingPauseMenuItem = recordingPauseItem
         screenRecordingStatusMenuItem = screenRecordingStatusItem
         accessibilityStatusMenuItem = accessibilityStatusItem
@@ -116,6 +145,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         updatePermissionMenuItems()
+        updatePreviousAreaMenuItem()
+        delayedCaptureMenuItem?.isEnabled = coordinator?.hasActiveDelayedCapture != true
     }
 
     @objc private func primaryActionMenuItem() {
@@ -124,6 +155,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleRecordingPause() {
         coordinator?.toggleRecordingPause()
+    }
+
+    @objc private func capturePreviousArea() {
+        coordinator?.beginPreviousAreaCapture()
+    }
+
+    @objc private func beginDelayedCapture(_ sender: NSMenuItem) {
+        guard let preset = CaptureDelayPreset(rawValue: sender.representedObject as? Int ?? 0) else { return }
+        coordinator?.beginDelayedCapture(preset)
     }
 
     private func performPrimaryAction() {
@@ -253,17 +293,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             primaryMenuItem?.title = primaryMenuTitle()
             primaryMenuItem?.isEnabled = true
             recordingPauseMenuItem?.isHidden = true
+            updatePreviousAreaMenuItem()
         case .starting:
             statusItem?.button?.title = "■"
             primaryMenuItem?.title = "正在开始录制..."
             primaryMenuItem?.isEnabled = false
             recordingPauseMenuItem?.isHidden = true
+            previousAreaMenuItem?.isEnabled = false
         case .recording:
             primaryMenuItem?.title = recordingMenuTitle()
             primaryMenuItem?.isEnabled = true
             recordingPauseMenuItem?.title = "暂停录制"
             recordingPauseMenuItem?.isHidden = false
             recordingPauseMenuItem?.isEnabled = true
+            previousAreaMenuItem?.isEnabled = false
             updateRecordingTimerTitle()
             let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
                 self?.updateRecordingTimerTitle()
@@ -276,6 +319,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             recordingPauseMenuItem?.title = "继续录制"
             recordingPauseMenuItem?.isHidden = false
             recordingPauseMenuItem?.isEnabled = true
+            previousAreaMenuItem?.isEnabled = false
             updateRecordingTimerTitle()
         case .pausing:
             primaryMenuItem?.title = recordingMenuTitle()
@@ -283,6 +327,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             recordingPauseMenuItem?.title = "正在暂停..."
             recordingPauseMenuItem?.isHidden = false
             recordingPauseMenuItem?.isEnabled = false
+            previousAreaMenuItem?.isEnabled = false
             updateRecordingTimerTitle()
         case .resuming:
             primaryMenuItem?.title = recordingMenuTitle()
@@ -290,12 +335,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             recordingPauseMenuItem?.title = "正在继续..."
             recordingPauseMenuItem?.isHidden = false
             recordingPauseMenuItem?.isEnabled = false
+            previousAreaMenuItem?.isEnabled = false
             updateRecordingTimerTitle()
         case .stopping:
             statusItem?.button?.title = "■"
             primaryMenuItem?.title = "正在保存录制..."
             primaryMenuItem?.isEnabled = false
             recordingPauseMenuItem?.isHidden = true
+            previousAreaMenuItem?.isEnabled = false
         }
     }
 
@@ -388,6 +435,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ? "辅助功能权限（窗口识别校准）：已允许"
             : "辅助功能权限（窗口识别校准）：未允许"
         microphoneStatusMenuItem?.title = "麦克风权限：\(PermissionService.microphonePermissionState.statusText)"
+    }
+
+    private func updatePreviousAreaMenuItem() {
+        guard case .idle = coordinator?.currentRecordingState ?? .idle else {
+            previousAreaMenuItem?.isEnabled = false
+            return
+        }
+        previousAreaMenuItem?.isEnabled = coordinator?.canRepeatPreviousCaptureArea == true
+    }
+
+    private func updateDelayedCaptureCountdown(_ remaining: Int?) {
+        guard let remaining else {
+            statusItem?.button?.title = "ShotMark"
+            primaryMenuItem?.title = primaryMenuTitle()
+            primaryMenuItem?.isEnabled = true
+            delayedCaptureMenuItem?.isEnabled = true
+            updatePreviousAreaMenuItem()
+            return
+        }
+        if remaining == 0 {
+            statusItem?.button?.title = "◷"
+            primaryMenuItem?.title = "正在截图..."
+            primaryMenuItem?.isEnabled = false
+            previousAreaMenuItem?.isEnabled = false
+            delayedCaptureMenuItem?.isEnabled = false
+            return
+        }
+        statusItem?.button?.title = "◷\(remaining)"
+        primaryMenuItem?.title = "取消延时截图  \(AppSettings.shared.shortcutDescription)"
+        primaryMenuItem?.isEnabled = true
+        previousAreaMenuItem?.isEnabled = false
+        delayedCaptureMenuItem?.isEnabled = false
     }
 
     private func updatePinnedMenuItems(count: Int) {

@@ -31,7 +31,7 @@ permissions, multi-display behavior, and regression coverage are all verified.
 ### P1: Daily-use polish
 
 - Keep pointer states, hover feedback, shortcuts and Esc behavior consistent.
-- Add capture-previous-area, timer capture and optional window-shadow export.
+- Add optional window-shadow export.
 - Add horizontal scrolling capture and a lightweight final crop/cleanup flow.
 - Add recording trim, GIF export and optional keystroke display.
 
@@ -45,6 +45,14 @@ permissions, multi-display behavior, and regression coverage are all verified.
 
 ## Current Iteration
 
+- Added a persistent Capture Previous Area flow. It restores an adjustable
+  selection on the original physical display using its stable display UUID,
+  preserves relative geometry when resolution changes, and refuses to guess
+  when a removed display would make multi-display recovery ambiguous.
+- Added 3, 5 and 10 second self-timer capture. Users select and annotate first,
+  confirm copy/save/pin, then return to the source app while ShotMark counts
+  down in the menu bar and captures the live content. Pressing the global
+  shortcut during the countdown cancels safely.
 - Added a first-run setup guide that explains the required screen-recording
   permission before requesting it, keeps Accessibility optional, rechecks
   permission after returning from System Settings, offers a one-click relaunch,
