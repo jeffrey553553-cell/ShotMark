@@ -39,7 +39,7 @@ adapted because upstream projects can change.
 | Selection precision | Magnifier, color readout and physical-pixel keyboard movement implemented | Snapzy, Flameshot | Add optional standalone color picker |
 | Annotation | Editable rectangle, ellipse, arrow, freehand pen, non-compounding highlighter, number, text, callout and blur | capcap, Snapzy, Flameshot | Add constrained geometry, spotlight and multi-selection |
 | OCR and translation | Implemented with Vision and Translation | Snapzy, Apple Vision | Preserve layout and add language chooser |
-| Scrolling capture | Bidirectional stitching, dynamic-region consensus, fixed-element cleanup, live crop and width-aware safety limits | Snapzy, ScrollSnap, ShareX | Add real-app success metrics and horizontal scrolling capture |
+| Scrolling capture | Bidirectional stitching, dynamic-region consensus, fixed-element cleanup, polished live crop and width-aware safety limits | Snapzy, ScrollSnap, ShareX | Add real-app success metrics and horizontal scrolling capture |
 | Recording | Native-size MP4, four audio modes, system click highlight, pause/resume with H.264 segment merging | Kap, Snapzy, Apple ScreenCaptureKit | GIF export, keystroke overlay and lightweight trim |
 | Pinning | Independent windows with constrained zoom, opacity, copy/save, mouse pass-through lock and multi-pin management | Snapzy, Shotnix | Pin groups and persisted workspaces |
 | Export | Reliable PNG clipboard and PNG save to Downloads | Snapzy, Apple AppKit | Keep the confirmation path fast and predictable |

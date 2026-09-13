@@ -32,7 +32,7 @@ permissions, multi-display behavior, and regression coverage are all verified.
 
 - Keep pointer states, hover feedback, shortcuts and Esc behavior consistent.
 - Add optional window-shadow export.
-- Add horizontal scrolling capture and a lightweight final crop/cleanup flow.
+- Add horizontal scrolling capture; keep the shipped final crop/cleanup flow covered by UI regression tests.
 - Add recording trim, GIF export and optional keystroke display.
 
 ### P2: Commercial release
@@ -45,6 +45,15 @@ permissions, multi-display behavior, and regression coverage are all verified.
 
 ## Current Iteration
 
+- Polished long-screenshot cleanup in the live preview: larger invisible hit
+  targets, resize cursors, hover/drag feedback, removed-pixel feedback, final
+  output dimensions and one-click reset. The controls stay neutral until the
+  user interacts with them.
+- Fixed live-crop drift while capture continues. Extending the stitched image
+  upward resets only the stale top crop; extending downward resets only the
+  stale bottom crop, so the opposite user choice remains intact.
+- Added AppKit interaction and light/dark rendering regression tests for the
+  preview, plus deterministic continuation-policy coverage.
 - Added a persistent Capture Previous Area flow. It restores an adjustable
   selection on the original physical display using its stable display UUID,
   preserves relative geometry when resolution changes, and refuses to guess

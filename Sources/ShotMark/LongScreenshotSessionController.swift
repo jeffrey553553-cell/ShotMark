@@ -155,6 +155,27 @@ enum LongScreenshotCropGeometry {
     }
 }
 
+struct LongScreenshotCropInsets: Equatable {
+    var top: Int
+    var bottom: Int
+}
+
+enum LongScreenshotCropContinuationPolicy {
+    static func adjustedInsets(
+        _ insets: LongScreenshotCropInsets,
+        afterAppending direction: LongScreenshotStitchDirection
+    ) -> LongScreenshotCropInsets {
+        switch direction {
+        case .upward:
+            return LongScreenshotCropInsets(top: 0, bottom: insets.bottom)
+        case .downward:
+            return LongScreenshotCropInsets(top: insets.top, bottom: 0)
+        case .unresolved:
+            return insets
+        }
+    }
+}
+
 private extension LongScreenshotStitchUpdate {
     var isAccepted: Bool {
         switch outcome {
@@ -936,6 +957,14 @@ final class LongScreenshotSessionController {
             stitchedImageCache = mergedImage
             lastMergedPreviewAt = now
         }
+        if let update, case .appended = update.outcome {
+            let adjustedCrop = LongScreenshotCropContinuationPolicy.adjustedInsets(
+                LongScreenshotCropInsets(top: cropTopPixels, bottom: cropBottomPixels),
+                afterAppending: update.direction
+            )
+            cropTopPixels = adjustedCrop.top
+            cropBottomPixels = adjustedCrop.bottom
+        }
         switch update?.outcome {
         case .initialized, .appended, .ignoredCoveredContent:
             nextStreamMotionCaptureAllowedAt = .distantPast
@@ -1371,6 +1400,9 @@ final class LongScreenshotSessionController {
             let size = previewSize(for: stitchedImage)
             previewWindow.contentView?.frame = CGRect(origin: .zero, size: size)
             previewWindow.setFrame(previewFrame(size: size), display: true)
+            if let previewView {
+                previewWindow.invalidateCursorRects(for: previewView)
+            }
         }
     }
 
@@ -1817,7 +1849,21 @@ final class LongScreenshotPreviewView: NSView {
         case top
         case bottom
     }
+    private enum HoverTarget: Equatable {
+        case crop(CropDrag)
+        case reset
+    }
     private var cropDrag: CropDrag?
+    private var hoverTarget: HoverTarget?
+    private var trackingAreaRef: NSTrackingArea?
+
+    private var hasCrop: Bool {
+        cropTopPixels > 0 || cropBottomPixels > 0
+    }
+
+    private var resetFrame: CGRect {
+        CGRect(x: bounds.maxX - 31, y: bounds.maxY - 29, width: 22, height: 22)
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -1829,13 +1875,59 @@ final class LongScreenshotPreviewView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingAreaRef {
+            removeTrackingArea(trackingAreaRef)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingAreaRef = area
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        if let geometry = cropDisplayGeometry() {
+            addCursorRect(cropHitFrame(y: geometry.topY, drawRect: geometry.drawRect), cursor: .resizeUpDown)
+            addCursorRect(cropHitFrame(y: geometry.bottomY, drawRect: geometry.drawRect), cursor: .resizeUpDown)
+        }
+        if hasCrop {
+            addCursorRect(resetFrame, cursor: .pointingHand)
+        }
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let nextTarget = hoverTarget(at: convert(event.locationInWindow, from: nil))
+        guard nextTarget != hoverTarget else { return }
+        hoverTarget = nextTarget
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hoverTarget = nil
+        needsDisplay = true
+    }
+
     override func mouseDown(with event: NSEvent) {
-        guard let geometry = cropDisplayGeometry() else { return }
         let point = convert(event.locationInWindow, from: nil)
-        if abs(point.y - geometry.topY) <= 7, geometry.drawRect.insetBy(dx: -3, dy: -7).contains(point) {
+        if hasCrop, resetFrame.contains(point) {
+            cropTopPixels = 0
+            cropBottomPixels = 0
+            hoverTarget = .reset
+            onCropChange?(0, 0)
+            window?.invalidateCursorRects(for: self)
+            needsDisplay = true
+            return
+        }
+        guard let geometry = cropDisplayGeometry() else { return }
+        if cropHitFrame(y: geometry.topY, drawRect: geometry.drawRect).contains(point) {
             cropDrag = .top
-        } else if abs(point.y - geometry.bottomY) <= 7,
-                  geometry.drawRect.insetBy(dx: -3, dy: -7).contains(point) {
+        } else if cropHitFrame(y: geometry.bottomY, drawRect: geometry.drawRect).contains(point) {
             cropDrag = .bottom
         }
     }
@@ -1863,11 +1955,15 @@ final class LongScreenshotPreviewView: NSView {
             )
         }
         onCropChange?(cropTopPixels, cropBottomPixels)
+        hoverTarget = .crop(cropDrag)
+        window?.invalidateCursorRects(for: self)
         needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
         cropDrag = nil
+        hoverTarget = hoverTarget(at: convert(event.locationInWindow, from: nil))
+        needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -1889,7 +1985,11 @@ final class LongScreenshotPreviewView: NSView {
             ]
         )
 
-        let imageSlot = CGRect(x: 10, y: 35, width: bounds.width - 20, height: bounds.height - 68)
+        if hasCrop {
+            drawResetButton()
+        }
+
+        let imageSlot = imageSlotRect
         NSColor.white.withAlphaComponent(0.08).setFill()
         NSBezierPath(roundedRect: imageSlot, xRadius: 9, yRadius: 9).fill()
 
@@ -1912,25 +2012,36 @@ final class LongScreenshotPreviewView: NSView {
             )
         }
 
-        let metrics = stitchedHeight > 0 ? "\(stitchedHeight)px" : "等待首帧"
-        let footer = "\(captureMode.displayName) · \(directionText) · \(metrics)"
-        footer.draw(
-            at: CGPoint(x: 12, y: 13),
+        let modeText = "\(captureMode.displayName) · \(directionText)"
+        modeText.draw(
+            at: CGPoint(x: 12, y: 12),
             withAttributes: [
                 .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),
                 .foregroundColor: NSColor.white.withAlphaComponent(0.64)
             ]
         )
 
+        let visibleHeight = max(0, (image?.height ?? stitchedHeight) - cropTopPixels - cropBottomPixels)
+        let metrics = image.map { "\($0.width)×\(visibleHeight)" } ?? "等待首帧"
+        let metricAttributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.50)
+        ]
+        let metricSize = metrics.size(withAttributes: metricAttributes)
+        metrics.draw(
+            at: CGPoint(x: bounds.maxX - metricSize.width - 12, y: 12),
+            withAttributes: metricAttributes
+        )
+
         let statusAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 9, weight: .regular),
             .foregroundColor: NSColor.white.withAlphaComponent(0.42)
         ]
-        let statusSize = status.size(withAttributes: statusAttributes)
-        status.draw(
-            at: CGPoint(x: bounds.maxX - statusSize.width - 12, y: bounds.maxY - 23),
-            withAttributes: statusAttributes
-        )
+        let statusRect = CGRect(x: 12, y: 27, width: bounds.width - 24, height: 11)
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: statusRect).addClip()
+        status.draw(at: statusRect.origin, withAttributes: statusAttributes)
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     private func imageDrawRect(for image: CGImage, in slot: CGRect) -> CGRect {
@@ -1947,7 +2058,7 @@ final class LongScreenshotPreviewView: NSView {
 
     private func cropDisplayGeometry() -> (drawRect: CGRect, topY: CGFloat, bottomY: CGFloat)? {
         guard let image, image.height > 0 else { return nil }
-        let imageSlot = CGRect(x: 10, y: 35, width: bounds.width - 20, height: bounds.height - 68)
+        let imageSlot = imageSlotRect
         let drawRect = imageDrawRect(for: image, in: imageSlot)
         let pointsPerPixel = drawRect.height / CGFloat(image.height)
         return (
@@ -1977,19 +2088,99 @@ final class LongScreenshotPreviewView: NSView {
             ).fill()
         }
 
-        NSColor.white.withAlphaComponent(0.86).setStroke()
-        for y in [geometry.topY, geometry.bottomY] {
+        for (edge, y) in [(CropDrag.top, geometry.topY), (CropDrag.bottom, geometry.bottomY)] {
+            let isActive = cropDrag == edge || hoverTarget == .crop(edge)
+            NSColor.white.withAlphaComponent(isActive ? 0.96 : 0.72).setStroke()
             let line = NSBezierPath()
-            line.lineWidth = 1
+            line.lineWidth = isActive ? 1.4 : 1
             line.move(to: CGPoint(x: drawRect.minX, y: y))
             line.line(to: CGPoint(x: drawRect.maxX, y: y))
             line.stroke()
-            NSColor.white.withAlphaComponent(0.92).setFill()
+
+            (isActive ? NSColor.white : NSColor.white.withAlphaComponent(0.86)).setFill()
             NSBezierPath(
-                roundedRect: CGRect(x: drawRect.midX - 12, y: y - 2, width: 24, height: 4),
-                xRadius: 2,
-                yRadius: 2
+                roundedRect: CGRect(
+                    x: drawRect.midX - (isActive ? 18 : 14),
+                    y: y - (isActive ? 3 : 2),
+                    width: isActive ? 36 : 28,
+                    height: isActive ? 6 : 4
+                ),
+                xRadius: 3,
+                yRadius: 3
             ).fill()
+
+            if isActive {
+                let removedPixels = edge == .top ? cropTopPixels : cropBottomPixels
+                drawCropValue(removedPixels, edge: edge, y: y, inside: drawRect)
+            }
         }
+    }
+
+    private var imageSlotRect: CGRect {
+        CGRect(x: 10, y: 43, width: bounds.width - 20, height: bounds.height - 76)
+    }
+
+    private func cropHitFrame(y: CGFloat, drawRect: CGRect) -> CGRect {
+        CGRect(x: drawRect.minX - 4, y: y - 14, width: drawRect.width + 8, height: 28)
+    }
+
+    private func hoverTarget(at point: CGPoint) -> HoverTarget? {
+        if hasCrop, resetFrame.contains(point) {
+            return .reset
+        }
+        guard let geometry = cropDisplayGeometry() else { return nil }
+        if cropHitFrame(y: geometry.topY, drawRect: geometry.drawRect).contains(point) {
+            return .crop(.top)
+        }
+        if cropHitFrame(y: geometry.bottomY, drawRect: geometry.drawRect).contains(point) {
+            return .crop(.bottom)
+        }
+        return nil
+    }
+
+    private func drawCropValue(_ pixels: Int, edge: CropDrag, y: CGFloat, inside rect: CGRect) {
+        let text = pixels == 0 ? "拖动裁剪" : "裁掉 \(pixels) px"
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold),
+            .foregroundColor: NSColor.white.withAlphaComponent(0.94)
+        ]
+        let textSize = text.size(withAttributes: attributes)
+        let badgeSize = CGSize(width: textSize.width + 12, height: 20)
+        let preferredY = edge == .top ? y - badgeSize.height - 6 : y + 6
+        let badgeY = min(max(preferredY, rect.minY + 4), rect.maxY - badgeSize.height - 4)
+        let badgeRect = CGRect(
+            x: min(max(rect.midX - badgeSize.width / 2, rect.minX + 4), rect.maxX - badgeSize.width - 4),
+            y: badgeY,
+            width: badgeSize.width,
+            height: badgeSize.height
+        )
+        NSColor.black.withAlphaComponent(0.72).setFill()
+        NSBezierPath(roundedRect: badgeRect, xRadius: 6, yRadius: 6).fill()
+        text.draw(
+            at: CGPoint(x: badgeRect.minX + 6, y: badgeRect.midY - textSize.height / 2),
+            withAttributes: attributes
+        )
+    }
+
+    private func drawResetButton() {
+        if hoverTarget == .reset {
+            NSColor.white.withAlphaComponent(0.10).setFill()
+            NSBezierPath(roundedRect: resetFrame, xRadius: 6, yRadius: 6).fill()
+        }
+        guard let image = NSImage(systemSymbolName: "arrow.counterclockwise", accessibilityDescription: "重置裁剪")?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 10.5, weight: .medium))
+        else { return }
+        let iconRect = resetFrame.insetBy(dx: 5, dy: 5)
+        var proposedRect = iconRect
+        guard let cgImage = image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil) else { return }
+        NSGraphicsContext.saveGraphicsState()
+        guard let context = NSGraphicsContext.current?.cgContext else {
+            NSGraphicsContext.restoreGraphicsState()
+            return
+        }
+        context.clip(to: iconRect, mask: cgImage)
+        NSColor.white.withAlphaComponent(hoverTarget == .reset ? 0.92 : 0.70).setFill()
+        iconRect.fill()
+        NSGraphicsContext.restoreGraphicsState()
     }
 }

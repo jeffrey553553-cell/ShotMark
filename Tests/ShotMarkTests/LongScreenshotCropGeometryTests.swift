@@ -31,4 +31,34 @@ final class LongScreenshotCropGeometryTests: XCTestCase {
             CGRect(x: 0, y: 99, width: 800, height: 1)
         )
     }
+
+    func testAppendingDownwardOnlyResetsBottomCrop() {
+        XCTAssertEqual(
+            LongScreenshotCropContinuationPolicy.adjustedInsets(
+                LongScreenshotCropInsets(top: 80, bottom: 120),
+                afterAppending: .downward
+            ),
+            LongScreenshotCropInsets(top: 80, bottom: 0)
+        )
+    }
+
+    func testAppendingUpwardOnlyResetsTopCrop() {
+        XCTAssertEqual(
+            LongScreenshotCropContinuationPolicy.adjustedInsets(
+                LongScreenshotCropInsets(top: 80, bottom: 120),
+                afterAppending: .upward
+            ),
+            LongScreenshotCropInsets(top: 0, bottom: 120)
+        )
+    }
+
+    func testUnresolvedAppendKeepsBothCropInsets() {
+        XCTAssertEqual(
+            LongScreenshotCropContinuationPolicy.adjustedInsets(
+                LongScreenshotCropInsets(top: 80, bottom: 120),
+                afterAppending: .unresolved
+            ),
+            LongScreenshotCropInsets(top: 80, bottom: 120)
+        )
+    }
 }
