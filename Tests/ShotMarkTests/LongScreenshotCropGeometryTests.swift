@@ -5,6 +5,8 @@ final class LongScreenshotCropGeometryTests: XCTestCase {
     func testScrollWheelDirectionMapsToScreenshotExpansion() {
         XCTAssertEqual(LongScreenshotScrollDirectionResolver.direction(forSign: -1), .downward)
         XCTAssertEqual(LongScreenshotScrollDirectionResolver.direction(forSign: 1), .upward)
+        XCTAssertEqual(LongScreenshotScrollDirectionResolver.direction(forSign: -1, axis: .horizontal), .upward)
+        XCTAssertEqual(LongScreenshotScrollDirectionResolver.direction(forSign: 1, axis: .horizontal), .downward)
         XCTAssertNil(LongScreenshotScrollDirectionResolver.direction(forSign: 0))
     }
 
@@ -29,6 +31,19 @@ final class LongScreenshotCropGeometryTests: XCTestCase {
                 bottomPixels: 500
             ),
             CGRect(x: 0, y: 99, width: 800, height: 1)
+        )
+    }
+
+    func testHorizontalCropAppliesLeadingAndTrailingInsets() {
+        XCTAssertEqual(
+            LongScreenshotCropGeometry.cropRect(
+                imageWidth: 4_000,
+                imageHeight: 800,
+                topPixels: 160,
+                bottomPixels: 240,
+                axis: .horizontal
+            ),
+            CGRect(x: 160, y: 0, width: 3_600, height: 800)
         )
     }
 
@@ -59,6 +74,25 @@ final class LongScreenshotCropGeometryTests: XCTestCase {
                 afterAppending: .unresolved
             ),
             LongScreenshotCropInsets(top: 80, bottom: 120)
+        )
+    }
+
+    func testHorizontalAppendResetsOnlyTheGrowingEdgeCrop() {
+        XCTAssertEqual(
+            LongScreenshotCropContinuationPolicy.adjustedInsets(
+                LongScreenshotCropInsets(top: 80, bottom: 120),
+                afterAppending: .upward,
+                axis: .horizontal
+            ),
+            LongScreenshotCropInsets(top: 80, bottom: 0)
+        )
+        XCTAssertEqual(
+            LongScreenshotCropContinuationPolicy.adjustedInsets(
+                LongScreenshotCropInsets(top: 80, bottom: 120),
+                afterAppending: .downward,
+                axis: .horizontal
+            ),
+            LongScreenshotCropInsets(top: 0, bottom: 120)
         )
     }
 }

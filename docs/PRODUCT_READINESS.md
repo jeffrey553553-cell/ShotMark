@@ -9,7 +9,7 @@ permissions, multi-display behavior, and regression coverage are all verified.
 | Area | Market baseline | ShotMark status | Exit criterion |
 | --- | --- | --- | --- |
 | Area and window capture | Fast global shortcut, frozen screen, smart window selection, Retina and multi-display correctness | Implemented | 99.5% successful activation and export across the supported test matrix |
-| Scrolling capture | Live preview, fixed-element removal, manual and automatic capture, recovery after poor overlap | Bidirectional manual capture and optional automatic capture implemented | 95% first-attempt success in the real-app corpus; no missing or duplicated content in deterministic fixtures |
+| Scrolling capture | Vertical and horizontal live preview, fixed-element removal, manual and automatic capture, recovery after poor overlap | Bidirectional vertical and horizontal manual capture plus optional vertical automatic capture implemented | 95% first-attempt success in the real-app corpus; no missing or duplicated content in deterministic fixtures |
 | Annotation | Consistent selection, undo/redo, polished arrows, text, counters, blur and callouts | Implemented | Every annotation follows the same select/move/resize/edit/Esc rules and exports pixel-identically |
 | OCR and translation | Automatic language recognition, selectable text, reliable copy and translation | Implemented | Chinese and English fixture accuracy is tracked; all empty, permission and network failures are actionable |
 | Recording | Native resolution, system and microphone audio, pause/resume, cursor options | Implemented | 30-minute stability run, audio sync, low-disk failure and permission recovery pass |
@@ -32,7 +32,7 @@ permissions, multi-display behavior, and regression coverage are all verified.
 
 - Keep pointer states, hover feedback, shortcuts and Esc behavior consistent.
 - Add optional window-shadow export.
-- Add horizontal scrolling capture; keep the shipped final crop/cleanup flow covered by UI regression tests.
+- Keep vertical and horizontal scrolling capture, final crop and cleanup flows covered by UI regression tests.
 - Add recording trim, GIF export and optional keystroke display.
 
 ### P2: Commercial release
@@ -45,6 +45,14 @@ permissions, multi-display behavior, and regression coverage are all verified.
 
 ## Current Iteration
 
+- Added horizontal long screenshot capture. The first decisive scroll gesture
+  locks the axis, trackpad cross-axis noise is ignored, and the existing mature
+  overlap, fixed-element, reverse-scroll and capacity logic is reused without
+  image interpolation.
+- Horizontal capture supports rightward growth and leftward recovery, a wider
+  live preview, left/right crop handles, final dimensions, export-safe capacity
+  limits and manual-only controls. Added synthetic pixel-sequence coverage,
+  AppKit snapshots and a 5,180 px real-browser benchmark fixture.
 - Polished long-screenshot cleanup in the live preview: larger invisible hit
   targets, resize cursors, hover/drag feedback, removed-pixel feedback, final
   output dimensions and one-click reset. The controls stay neutral until the

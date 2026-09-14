@@ -43,7 +43,7 @@ struct LongScreenshotStitchUpdate {
     }
 }
 
-final class LongScreenshotStitcher {
+final class VerticalLongScreenshotStitcher {
     private static let logger = Logger(subsystem: "com.local.shotmark", category: "long-screenshot-stitcher")
     private struct RasterImage {
         let width: Int

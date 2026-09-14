@@ -14,7 +14,7 @@ const outputRoot = process.argv[2] ?? "/tmp/shotmark-longshot-benchmark";
 const chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const defaultScenarios = [
   "simple", "fixed", "translucent", "repeated", "dynamic", "lazy",
-  "nested", "lowtexture", "sticky-swap", "bidirectional"
+  "nested", "lowtexture", "sticky-swap", "bidirectional", "horizontal"
 ];
 const requestedScenarios = process.argv[3]?.split(",").filter(Boolean);
 const scenarios = requestedScenarios?.length ? requestedScenarios : defaultScenarios;
@@ -29,6 +29,7 @@ try {
   for (const scenario of scenarios) {
     const pageScenario = scenario === "bidirectional" ? "fixed" : scenario;
     const usesNestedScroller = scenario === "nested";
+    const isHorizontal = scenario === "horizontal";
     const retina = scenario === "fixed";
     const viewport = retina ? { width: 900, height: 640 } : { width: 720, height: 520 };
     const scale = retina ? 2 : 1;
@@ -47,18 +48,19 @@ try {
     // Other scenarios retain larger jumps as overlap and recovery stress tests.
     const hasFloatingOverlay = !["simple", "repeated"].includes(scenario);
     const step = hasFloatingOverlay ? 112 : 236;
-    const readScrollMetrics = () => page.evaluate(nested => {
+    const readScrollMetrics = () => page.evaluate(({ nested, horizontal }) => {
       const target = nested ? document.querySelector(".page") : document.scrollingElement;
       return {
-        offset: Math.round(nested ? target.scrollTop : scrollY),
-        maximum: Math.round(target.scrollHeight - target.clientHeight)
+        offset: Math.round(horizontal ? scrollX : (nested ? target.scrollTop : scrollY)),
+        maximum: Math.round(horizontal ? target.scrollWidth - target.clientWidth : target.scrollHeight - target.clientHeight)
       };
-    }, usesNestedScroller);
-    const scrollToOffset = value => page.evaluate(({ nested, value }) => {
+    }, { nested: usesNestedScroller, horizontal: isHorizontal });
+    const scrollToOffset = value => page.evaluate(({ nested, horizontal, value }) => {
       const target = nested ? document.querySelector(".page") : document.scrollingElement;
       if (nested) target.scrollTo(0, value);
+      else if (horizontal) scrollTo(value, 0);
       else scrollTo(0, value);
-    }, { nested: usesNestedScroller, value });
+    }, { nested: usesNestedScroller, horizontal: isHorizontal, value });
 
     let maximumOffset = (await readScrollMetrics()).maximum;
     let offsets;
@@ -97,9 +99,10 @@ try {
       frames.push({ file, offset });
     }
 
-    const pageMetrics = await page.evaluate(nested => {
+    const pageMetrics = await page.evaluate(({ nested, horizontal }) => {
       const rows = [...document.querySelectorAll(".row")];
       const first = rows[0];
+      const horizontalCards = [...document.querySelectorAll(".horizontal-card")];
       const floatingOverlay = document.querySelector(".moving-ad")?.getBoundingClientRect();
       const scrollHost = nested ? document.querySelector(".page") : null;
       const x = first ? Math.round(first.getBoundingClientRect().left + 20) : 30;
@@ -107,22 +110,31 @@ try {
         const color = getComputedStyle(row, "::before").backgroundColor.match(/\d+/g)?.slice(0, 3).map(Number) ?? [];
         return { index, color };
       });
+      const horizontalMarkers = horizontalCards.map((card, index) => {
+        const color = getComputedStyle(card, "::before").backgroundColor.match(/\d+/g)?.slice(0, 3).map(Number) ?? [];
+        return { index, color };
+      });
       return {
         documentHeight: nested
           ? scrollHost.scrollHeight + innerHeight - scrollHost.clientHeight
           : document.documentElement.scrollHeight,
         markerX: x,
+        documentWidth: document.documentElement.scrollWidth,
+        markerY: horizontalCards[0] ? Math.round(horizontalCards[0].getBoundingClientRect().top + 20) : 30,
         floatingOverlayProbeX: floatingOverlay ? Math.round(floatingOverlay.left + floatingOverlay.width / 2) : null,
-        markers
+        markers: horizontal ? horizontalMarkers : markers
       };
-    }, usesNestedScroller);
+    }, { nested: usesNestedScroller, horizontal: isHorizontal });
 
     const manifest = {
       scenario,
       viewport,
       scale,
+      axis: isHorizontal ? "horizontal" : "vertical",
       documentHeight: pageMetrics.documentHeight,
+      documentWidth: pageMetrics.documentWidth,
       markerX: pageMetrics.markerX,
+      markerY: pageMetrics.markerY,
       floatingOverlayProbeX: [
         "fixed", "translucent", "lazy", "nested", "lowtexture", "sticky-swap", "bidirectional"
       ].includes(scenario)
@@ -132,7 +144,8 @@ try {
       frames
     };
     await fs.writeFile(path.join(directory, "manifest.json"), JSON.stringify(manifest, null, 2));
-    console.log(`${scenario}: ${frames.length} frames, ${pageMetrics.documentHeight}px document`);
+    const extent = isHorizontal ? pageMetrics.documentWidth : pageMetrics.documentHeight;
+    console.log(`${scenario}: ${frames.length} frames, ${extent}px ${isHorizontal ? "wide" : "document"}`);
     await context.close();
   }
 } finally {

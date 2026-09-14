@@ -118,9 +118,20 @@ enum LongScreenshotPreviewPolicy {
 enum LongScreenshotRecoveryAdvice {
     static func controlStatus(
         consecutiveAlignmentFailures: Int,
-        expectedDirection: LongScreenshotStitchDirection?
+        expectedDirection: LongScreenshotStitchDirection?,
+        axis: LongScreenshotAxis = .vertical
     ) -> String {
         guard consecutiveAlignmentFailures >= 2 else { return "暂未对齐，请继续缓慢滚动" }
+        if axis == .horizontal {
+            switch expectedDirection {
+            case .upward:
+                return "重叠不足，向左回滚少许后慢滚"
+            case .downward:
+                return "重叠不足，向右回滚少许后慢滚"
+            case .unresolved, .none:
+                return "重叠不足，回到上一屏末端后慢滚"
+            }
+        }
         switch expectedDirection {
         case .downward:
             return "重叠不足，向上回滚少许后慢滚"
@@ -141,8 +152,20 @@ enum LongScreenshotCropGeometry {
         imageWidth: Int,
         imageHeight: Int,
         topPixels: Int,
-        bottomPixels: Int
+        bottomPixels: Int,
+        axis: LongScreenshotAxis = .vertical
     ) -> CGRect {
+        if axis == .horizontal {
+            let safeWidth = max(1, imageWidth)
+            let leading = min(max(0, topPixels), safeWidth - 1)
+            let trailing = min(max(0, bottomPixels), safeWidth - leading - 1)
+            return CGRect(
+                x: leading,
+                y: 0,
+                width: safeWidth - leading - trailing,
+                height: max(1, imageHeight)
+            )
+        }
         let safeHeight = max(1, imageHeight)
         let top = min(max(0, topPixels), safeHeight - 1)
         let bottom = min(max(0, bottomPixels), safeHeight - top - 1)
@@ -163,8 +186,19 @@ struct LongScreenshotCropInsets: Equatable {
 enum LongScreenshotCropContinuationPolicy {
     static func adjustedInsets(
         _ insets: LongScreenshotCropInsets,
-        afterAppending direction: LongScreenshotStitchDirection
+        afterAppending direction: LongScreenshotStitchDirection,
+        axis: LongScreenshotAxis = .vertical
     ) -> LongScreenshotCropInsets {
+        if axis == .horizontal {
+            switch direction {
+            case .upward:
+                return LongScreenshotCropInsets(top: insets.top, bottom: 0)
+            case .downward:
+                return LongScreenshotCropInsets(top: 0, bottom: insets.bottom)
+            case .unresolved:
+                return insets
+            }
+        }
         switch direction {
         case .upward:
             return LongScreenshotCropInsets(top: 0, bottom: insets.bottom)
@@ -199,7 +233,7 @@ private extension LongScreenshotStitchUpdate {
         case .ignoredAlignmentFailed:
             "拼接置信度低，放慢滚动"
         case .reachedMaximumHeight:
-            "已达安全长度上限，请保存或复制"
+            "已达安全尺寸上限，请保存或复制"
         }
     }
 
@@ -355,6 +389,7 @@ final class LongScreenshotSessionController {
     private var alignmentRetryCount = 0
     private var stabilityRetryCount = 0
     private var captureMode: LongScreenshotCaptureMode = .manual
+    private var captureAxis: LongScreenshotAxis = .undetermined
     private var automaticStallCount = 0
     private var didStartAutomaticScrolling = false
     private var isAwaitingAccessibilityAuthorization = false
@@ -436,7 +471,8 @@ final class LongScreenshotSessionController {
             imageWidth: stitched.width,
             imageHeight: stitched.height,
             topPixels: cropTopPixels,
-            bottomPixels: cropBottomPixels
+            bottomPixels: cropBottomPixels,
+            axis: captureAxis
         )
         guard let finalImage = stitched.cropping(to: cropRect) else {
             qualityTracker.finish(completion: .failed)
@@ -598,15 +634,26 @@ final class LongScreenshotSessionController {
         }
         guard !isAwaitingAccessibilityAuthorization else { return }
         guard !hasReachedOutputLimit else {
-            updateControlView(status: "已达安全长度上限，请保存或复制")
+            updateControlView(status: "已达安全尺寸上限，请保存或复制")
             return
         }
         if captureMode == .automatic, didStartAutomaticScrolling {
             setCaptureMode(.manual, status: "已切换手动滚动")
         }
-        let verticalDelta = dominantVerticalScrollDelta(event)
-        guard abs(verticalDelta) >= scrollDirectionThreshold else { return }
-        let sign = verticalDelta > 0 ? 1 : -1
+        guard let motion = scrollMotion(from: event) else { return }
+        if captureAxis == .undetermined {
+            guard stitcher.configureAxis(motion.axis) else {
+                updateControlView(status: "无法切换拼接方向，请重新开始长截图")
+                return
+            }
+            captureAxis = motion.axis
+            controlView?.captureAxis = motion.axis
+            previewView?.captureAxis = motion.axis
+            if motion.axis == .horizontal {
+                setCaptureMode(.manual, status: "横向模式，请左右滚动")
+            }
+        }
+        let sign = motion.delta > 0 ? 1 : -1
 
         if let lastScrollDirectionSign, lastScrollDirectionSign != sign {
             prepareForScrollDirectionChange()
@@ -616,7 +663,7 @@ final class LongScreenshotSessionController {
         alignmentRetryWorkItem?.cancel()
         alignmentRetryWorkItem = nil
         alignmentRetryCount = 0
-        pendingExpectedScrollDeltaPixels += expectedScrollDeltaPixels(from: event, verticalDelta: verticalDelta)
+        pendingExpectedScrollDeltaPixels += expectedScrollDeltaPixels(from: event, delta: motion.delta)
         scheduleCaptureAfterScroll()
     }
 
@@ -639,6 +686,10 @@ final class LongScreenshotSessionController {
     }
 
     private func startAutomaticScrolling() {
+        guard captureAxis != .horizontal else {
+            setCaptureMode(.manual, status: "横向长截图请手动左右滚动")
+            return
+        }
         guard captureMode == .automatic, !finishAfterCapture else { return }
         guard automaticStartDecision() == .start else {
             setCaptureMode(.manual, status: "请返回原页面，再点自动向下")
@@ -716,18 +767,22 @@ final class LongScreenshotSessionController {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.14, execute: workItem)
     }
 
-    private func dominantVerticalScrollDelta(_ event: NSEvent) -> CGFloat {
+    private func scrollMotion(from event: NSEvent) -> LongScreenshotScrollMotion? {
         let preciseY = event.scrollingDeltaY
         let legacyY = event.deltaY
         let vertical = abs(preciseY) >= abs(legacyY) ? preciseY : legacyY
         let preciseX = event.scrollingDeltaX
         let legacyX = event.deltaX
         let horizontal = abs(preciseX) >= abs(legacyX) ? preciseX : legacyX
-        return abs(vertical) >= abs(horizontal) ? vertical : 0
+        return LongScreenshotScrollMotionResolver.resolve(
+            horizontalDelta: horizontal,
+            verticalDelta: vertical,
+            lockedAxis: captureAxis
+        )
     }
 
-    private func expectedScrollDeltaPixels(from event: NSEvent, verticalDelta: CGFloat) -> Int {
-        let pointDelta = abs(verticalDelta) * (event.hasPreciseScrollingDeltas ? 1 : 18)
+    private func expectedScrollDeltaPixels(from event: NSEvent, delta: CGFloat) -> Int {
+        let pointDelta = abs(delta) * (event.hasPreciseScrollingDeltas ? 1 : 18)
         let scale = max(1, selection.screen.backingScaleFactor)
         return max(1, Int((pointDelta * scale).rounded()))
     }
@@ -798,7 +853,10 @@ final class LongScreenshotSessionController {
         let scrollDirectionSign = retryContext?.scrollDirectionSign ?? lastScrollDirectionSign
         let expectedDirection = retryContext?.expectedDirection
             ?? scrollDirectionSign.flatMap { stitchDirectionByScrollSign[$0] }
-            ?? scrollDirectionSign.flatMap(LongScreenshotScrollDirectionResolver.direction(forSign:))
+            ?? scrollDirectionSign.flatMap { LongScreenshotScrollDirectionResolver.direction(
+                forSign: $0,
+                axis: captureAxis
+            ) }
         if retryContext == nil {
             pendingExpectedScrollDeltaPixels = 0
         }
@@ -921,7 +979,7 @@ final class LongScreenshotSessionController {
     ) {
         let now = Date()
         let minimumPreviewInterval = LongScreenshotPreviewPolicy.minimumRenderInterval(
-            outputHeight: stitcher.outputHeight
+            outputHeight: stitcher.outputExtent
         )
         let shouldRenderPreview = stitcher.acceptedFrameCount == 0
             || finishAfterCapture
@@ -960,7 +1018,8 @@ final class LongScreenshotSessionController {
         if let update, case .appended = update.outcome {
             let adjustedCrop = LongScreenshotCropContinuationPolicy.adjustedInsets(
                 LongScreenshotCropInsets(top: cropTopPixels, bottom: cropBottomPixels),
-                afterAppending: update.direction
+                afterAppending: update.direction,
+                axis: captureAxis
             )
             cropTopPixels = adjustedCrop.top
             cropBottomPixels = adjustedCrop.bottom
@@ -1021,7 +1080,7 @@ final class LongScreenshotSessionController {
             ))
             if update?.capacityLevel == .warning {
                 updateControlView(status: "长图较大，建议尽快保存或复制")
-                updatePreview(status: "接近安全长度上限")
+                updatePreview(status: "接近安全尺寸上限")
             } else if captureMode == .manual, case .initialized = update?.outcome {
                 updateControlView(status: "首帧已采集，请滚动或点自动向下")
                 updatePreview(status: "可手动滚动或自动向下")
@@ -1072,7 +1131,7 @@ final class LongScreenshotSessionController {
             )
             break
         case .reachedMaximumHeight:
-            setCaptureMode(.manual, status: "已达安全长度上限，请保存或复制")
+            setCaptureMode(.manual, status: "已达安全尺寸上限，请保存或复制")
         }
     }
 
@@ -1085,7 +1144,7 @@ final class LongScreenshotSessionController {
         alignmentRetryWorkItem = nil
         captureMode = .manual
         controlView?.captureMode = .manual
-        updateControlView(status: "已达安全长度上限，请保存或复制")
+        updateControlView(status: "已达安全尺寸上限，请保存或复制")
         updatePreview(status: "当前长图可正常导出")
     }
 
@@ -1107,7 +1166,8 @@ final class LongScreenshotSessionController {
         guard let delay = retryPolicy.delay(forAttempt: nextAttempt) else {
             updateControlView(status: LongScreenshotRecoveryAdvice.controlStatus(
                 consecutiveAlignmentFailures: consecutiveAlignmentFailureCount,
-                expectedDirection: context.expectedDirection
+                expectedDirection: context.expectedDirection,
+                axis: captureAxis
             ))
             updatePreview(status: LongScreenshotRecoveryAdvice.previewStatus(
                 consecutiveAlignmentFailures: consecutiveAlignmentFailureCount
@@ -1181,6 +1241,20 @@ final class LongScreenshotSessionController {
     }
 
     private func toggleAutomaticScrolling() {
+        if captureAxis == .horizontal {
+            updateControlView(status: "横向长截图请手动左右滚动")
+            updatePreview(status: "横向手动模式")
+            return
+        }
+        if captureAxis == .undetermined {
+            guard stitcher.configureAxis(.vertical) else {
+                updateControlView(status: "无法启动自动滚动，请重新开始长截图")
+                return
+            }
+            captureAxis = .vertical
+            controlView?.captureAxis = .vertical
+            previewView?.captureAxis = .vertical
+        }
         if captureMode == .automatic {
             setCaptureMode(.manual, status: "已停止自动滚动，请手动滚动或保存")
             return
@@ -1251,6 +1325,7 @@ final class LongScreenshotSessionController {
         controlView?.frameCount = captures.count
         controlView?.status = status
         controlView?.captureMode = captureMode
+        controlView?.captureAxis = captureAxis
         controlView?.directionText = currentDirectionText
         controlView?.stitchedHeight = stitchedImageCache?.height ?? 0
         controlView?.needsDisplay = true
@@ -1388,6 +1463,7 @@ final class LongScreenshotSessionController {
         previewView?.frameCount = captures.count
         previewView?.status = status
         previewView?.captureMode = captureMode
+        previewView?.captureAxis = captureAxis
         previewView?.directionText = currentDirectionText
         previewView?.stitchedHeight = stitchedImageCache?.height ?? 0
         previewView?.cropTopPixels = cropTopPixels
@@ -1407,6 +1483,13 @@ final class LongScreenshotSessionController {
     }
 
     private var currentDirectionText: String {
+        if captureAxis == .horizontal {
+            switch lastScrollDirectionSign {
+            case .some(let sign) where sign > 0: return "向左"
+            case .some: return "向右"
+            case .none: return "待滚动"
+            }
+        }
         switch lastScrollDirectionSign {
         case .some(let sign) where sign > 0:
             return stitchDirectionByScrollSign[sign] == .upward ? "向上" : "向下"
@@ -1418,11 +1501,14 @@ final class LongScreenshotSessionController {
     }
 
     private func previewSize(for image: CGImage?) -> CGSize {
-        let width: CGFloat = 152
+        let isHorizontal = captureAxis == .horizontal
+        let screenFrame = selection.screen.visibleFrame.insetBy(dx: 12, dy: 12)
+        let width: CGFloat = isHorizontal ? min(320, max(220, screenFrame.width * 0.30)) : 152
         let minimumHeight: CGFloat = 188
         let chromeHeight: CGFloat = 62
-        let screenFrame = selection.screen.visibleFrame.insetBy(dx: 12, dy: 12)
-        let maximumHeight = min(max(minimumHeight, screenFrame.height * 0.72), 560)
+        let maximumHeight = isHorizontal
+            ? min(max(minimumHeight, screenFrame.height * 0.34), 300)
+            : min(max(minimumHeight, screenFrame.height * 0.72), 560)
 
         guard let image, image.width > 0 else {
             return CGSize(width: width, height: min(minimumHeight, maximumHeight))
@@ -1539,6 +1625,7 @@ final class LongScreenshotSessionController {
             viewportHeightPoints: selection.rectInScreen.height
         )
         captureMode = .manual
+        captureAxis = .undetermined
         didStartAutomaticScrolling = false
         isAwaitingAccessibilityAuthorization = false
         cropTopPixels = 0
@@ -1547,8 +1634,14 @@ final class LongScreenshotSessionController {
 }
 
 enum LongScreenshotScrollDirectionResolver {
-    static func direction(forSign sign: Int) -> LongScreenshotStitchDirection? {
+    static func direction(
+        forSign sign: Int,
+        axis: LongScreenshotAxis = .vertical
+    ) -> LongScreenshotStitchDirection? {
         guard sign != 0 else { return nil }
+        if axis == .horizontal {
+            return sign < 0 ? .upward : .downward
+        }
         return sign < 0 ? .downward : .upward
     }
 }
@@ -1561,6 +1654,7 @@ final class LongScreenshotControlView: NSView {
     var frameCount = 0
     var status = "准备采集..."
     var captureMode: LongScreenshotCaptureMode = .manual
+    var captureAxis: LongScreenshotAxis = .undetermined
     var directionText = "待滚动"
     var stitchedHeight = 0
     private var isAutomaticHovered = false
@@ -1608,7 +1702,7 @@ final class LongScreenshotControlView: NSView {
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        let next = automaticFrame.contains(point)
+        let next = captureAxis != .horizontal && automaticFrame.contains(point)
         guard next != isAutomaticHovered else { return }
         isAutomaticHovered = next
         needsDisplay = true
@@ -1621,7 +1715,7 @@ final class LongScreenshotControlView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        if automaticFrame.contains(point) {
+        if automaticFrame.contains(point), captureAxis != .horizontal {
             onAutomaticToggle?()
         } else if copyFrame.contains(point) {
             onCopy?()
@@ -1644,6 +1738,7 @@ final class LongScreenshotControlView: NSView {
 
     private func drawAutomaticButton(in rect: CGRect) {
         let isRunning = captureMode == .automatic
+        let isHorizontal = captureAxis == .horizontal
         if isRunning || isAutomaticHovered {
             (isRunning
                 ? NSColor.white.withAlphaComponent(0.15)
@@ -1651,18 +1746,18 @@ final class LongScreenshotControlView: NSView {
             ).setFill()
             NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8).fill()
         }
-        let text = isRunning ? "停止" : "自动向下"
+        let text = isHorizontal ? "横向手动" : (isRunning ? "停止" : "自动向下")
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 11, weight: isRunning ? .semibold : .medium),
-            .foregroundColor: NSColor.white.withAlphaComponent(isRunning ? 0.94 : 0.72)
+            .foregroundColor: NSColor.white.withAlphaComponent(isRunning ? 0.94 : (isHorizontal ? 0.58 : 0.72))
         ]
         let size = text.size(withAttributes: attributes)
-        let symbolName = isRunning ? "stop.fill" : "arrow.down"
+        let symbolName = isHorizontal ? "arrow.left.and.right" : (isRunning ? "stop.fill" : "arrow.down")
         let iconRect = CGRect(x: rect.minX + 11, y: rect.midY - 6, width: 12, height: 12)
         drawSystemIcon(
             symbolName,
             in: iconRect,
-            color: isRunning ? .systemRed : NSColor.white.withAlphaComponent(0.72)
+            color: isRunning ? .systemRed : NSColor.white.withAlphaComponent(isHorizontal ? 0.58 : 0.72)
         )
         text.draw(
             at: CGPoint(x: rect.minX + 29, y: rect.midY - size.height / 2),
@@ -1841,6 +1936,7 @@ final class LongScreenshotPreviewView: NSView {
     var frameCount = 0
     var status = "准备采集"
     var captureMode: LongScreenshotCaptureMode = .manual
+    var captureAxis: LongScreenshotAxis = .undetermined
     var directionText = "待滚动"
     var stitchedHeight = 0
     var cropTopPixels = 0
@@ -1893,8 +1989,9 @@ final class LongScreenshotPreviewView: NSView {
     override func resetCursorRects() {
         super.resetCursorRects()
         if let geometry = cropDisplayGeometry() {
-            addCursorRect(cropHitFrame(y: geometry.topY, drawRect: geometry.drawRect), cursor: .resizeUpDown)
-            addCursorRect(cropHitFrame(y: geometry.bottomY, drawRect: geometry.drawRect), cursor: .resizeUpDown)
+            let cursor: NSCursor = captureAxis == .horizontal ? .resizeLeftRight : .resizeUpDown
+            addCursorRect(cropHitFrame(position: geometry.startPosition, drawRect: geometry.drawRect), cursor: cursor)
+            addCursorRect(cropHitFrame(position: geometry.endPosition, drawRect: geometry.drawRect), cursor: cursor)
         }
         if hasCrop {
             addCursorRect(resetFrame, cursor: .pointingHand)
@@ -1925,9 +2022,9 @@ final class LongScreenshotPreviewView: NSView {
             return
         }
         guard let geometry = cropDisplayGeometry() else { return }
-        if cropHitFrame(y: geometry.topY, drawRect: geometry.drawRect).contains(point) {
+        if cropHitFrame(position: geometry.startPosition, drawRect: geometry.drawRect).contains(point) {
             cropDrag = .top
-        } else if cropHitFrame(y: geometry.bottomY, drawRect: geometry.drawRect).contains(point) {
+        } else if cropHitFrame(position: geometry.endPosition, drawRect: geometry.drawRect).contains(point) {
             cropDrag = .bottom
         }
     }
@@ -1935,23 +2032,26 @@ final class LongScreenshotPreviewView: NSView {
     override func mouseDragged(with event: NSEvent) {
         guard let image, let cropDrag, let geometry = cropDisplayGeometry() else { return }
         let point = convert(event.locationInWindow, from: nil)
-        let minimumVisiblePixels = min(48, max(1, image.height))
+        let imageExtent = captureAxis == .horizontal ? image.width : image.height
+        let minimumVisiblePixels = min(48, max(1, imageExtent))
         switch cropDrag {
         case .top:
-            let value = Int(
-                ((geometry.drawRect.maxY - point.y) / geometry.drawRect.height * CGFloat(image.height)).rounded()
-            )
+            let ratio = captureAxis == .horizontal
+                ? (point.x - geometry.drawRect.minX) / geometry.drawRect.width
+                : (geometry.drawRect.maxY - point.y) / geometry.drawRect.height
+            let value = Int((ratio * CGFloat(imageExtent)).rounded())
             cropTopPixels = min(
                 max(0, value),
-                max(0, image.height - cropBottomPixels - minimumVisiblePixels)
+                max(0, imageExtent - cropBottomPixels - minimumVisiblePixels)
             )
         case .bottom:
-            let value = Int(
-                ((point.y - geometry.drawRect.minY) / geometry.drawRect.height * CGFloat(image.height)).rounded()
-            )
+            let ratio = captureAxis == .horizontal
+                ? (geometry.drawRect.maxX - point.x) / geometry.drawRect.width
+                : (point.y - geometry.drawRect.minY) / geometry.drawRect.height
+            let value = Int((ratio * CGFloat(imageExtent)).rounded())
             cropBottomPixels = min(
                 max(0, value),
-                max(0, image.height - cropTopPixels - minimumVisiblePixels)
+                max(0, imageExtent - cropTopPixels - minimumVisiblePixels)
             )
         }
         onCropChange?(cropTopPixels, cropBottomPixels)
@@ -2001,7 +2101,7 @@ final class LongScreenshotPreviewView: NSView {
             NSBezierPath(roundedRect: imageSlot, xRadius: 9, yRadius: 9).addClip()
             NSGraphicsContext.current?.cgContext.draw(image, in: drawRect)
             NSGraphicsContext.current?.cgContext.restoreGState()
-            drawCropControls(drawRect: drawRect, imageHeight: image.height)
+            drawCropControls(drawRect: drawRect)
         } else {
             "等待首张".draw(
                 at: CGPoint(x: imageSlot.midX - 22, y: imageSlot.midY - 7),
@@ -2021,8 +2121,11 @@ final class LongScreenshotPreviewView: NSView {
             ]
         )
 
-        let visibleHeight = max(0, (image?.height ?? stitchedHeight) - cropTopPixels - cropBottomPixels)
-        let metrics = image.map { "\($0.width)×\(visibleHeight)" } ?? "等待首帧"
+        let metrics = image.map { image in
+            let visibleWidth = max(0, image.width - (captureAxis == .horizontal ? cropTopPixels + cropBottomPixels : 0))
+            let visibleHeight = max(0, image.height - (captureAxis == .horizontal ? 0 : cropTopPixels + cropBottomPixels))
+            return "\(visibleWidth)×\(visibleHeight)"
+        } ?? "等待首帧"
         let metricAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium),
             .foregroundColor: NSColor.white.withAlphaComponent(0.50)
@@ -2056,10 +2159,18 @@ final class LongScreenshotPreviewView: NSView {
         )
     }
 
-    private func cropDisplayGeometry() -> (drawRect: CGRect, topY: CGFloat, bottomY: CGFloat)? {
+    private func cropDisplayGeometry() -> (drawRect: CGRect, startPosition: CGFloat, endPosition: CGFloat)? {
         guard let image, image.height > 0 else { return nil }
         let imageSlot = imageSlotRect
         let drawRect = imageDrawRect(for: image, in: imageSlot)
+        if captureAxis == .horizontal {
+            let pointsPerPixel = drawRect.width / CGFloat(image.width)
+            return (
+                drawRect,
+                drawRect.minX + CGFloat(cropTopPixels) * pointsPerPixel,
+                drawRect.maxX - CGFloat(cropBottomPixels) * pointsPerPixel
+            )
+        }
         let pointsPerPixel = drawRect.height / CGFloat(image.height)
         return (
             drawRect,
@@ -2068,50 +2179,61 @@ final class LongScreenshotPreviewView: NSView {
         )
     }
 
-    private func drawCropControls(drawRect: CGRect, imageHeight: Int) {
+    private func drawCropControls(drawRect: CGRect) {
         guard let geometry = cropDisplayGeometry() else { return }
         NSColor.black.withAlphaComponent(0.46).setFill()
-        if cropTopPixels > 0 {
-            CGRect(
-                x: drawRect.minX,
-                y: geometry.topY,
-                width: drawRect.width,
-                height: drawRect.maxY - geometry.topY
-            ).fill()
-        }
-        if cropBottomPixels > 0 {
-            CGRect(
-                x: drawRect.minX,
-                y: drawRect.minY,
-                width: drawRect.width,
-                height: geometry.bottomY - drawRect.minY
-            ).fill()
+        if captureAxis == .horizontal {
+            if cropTopPixels > 0 {
+                CGRect(x: drawRect.minX, y: drawRect.minY, width: geometry.startPosition - drawRect.minX, height: drawRect.height).fill()
+            }
+            if cropBottomPixels > 0 {
+                CGRect(x: geometry.endPosition, y: drawRect.minY, width: drawRect.maxX - geometry.endPosition, height: drawRect.height).fill()
+            }
+        } else {
+            if cropTopPixels > 0 {
+                CGRect(x: drawRect.minX, y: geometry.startPosition, width: drawRect.width, height: drawRect.maxY - geometry.startPosition).fill()
+            }
+            if cropBottomPixels > 0 {
+                CGRect(x: drawRect.minX, y: drawRect.minY, width: drawRect.width, height: geometry.endPosition - drawRect.minY).fill()
+            }
         }
 
-        for (edge, y) in [(CropDrag.top, geometry.topY), (CropDrag.bottom, geometry.bottomY)] {
+        for (edge, position) in [(CropDrag.top, geometry.startPosition), (CropDrag.bottom, geometry.endPosition)] {
             let isActive = cropDrag == edge || hoverTarget == .crop(edge)
             NSColor.white.withAlphaComponent(isActive ? 0.96 : 0.72).setStroke()
             let line = NSBezierPath()
             line.lineWidth = isActive ? 1.4 : 1
-            line.move(to: CGPoint(x: drawRect.minX, y: y))
-            line.line(to: CGPoint(x: drawRect.maxX, y: y))
+            if captureAxis == .horizontal {
+                line.move(to: CGPoint(x: position, y: drawRect.minY))
+                line.line(to: CGPoint(x: position, y: drawRect.maxY))
+            } else {
+                line.move(to: CGPoint(x: drawRect.minX, y: position))
+                line.line(to: CGPoint(x: drawRect.maxX, y: position))
+            }
             line.stroke()
 
             (isActive ? NSColor.white : NSColor.white.withAlphaComponent(0.86)).setFill()
-            NSBezierPath(
-                roundedRect: CGRect(
+            let handleRect: CGRect
+            if captureAxis == .horizontal {
+                handleRect = CGRect(
+                    x: position - (isActive ? 3 : 2),
+                    y: drawRect.midY - (isActive ? 18 : 14),
+                    width: isActive ? 6 : 4,
+                    height: isActive ? 36 : 28
+                )
+            } else {
+                handleRect = CGRect(
                     x: drawRect.midX - (isActive ? 18 : 14),
-                    y: y - (isActive ? 3 : 2),
+                    y: position - (isActive ? 3 : 2),
                     width: isActive ? 36 : 28,
                     height: isActive ? 6 : 4
-                ),
-                xRadius: 3,
-                yRadius: 3
-            ).fill()
+                )
+            }
+            NSBezierPath(roundedRect: handleRect, xRadius: 3, yRadius: 3).fill()
 
             if isActive {
                 let removedPixels = edge == .top ? cropTopPixels : cropBottomPixels
-                drawCropValue(removedPixels, edge: edge, y: y, inside: drawRect)
+                drawCropValue(removedPixels, edge: edge, position: position, inside: drawRect)
             }
         }
     }
@@ -2120,8 +2242,11 @@ final class LongScreenshotPreviewView: NSView {
         CGRect(x: 10, y: 43, width: bounds.width - 20, height: bounds.height - 76)
     }
 
-    private func cropHitFrame(y: CGFloat, drawRect: CGRect) -> CGRect {
-        CGRect(x: drawRect.minX - 4, y: y - 14, width: drawRect.width + 8, height: 28)
+    private func cropHitFrame(position: CGFloat, drawRect: CGRect) -> CGRect {
+        if captureAxis == .horizontal {
+            return CGRect(x: position - 14, y: drawRect.minY - 4, width: 28, height: drawRect.height + 8)
+        }
+        return CGRect(x: drawRect.minX - 4, y: position - 14, width: drawRect.width + 8, height: 28)
     }
 
     private func hoverTarget(at point: CGPoint) -> HoverTarget? {
@@ -2129,16 +2254,16 @@ final class LongScreenshotPreviewView: NSView {
             return .reset
         }
         guard let geometry = cropDisplayGeometry() else { return nil }
-        if cropHitFrame(y: geometry.topY, drawRect: geometry.drawRect).contains(point) {
+        if cropHitFrame(position: geometry.startPosition, drawRect: geometry.drawRect).contains(point) {
             return .crop(.top)
         }
-        if cropHitFrame(y: geometry.bottomY, drawRect: geometry.drawRect).contains(point) {
+        if cropHitFrame(position: geometry.endPosition, drawRect: geometry.drawRect).contains(point) {
             return .crop(.bottom)
         }
         return nil
     }
 
-    private func drawCropValue(_ pixels: Int, edge: CropDrag, y: CGFloat, inside rect: CGRect) {
+    private func drawCropValue(_ pixels: Int, edge: CropDrag, position: CGFloat, inside rect: CGRect) {
         let text = pixels == 0 ? "拖动裁剪" : "裁掉 \(pixels) px"
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold),
@@ -2146,14 +2271,24 @@ final class LongScreenshotPreviewView: NSView {
         ]
         let textSize = text.size(withAttributes: attributes)
         let badgeSize = CGSize(width: textSize.width + 12, height: 20)
-        let preferredY = edge == .top ? y - badgeSize.height - 6 : y + 6
-        let badgeY = min(max(preferredY, rect.minY + 4), rect.maxY - badgeSize.height - 4)
-        let badgeRect = CGRect(
-            x: min(max(rect.midX - badgeSize.width / 2, rect.minX + 4), rect.maxX - badgeSize.width - 4),
-            y: badgeY,
-            width: badgeSize.width,
-            height: badgeSize.height
-        )
+        let badgeRect: CGRect
+        if captureAxis == .horizontal {
+            let preferredX = edge == .top ? position + 6 : position - badgeSize.width - 6
+            badgeRect = CGRect(
+                x: min(max(preferredX, rect.minX + 4), rect.maxX - badgeSize.width - 4),
+                y: min(max(rect.midY - badgeSize.height / 2, rect.minY + 4), rect.maxY - badgeSize.height - 4),
+                width: badgeSize.width,
+                height: badgeSize.height
+            )
+        } else {
+            let preferredY = edge == .top ? position - badgeSize.height - 6 : position + 6
+            badgeRect = CGRect(
+                x: min(max(rect.midX - badgeSize.width / 2, rect.minX + 4), rect.maxX - badgeSize.width - 4),
+                y: min(max(preferredY, rect.minY + 4), rect.maxY - badgeSize.height - 4),
+                width: badgeSize.width,
+                height: badgeSize.height
+            )
+        }
         NSColor.black.withAlphaComponent(0.72).setFill()
         NSBezierPath(roundedRect: badgeRect, xRadius: 6, yRadius: 6).fill()
         text.draw(

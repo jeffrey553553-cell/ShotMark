@@ -31,6 +31,13 @@ final class LongScreenshotControlUITests: XCTestCase {
         let automaticImage = try XCTUnwrap(render(view: view))
         XCTAssertTrue(hasVisibleVariation(automaticImage))
         writeSnapshotIfRequested(automaticImage, name: "shotmark-longshot-control-automatic.png")
+
+        view.captureMode = .manual
+        view.captureAxis = .horizontal
+        view.needsDisplay = true
+        let horizontalImage = try XCTUnwrap(render(view: view))
+        XCTAssertTrue(hasVisibleVariation(horizontalImage))
+        writeSnapshotIfRequested(horizontalImage, name: "shotmark-longshot-control-horizontal.png")
     }
 
     private func mouseEvent(at point: CGPoint) throws -> NSEvent {

@@ -180,6 +180,11 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "startFrameSourceIfNeeded" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "frameSource\\.stop" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "LongScreenshotStitcher" Sources/ShotMark/LongScreenshotStitcher.swift Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "LongScreenshotAxis" Sources/ShotMark/AxisLongScreenshotStitcher.swift Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "outputExtent" Sources/ShotMark/AxisLongScreenshotStitcher.swift Sources/ShotMark/LongScreenshotSessionController.swift
+  rg -q "testHorizontalCaptureAppendsRightwardContentWithoutChangingHeight" Tests/ShotMarkTests/LongScreenshotStitcherTests.swift
+  rg -q "testHorizontalCaptureCanPrependNewContentAfterReversingDirection" Tests/ShotMarkTests/LongScreenshotStitcherTests.swift
+  rg -q "testHorizontalPreviewUsesSideCropHandles" Tests/ShotMarkTests/LongScreenshotPreviewUITests.swift
   rg -q "ContentSlice" Sources/ShotMark/LongScreenshotStitcher.swift
   rg -q "croppedRows" Sources/ShotMark/LongScreenshotStitcher.swift
   rg -q "retainedContentPixelBytes" Sources/ShotMark/LongScreenshotStitcher.swift Tests/ShotMarkTests/LongScreenshotStitcherTests.swift
@@ -195,7 +200,7 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "OnboardingLaunchPolicy" Sources/ShotMark/OnboardingLaunchPolicy.swift Sources/ShotMark/AppDelegate.swift Tests/ShotMarkTests/OnboardingLaunchPolicyTests.swift
   rg -q "hasCompletedOnboarding" Sources/ShotMark/Models.swift Sources/ShotMark/AppDelegate.swift Tests/ShotMarkTests/OnboardingLaunchPolicyTests.swift
   rg -q "设置指南" Sources/ShotMark/AppDelegate.swift Sources/ShotMark/OnboardingWindowController.swift
-  rg -q '"nested", "lowtexture", "sticky-swap"' scripts/generate_longshot_benchmark.mjs
+  rg -q '"nested", "lowtexture", "sticky-swap", "bidirectional", "horizontal"' scripts/generate_longshot_benchmark.mjs
   rg -q "detectStaticBand" Sources/ShotMark/LongScreenshotStitcher.swift
   rg -q "detectStaticSideBand" Sources/ShotMark/LongScreenshotStitcher.swift
   rg -q "matchingColumnBounds" Sources/ShotMark/LongScreenshotStitcher.swift
@@ -379,6 +384,9 @@ Mark each item PASS/FAIL after running it.
 | Long screenshot | Click Auto Down without Accessibility permission | Capture pauses while System Settings is visible; granting permission does not auto-start; returning to the original page and clicking Auto Down starts scrolling | |
 | Long screenshot | Move and click the mouse during automatic scrolling | Pointer remains under user control; the original page keeps scrolling and switching to another app stops automatic scrolling | |
 | Long screenshot | Scroll down, then scroll upward repeatedly | Preview does not keep appending reversed/duplicate content | |
+| Long screenshot | Start capture, then make a decisive horizontal trackpad gesture | Axis locks to horizontal, the control shows Horizontal Manual, and small vertical trackpad noise is ignored | |
+| Long screenshot | Scroll right, reverse through captured content, then continue left | Preview grows right first, stays unchanged over covered content, then prepends new left-side content without duplicates | |
+| Long screenshot | In horizontal mode, drag both preview side handles, reset, copy and save | Left/right crop handles stay outside the content, dimensions update live, reset restores full width, and both exports match the preview | |
 | Long screenshot | Reverse direction through already captured content | Preview height stays unchanged while traversing covered content and resumes only after reaching new content | |
 | Long screenshot | Start near page bottom, scroll upward | New upper content is prepended above the starting frame | |
 | Long screenshot | Scroll through a lazy-loading or animated page | Automatic retries preserve direction/distance context and recover after the page settles | |

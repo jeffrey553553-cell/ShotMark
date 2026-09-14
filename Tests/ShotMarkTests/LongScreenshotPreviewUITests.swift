@@ -50,6 +50,24 @@ final class LongScreenshotPreviewUITests: XCTestCase {
         }
     }
 
+    func testHorizontalPreviewUsesSideCropHandles() throws {
+        let view = LongScreenshotPreviewView(frame: CGRect(x: 0, y: 0, width: 152, height: 300))
+        view.captureAxis = .horizontal
+        view.image = try makeSampleImage(width: 800, height: 200)
+        var latest = LongScreenshotCropInsets(top: 0, bottom: 0)
+        view.onCropChange = { latest = LongScreenshotCropInsets(top: $0, bottom: $1) }
+
+        view.mouseDown(with: try mouseEvent(type: .leftMouseDown, at: CGPoint(x: 10, y: 155)))
+        view.mouseDragged(with: try mouseEvent(type: .leftMouseDragged, at: CGPoint(x: 30, y: 155)))
+        view.mouseUp(with: try mouseEvent(type: .leftMouseUp, at: CGPoint(x: 30, y: 155)))
+
+        XCTAssertGreaterThan(latest.top, 0)
+        XCTAssertEqual(latest.bottom, 0)
+        let rendered = try XCTUnwrap(render(view: view))
+        XCTAssertTrue(hasVisibleVariation(rendered))
+        writeSnapshotIfRequested(rendered, name: "shotmark-longshot-preview-horizontal.png")
+    }
+
     private func mouseEvent(type: NSEvent.EventType, at point: CGPoint) throws -> NSEvent {
         try XCTUnwrap(NSEvent.mouseEvent(
             with: type,

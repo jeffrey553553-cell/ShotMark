@@ -63,6 +63,32 @@
     }
     .scenario-sticky-swap .sticky-section { transition: none; }
     .scenario-sticky-swap .sticky-section.changed { background: #6d3fc0; }
+    .horizontal-track, .horizontal-fixed-leading, .horizontal-fixed-trailing { display: none; }
+    .scenario-horizontal { min-width: 5180px; overflow-y: hidden; background: #eef2f6; }
+    .scenario-horizontal .fixed-header,
+    .scenario-horizontal .fixed-footer,
+    .scenario-horizontal .moving-ad,
+    .scenario-horizontal .page { display: none; }
+    .scenario-horizontal .horizontal-track {
+      display: flex; gap: 12px; width: 5180px; height: 100vh; padding: 28px 72px;
+      align-items: stretch;
+    }
+    .horizontal-card {
+      position: relative; flex: 0 0 188px; padding: 60px 18px 18px;
+      background: white; border: 1px solid #d5dce3; overflow: hidden;
+    }
+    .horizontal-card::before {
+      content: ""; position: absolute; inset: 0 0 auto; height: 44px; background: var(--stripe);
+    }
+    .horizontal-card strong { display: block; font-size: 16px; margin-bottom: 12px; }
+    .horizontal-card code { color: #52616f; font-size: 12px; overflow-wrap: anywhere; }
+    .scenario-horizontal .horizontal-fixed-leading,
+    .scenario-horizontal .horizontal-fixed-trailing {
+      display: grid; place-items: center; position: fixed; z-index: 30; top: 0; bottom: 0; width: 56px;
+      color: white; background: #182431; writing-mode: vertical-rl;
+    }
+    .scenario-horizontal .horizontal-fixed-leading { left: 0; }
+    .scenario-horizontal .horizontal-fixed-trailing { right: 0; background: #202a34; }
   </style>
 </head>
 <body>
@@ -74,6 +100,9 @@
     <section id="rows"></section>
   </main>
   <footer class="fixed-footer">固定操作栏 · 最终图片中应只出现一次</footer>
+  <div class="horizontal-fixed-leading">横向固定栏</div>
+  <section class="horizontal-track" id="horizontal-track"></section>
+  <div class="horizontal-fixed-trailing">固定操作</div>
   <script>
     const params = new URLSearchParams(location.search);
     const scenario = params.get('scenario') || 'fixed';
@@ -98,6 +127,22 @@
       rows.appendChild(row);
     };
     for (let index = 0; index < count; index++) addRow(index);
+
+    if (scenario === 'horizontal') {
+      const track = document.getElementById('horizontal-track');
+      for (let index = 0; index < 25; index++) {
+        const card = document.createElement('article');
+        const markerColor = [
+          20 + index * 7,
+          72 + (index % 4) * 44,
+          220 - (index % 6) * 34
+        ];
+        card.className = 'horizontal-card';
+        card.style.setProperty('--stripe', `rgb(${markerColor.join(',')})`);
+        card.innerHTML = `<strong>COLUMN ${String(index).padStart(3, '0')}</strong><code>marker:${index}:rgb:${markerColor.join('-')}:checksum:${index * 7919}</code>`;
+        track.appendChild(card);
+      }
+    }
 
     if (scenario === 'lazy') {
       let loaded = false;

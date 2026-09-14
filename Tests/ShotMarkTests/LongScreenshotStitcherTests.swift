@@ -16,9 +16,12 @@ final class LongScreenshotStitcherTests: XCTestCase {
         }
 
         let scenario: String
+        let axis: String?
         let scale: Int
         let documentHeight: Int
+        let documentWidth: Int?
         let markerX: Int
+        let markerY: Int?
         let floatingOverlayProbeX: Int?
         let markers: [Marker]
         let frames: [Frame]
@@ -50,15 +53,22 @@ final class LongScreenshotStitcherTests: XCTestCase {
             for frame in manifest.frames.prefix(maximumFrames ?? manifest.frames.count) {
                 let image = try loadImage(at: directory.appendingPathComponent(frame.file))
                 let difference = previousOffset.map { frame.offset - $0 }
+                let isHorizontal = manifest.axis == "horizontal"
                 let update = try XCTUnwrap(stitcher.append(
                     image,
                     expectedDeltaPixels: difference.map { abs($0) * manifest.scale },
                     expectedDirection: difference.flatMap {
                         guard $0 != 0 else { return nil }
+                        if isHorizontal {
+                            return $0 > 0 ? .upward : .downward
+                        }
                         return $0 > 0 ? .downward : .upward
                     },
                     renderMergedImage: false
                 ), manifest.scenario)
+                if previousOffset == nil, isHorizontal {
+                    XCTAssertTrue(stitcher.configureAxis(.horizontal), manifest.scenario)
+                }
                 if case .ignoredAlignmentFailed = update.outcome {
                     alignmentFailures += 1
                 }
@@ -75,6 +85,22 @@ final class LongScreenshotStitcherTests: XCTestCase {
             XCTAssertEqual(alignmentFailures, 0, "\(manifest.scenario) had alignment failures")
             XCTAssertLessThanOrEqual(stitcher.retainedViewportAnchorCount, 64, manifest.scenario)
             let merged = try XCTUnwrap(stitcher.mergedImage(), manifest.scenario)
+            if manifest.axis == "horizontal" {
+                let expectedWidth = try XCTUnwrap(manifest.documentWidth) * manifest.scale
+                XCTAssertLessThanOrEqual(
+                    abs(merged.width - expectedWidth),
+                    max(4, manifest.scale * 2),
+                    "\(manifest.scenario) output width \(merged.width), expected \(expectedWidth)"
+                )
+                try assertHorizontalMarkersAppearOnceAndInOrder(
+                    manifest.markers,
+                    markerY: try XCTUnwrap(manifest.markerY) * manifest.scale,
+                    in: merged,
+                    scenario: manifest.scenario
+                )
+                try writePNG(merged, to: directory.appendingPathComponent("merged.png"))
+                continue
+            }
             let expectedHeight = manifest.documentHeight * manifest.scale
             XCTAssertLessThanOrEqual(
                 abs(merged.height - expectedHeight),
@@ -120,6 +146,115 @@ final class LongScreenshotStitcherTests: XCTestCase {
         XCTAssertEqual(stitcher.outputHeight, 480)
         XCTAssertEqual(stitcher.retainedContentPixelBytes, 440 * 180 * 4)
         XCTAssertLessThan(stitcher.retainedContentPixelBytes, 4 * 240 * 180 * 4)
+    }
+
+    func testHorizontalCaptureAppendsRightwardContentWithoutChangingHeight() throws {
+        let stitcher = LongScreenshotStitcher()
+        let offsets = [200, 280, 360, 440]
+
+        _ = try XCTUnwrap(stitcher.append(makeHorizontalFrame(contentOffset: offsets[0])))
+        XCTAssertTrue(stitcher.configureAxis(.horizontal))
+
+        for offset in offsets.dropFirst() {
+            let update = try XCTUnwrap(stitcher.append(
+                makeHorizontalFrame(contentOffset: offset),
+                expectedDeltaPixels: 80,
+                expectedDirection: .upward
+            ))
+            guard case .appended(let delta) = update.outcome else {
+                return XCTFail("Expected horizontal content to append, got \(update.outcome)")
+            }
+            XCTAssertEqual(delta, 80)
+        }
+
+        let merged = try XCTUnwrap(stitcher.mergedImage())
+        XCTAssertEqual(stitcher.axis, .horizontal)
+        XCTAssertEqual(merged.width, 480)
+        XCTAssertEqual(merged.height, 180)
+        XCTAssertEqual(stitcher.outputWidth, 480)
+        XCTAssertEqual(stitcher.outputHeight, 180)
+        XCTAssertEqual(try decodedGlobalColumns(
+            in: merged,
+            sampleY: 90,
+            contentRange: 20..<460,
+            searchRange: 200...639
+        ), Array(200...639))
+    }
+
+    func testHorizontalCaptureCanPrependNewContentAfterReversingDirection() throws {
+        let stitcher = LongScreenshotStitcher()
+        _ = try XCTUnwrap(stitcher.append(makeHorizontalFrame(contentOffset: 360)))
+        XCTAssertTrue(stitcher.configureAxis(.horizontal))
+        _ = try XCTUnwrap(stitcher.append(
+            makeHorizontalFrame(contentOffset: 440),
+            expectedDeltaPixels: 80,
+            expectedDirection: .upward
+        ))
+        _ = try XCTUnwrap(stitcher.append(
+            makeHorizontalFrame(contentOffset: 360),
+            expectedDeltaPixels: 80,
+            expectedDirection: .downward
+        ))
+        let prepended = try XCTUnwrap(stitcher.append(
+            makeHorizontalFrame(contentOffset: 280),
+            expectedDeltaPixels: 80,
+            expectedDirection: .downward
+        ))
+
+        guard case .appended(let delta) = prepended.outcome else {
+            return XCTFail("Expected leftward content to prepend, got \(prepended.outcome)")
+        }
+        XCTAssertEqual(delta, 80)
+        let merged = try XCTUnwrap(stitcher.mergedImage())
+        XCTAssertEqual(merged.width, 400)
+        XCTAssertEqual(merged.height, 180)
+        XCTAssertEqual(try decodedGlobalColumns(
+            in: merged,
+            sampleY: 90,
+            contentRange: 20..<380,
+            searchRange: 280...639
+        ), Array(280...639))
+    }
+
+    func testHorizontalCapacityLimitKeepsFullHeightAndStopsWidthGrowth() throws {
+        let stitcher = LongScreenshotStitcher()
+        _ = try XCTUnwrap(stitcher.append(
+            makeHorizontalFrame(contentOffset: 200),
+            maxOutputHeight: 400,
+            renderMergedImage: false
+        ))
+        XCTAssertTrue(stitcher.configureAxis(.horizontal))
+
+        var finalAppend: LongScreenshotStitchUpdate?
+        var finalOffset = 200
+        for offset in [280, 360, 440] {
+            finalOffset = offset
+            finalAppend = try XCTUnwrap(stitcher.append(
+                makeHorizontalFrame(contentOffset: offset),
+                expectedDeltaPixels: 80,
+                expectedDirection: .upward,
+                renderMergedImage: false
+            ))
+            if finalAppend?.capacityLevel == .limit { break }
+        }
+
+        XCTAssertEqual(stitcher.outputExtent, 400)
+        XCTAssertEqual(stitcher.outputWidth, 400)
+        XCTAssertEqual(stitcher.outputHeight, 180)
+        XCTAssertEqual(finalAppend?.capacityLevel, .limit)
+
+        let stopped = try XCTUnwrap(stitcher.append(
+            makeHorizontalFrame(contentOffset: finalOffset + 80),
+            expectedDeltaPixels: 80,
+            expectedDirection: .upward,
+            renderMergedImage: false
+        ))
+        guard case .reachedMaximumHeight = stopped.outcome else {
+            return XCTFail("Expected an explicit horizontal capacity outcome, got \(stopped.outcome)")
+        }
+        XCTAssertEqual(stitcher.outputWidth, 400)
+        XCTAssertEqual(stitcher.outputHeight, 180)
+        XCTAssertNotNil(stitcher.mergedImage())
     }
 
     func testCapacityLimitKeepsCurrentImageExportableAndStopsFurtherGrowth() throws {
@@ -679,6 +814,51 @@ final class LongScreenshotStitcherTests: XCTestCase {
         XCTAssertEqual(clusters.count, 1, "\(scenario) fixed floating overlay clusters were \(clusters)")
     }
 
+    private func assertHorizontalMarkersAppearOnceAndInOrder(
+        _ markers: [BrowserBenchmarkManifest.Marker],
+        markerY: Int,
+        in image: CGImage,
+        scenario: String
+    ) throws {
+        let data = try XCTUnwrap(image.dataProvider?.data)
+        let bytes = try XCTUnwrap(CFDataGetBytePtr(data))
+        let y = min(max(0, markerY), image.height - 1)
+        var sequence: [Int] = []
+        var activeIndex: Int?
+        var activeLength = 0
+
+        func finishRun() {
+            if let activeIndex, activeLength >= 6 {
+                sequence.append(activeIndex)
+            }
+            activeIndex = nil
+            activeLength = 0
+        }
+
+        for x in 0..<image.width {
+            let offset = y * image.bytesPerRow + x * 4
+            let rgb = [Int(bytes[offset]), Int(bytes[offset + 1]), Int(bytes[offset + 2])]
+            let matched = markers.first { marker in
+                marker.color.count == 3
+                    && zip(marker.color, rgb).reduce(0) { $0 + abs($1.0 - $1.1) } <= 3
+            }?.index
+            if matched == activeIndex, matched != nil {
+                activeLength += 1
+            } else {
+                finishRun()
+                activeIndex = matched
+                activeLength = matched == nil ? 0 : 1
+            }
+        }
+        finishRun()
+
+        let expected = markers.map(\.index)
+        XCTAssertEqual(sequence, expected, "\(scenario) marker sequence was \(sequence)")
+        for marker in expected {
+            XCTAssertEqual(sequence.filter { $0 == marker }.count, 1, "\(scenario) repeated or lost marker \(marker)")
+        }
+    }
+
     private func makeFrame(
         contentOffset: Int,
         animatedBand: Range<Int>? = nil,
@@ -750,6 +930,57 @@ final class LongScreenshotStitcherTests: XCTestCase {
         ))
     }
 
+    private func makeHorizontalFrame(
+        contentOffset: Int,
+        leadingWidth: Int = 20,
+        contentWidth: Int = 200,
+        trailingWidth: Int = 20,
+        height: Int = 180
+    ) throws -> CGImage {
+        let width = leadingWidth + contentWidth + trailingWidth
+        let bytesPerRow = width * 4
+        var pixels = [UInt8](repeating: 255, count: height * bytesPerRow)
+        for y in 0..<height {
+            for x in 0..<width {
+                let offset = y * bytesPerRow + x * 4
+                let color: (UInt8, UInt8, UInt8)
+                if x < leadingWidth {
+                    color = (24, 30, 42)
+                } else if x >= leadingWidth + contentWidth {
+                    color = (38, 44, 52)
+                } else {
+                    color = horizontalContentColor(globalX: contentOffset + x - leadingWidth, y: y)
+                }
+                pixels[offset] = color.0
+                pixels[offset + 1] = color.1
+                pixels[offset + 2] = color.2
+                pixels[offset + 3] = 255
+            }
+        }
+        let provider = try XCTUnwrap(CGDataProvider(data: Data(pixels) as CFData))
+        return try XCTUnwrap(CGImage(
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bitsPerPixel: 32,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: false,
+            intent: .defaultIntent
+        ))
+    }
+
+    private func horizontalContentColor(globalX: Int, y: Int) -> (UInt8, UInt8, UInt8) {
+        (
+            UInt8((globalX * 17 + y * 3) % 220 + 20),
+            UInt8((globalX * 7 + y * 11) % 210 + 25),
+            UInt8((globalX * 13 + y * 5) % 200 + 30)
+        )
+    }
+
     private func contentColor(globalY: Int, x: Int) -> (UInt8, UInt8, UInt8) {
         (
             UInt8((globalY * 17 + x * 3) % 220 + 20),
@@ -786,6 +1017,25 @@ final class LongScreenshotStitcherTests: XCTestCase {
                 return sampled.0 == expected.0
                     && sampled.1 == expected.1
                     && sampled.2 == expected.2
+            })
+        }
+    }
+
+    private func decodedGlobalColumns(
+        in image: CGImage,
+        sampleY: Int,
+        contentRange: Range<Int>,
+        searchRange: ClosedRange<Int>
+    ) throws -> [Int] {
+        let data = try XCTUnwrap(image.dataProvider?.data)
+        let bytes = try XCTUnwrap(CFDataGetBytePtr(data))
+        return try contentRange.map { x in
+            let offset = sampleY * image.bytesPerRow + x * 4
+            return try XCTUnwrap(searchRange.first { globalX in
+                let expected = horizontalContentColor(globalX: globalX, y: sampleY)
+                return bytes[offset] == expected.0
+                    && bytes[offset + 1] == expected.1
+                    && bytes[offset + 2] == expected.2
             })
         }
     }
