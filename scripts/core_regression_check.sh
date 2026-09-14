@@ -156,6 +156,10 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "installEscapeKeyMonitor" Sources/ShotMark/OCRResultPanelController.swift
   rg -q "event.keyCode == 53" Sources/ShotMark/OCRResultPanelController.swift
   rg -q "onClose" Sources/ShotMark/OCRResultPanelController.swift
+  rg -q "VNDetectBarcodesRequest" Sources/ShotMark/OCRService.swift
+  rg -q "recognizeContent" Sources/ShotMark/OCRService.swift Sources/ShotMark/EditorWindowController.swift Sources/ShotMark/SelectionOverlayController.swift
+  rg -q "testRecognizeContentDecodesQRCodePayload" Tests/ShotMarkTests/OCRServiceTests.swift
+  rg -q "testMixedTextAndCodesRenderInLightAndDarkAppearances" Tests/ShotMarkTests/OCRResultPanelUITests.swift
   rg -q "ScreenSnapshot" Sources/ShotMark/Models.swift
   rg -q "captureSnapshots" Sources/ShotMark/CaptureService.swift
   rg -q "frozenSnapshot" Sources/ShotMark/SelectionOverlayController.swift
@@ -373,6 +377,8 @@ Mark each item PASS/FAIL after running it.
 | Pin lock | Lock a pinned image, then move the pointer away and back | Image area passes mouse events through; lock control remains available to unlock | |
 | Multiple pins | Create two pins, then use the status menu | Count is correct; Show All and Close All affect every pin | |
 | OCR | Click OCR on Chinese+English text | OCR panel shows recognized text; copy all works | |
+| OCR | Capture one or more QR/common barcodes, including a code-only region | Each unique payload appears once; individual copy and Copy All preserve the complete value | |
+| OCR | Open OCR from an external display | Result panel opens beside the selection on that display and remains fully visible | |
 | OCR | Open OCR panel and press Esc | OCR panel closes and screenshot/editor focus returns | |
 | Toast | Save or copy in light mode | Success toast remains readable with dark pill, check icon and white text | |
 | Recording | Select area -> record -> choose audio mode | Recording uses the selection's native pixel size; overlay/timer appears; Stop saves MP4 to Downloads without red frame/overlay in the video | |

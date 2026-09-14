@@ -9,18 +9,38 @@ private enum OCRTab {
     case translated
 }
 
+enum OCRClipboardContent {
+    static func compose(text: String, codes: [OCRDetectedCode]) -> String {
+        var sections: [String] = []
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedText.isEmpty {
+            sections.append(trimmedText)
+        }
+        if !codes.isEmpty {
+            sections.append(codes.map(\.payload).joined(separator: "\n"))
+        }
+        return sections.joined(separator: "\n\n")
+    }
+}
+
 final class OCRResultPanelController: NSWindowController {
     private let textView = NSTextView()
     private let statusLabel = NSTextField(labelWithString: "")
     private let translateButton = NSButton(title: "翻译", target: nil, action: nil)
+    private let copyAllButton = NSButton(title: "复制全部", target: nil, action: nil)
     private let tabSwitch = OCRTabSwitchView()
+    private let codeRow = NSStackView()
+    private let codePicker = NSPopUpButton()
     private let translationModel = OCRTranslationRequestModel()
     private var availabilityTask: Task<Void, Never>?
     private var scrollTopWithoutTabs: NSLayoutConstraint?
     private var scrollTopWithTabs: NSLayoutConstraint?
+    private var scrollBottomWithoutCodes: NSLayoutConstraint?
+    private var scrollBottomWithCodes: NSLayoutConstraint?
     private var escapeKeyMonitor: Any?
     private var didClose = false
     private var recognizedText: String
+    private var detectedCodes: [OCRDetectedCode] = []
     private var translatedText: String?
     private var selectedTab: OCRTab = .original
     private var displayedText: String {
@@ -30,6 +50,13 @@ final class OCRResultPanelController: NSWindowController {
         case .translated:
             return translatedText ?? ""
         }
+    }
+    private var presentedText: String {
+        let trimmed = displayedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty, selectedTab == .original, !detectedCodes.isEmpty {
+            return "未识别到可选文字，已识别下方二维码或条码。"
+        }
+        return displayedText
     }
     var onCopyAll: (() -> Void)?
     var onClose: (() -> Void)?
@@ -70,7 +97,10 @@ final class OCRResultPanelController: NSWindowController {
 
     func position(near rect: CGRect) {
         guard let window else { return }
-        let screenFrame = NSScreen.main?.visibleFrame ?? rect
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let screenFrame = NSScreen.screens.first(where: { $0.frame.contains(center) })?.visibleFrame
+            ?? NSScreen.main?.visibleFrame
+            ?? rect
         var origin = CGPoint(x: rect.maxX + 12, y: rect.maxY - window.frame.height)
         if origin.x + window.frame.width > screenFrame.maxX {
             origin.x = rect.minX - window.frame.width - 12
@@ -97,12 +127,14 @@ final class OCRResultPanelController: NSWindowController {
         onClose?()
     }
 
-    func update(lines: [OCRLine]) {
-        recognizedText = lines.map(\.text).joined(separator: "\n")
+    func update(result: OCRRecognitionResult) {
+        recognizedText = result.lines.map(\.text).joined(separator: "\n")
+        detectedCodes = result.codes
         translatedText = nil
         selectTab(.original)
         statusLabel.stringValue = ""
-        updateTranslateButtonState()
+        updateCodeRow()
+        updateActionState()
     }
 
     private func buildContent(in content: NSView) {
@@ -112,7 +144,7 @@ final class OCRResultPanelController: NSWindowController {
         content.addSubview(title)
 
         statusLabel.font = .systemFont(ofSize: 11, weight: .medium)
-        statusLabel.textColor = NSColor.white.withAlphaComponent(0.58)
+        statusLabel.textColor = .secondaryLabelColor
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(statusLabel)
 
@@ -129,15 +161,20 @@ final class OCRResultPanelController: NSWindowController {
         }
         content.addSubview(tabSwitch)
 
-        let copyButton = NSButton(title: "复制全部", target: self, action: #selector(copyAll))
-        copyButton.bezelStyle = .rounded
-        copyButton.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(copyButton)
+        copyAllButton.target = self
+        copyAllButton.action = #selector(copyAll)
+        copyAllButton.bezelStyle = .rounded
+        copyAllButton.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(copyAllButton)
 
         let scrollView = NSScrollView(frame: CGRect(x: 0, y: 0, width: 312, height: 184))
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .controlBackgroundColor
+        scrollView.wantsLayer = true
+        scrollView.layer?.cornerRadius = 6
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(scrollView)
 
@@ -145,6 +182,7 @@ final class OCRResultPanelController: NSWindowController {
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
+        textView.textColor = .labelColor
         textView.font = .systemFont(ofSize: 13)
         textView.string = displayedText
         textView.textContainerInset = NSSize(width: 8, height: 8)
@@ -155,6 +193,33 @@ final class OCRResultPanelController: NSWindowController {
         textView.textContainer?.containerSize = CGSize(width: scrollView.bounds.width, height: CGFloat.greatestFiniteMagnitude)
         scrollView.documentView = textView
 
+        codeRow.orientation = .horizontal
+        codeRow.alignment = .centerY
+        codeRow.spacing = 8
+        codeRow.isHidden = true
+        codeRow.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(codeRow)
+
+        let codeIcon = NSImageView(image: NSImage(
+            systemSymbolName: "qrcode.viewfinder",
+            accessibilityDescription: "二维码或条码"
+        ) ?? NSImage())
+        codeIcon.contentTintColor = .secondaryLabelColor
+        codeIcon.setContentHuggingPriority(.required, for: .horizontal)
+        let codeLabel = NSTextField(labelWithString: "码")
+        codeLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        codeLabel.textColor = .secondaryLabelColor
+        codePicker.controlSize = .small
+        codePicker.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let copyCodeButton = NSButton(title: "复制码", target: self, action: #selector(copySelectedCode))
+        copyCodeButton.controlSize = .small
+        copyCodeButton.bezelStyle = .rounded
+        copyCodeButton.toolTip = "复制当前二维码或条码内容"
+        codeRow.addArrangedSubview(codeIcon)
+        codeRow.addArrangedSubview(codeLabel)
+        codeRow.addArrangedSubview(codePicker)
+        codeRow.addArrangedSubview(copyCodeButton)
+
         let bridgeView = NSHostingView(rootView: OCRTranslationBridgeView(model: translationModel))
         bridgeView.translatesAutoresizingMaskIntoConstraints = false
         bridgeView.alphaValue = 0
@@ -164,6 +229,10 @@ final class OCRResultPanelController: NSWindowController {
         let topWithTabs = scrollView.topAnchor.constraint(equalTo: tabSwitch.bottomAnchor, constant: 8)
         scrollTopWithoutTabs = topWithoutTabs
         scrollTopWithTabs = topWithTabs
+        let bottomWithoutCodes = scrollView.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12)
+        let bottomWithCodes = scrollView.bottomAnchor.constraint(equalTo: codeRow.topAnchor, constant: -8)
+        scrollBottomWithoutCodes = bottomWithoutCodes
+        scrollBottomWithCodes = bottomWithCodes
 
         NSLayoutConstraint.activate([
             title.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 14),
@@ -171,10 +240,10 @@ final class OCRResultPanelController: NSWindowController {
             statusLabel.leadingAnchor.constraint(equalTo: title.trailingAnchor, constant: 8),
             statusLabel.centerYAnchor.constraint(equalTo: title.centerYAnchor),
             statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: translateButton.leadingAnchor, constant: -10),
-            translateButton.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor, constant: -8),
+            translateButton.trailingAnchor.constraint(equalTo: copyAllButton.leadingAnchor, constant: -8),
             translateButton.centerYAnchor.constraint(equalTo: title.centerYAnchor),
-            copyButton.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
-            copyButton.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+            copyAllButton.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
+            copyAllButton.centerYAnchor.constraint(equalTo: title.centerYAnchor),
             tabSwitch.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
             tabSwitch.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 9),
             tabSwitch.widthAnchor.constraint(equalToConstant: 164),
@@ -182,14 +251,18 @@ final class OCRResultPanelController: NSWindowController {
             scrollView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
             scrollView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
             topWithoutTabs,
-            scrollView.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12),
+            bottomWithoutCodes,
+            codeRow.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 14),
+            codeRow.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
+            codeRow.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -10),
+            codeRow.heightAnchor.constraint(equalToConstant: 26),
             bridgeView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             bridgeView.topAnchor.constraint(equalTo: content.topAnchor),
             bridgeView.widthAnchor.constraint(equalToConstant: 0),
             bridgeView.heightAnchor.constraint(equalToConstant: 0)
         ])
         updateTabState()
-        updateTranslateButtonState()
+        updateActionState()
     }
 
     private func installEscapeKeyMonitor() {
@@ -212,10 +285,20 @@ final class OCRResultPanelController: NSWindowController {
     }
 
     @objc private func copyAll() {
+        let content = OCRClipboardContent.compose(text: copyableDisplayedText, codes: detectedCodes)
+        guard !content.isEmpty else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(displayedText, forType: .string)
+        NSPasteboard.general.setString(content, forType: .string)
         close()
         onCopyAll?()
+    }
+
+    @objc private func copySelectedCode() {
+        let index = codePicker.indexOfSelectedItem
+        guard detectedCodes.indices.contains(index) else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(detectedCodes[index].payload, forType: .string)
+        statusLabel.stringValue = "码内容已复制"
     }
 
     @objc private func translateText() {
@@ -268,14 +351,41 @@ final class OCRResultPanelController: NSWindowController {
             statusLabel.stringValue = "翻译失败：\(error.localizedDescription)"
         }
         updateTabState()
-        updateTranslateButtonState()
+        updateActionState()
     }
 
-    private func updateTranslateButtonState() {
+    private func updateActionState() {
         translateButton.isEnabled = canTranslate(recognizedText)
+        copyAllButton.isEnabled = !OCRClipboardContent.compose(
+            text: copyableDisplayedText,
+            codes: detectedCodes
+        ).isEmpty
+    }
+
+    private var copyableDisplayedText: String {
+        canCopyText(displayedText) ? displayedText : ""
+    }
+
+    private func updateCodeRow() {
+        codePicker.removeAllItems()
+        for (index, code) in detectedCodes.enumerated() {
+            let preview = code.payload.replacingOccurrences(of: "\n", with: " ")
+            let shortened = preview.count > 34 ? String(preview.prefix(33)) + "…" : preview
+            codePicker.addItem(withTitle: "\(code.displayName) \(index + 1) · \(shortened)")
+            codePicker.lastItem?.toolTip = code.payload
+        }
+        let hasCodes = !detectedCodes.isEmpty
+        codeRow.isHidden = !hasCodes
+        scrollBottomWithoutCodes?.isActive = !hasCodes
+        scrollBottomWithCodes?.isActive = hasCodes
+        window?.contentView?.layoutSubtreeIfNeeded()
     }
 
     private func canTranslate(_ value: String) -> Bool {
+        canCopyText(value)
+    }
+
+    private func canCopyText(_ value: String) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         return trimmed != "OCR 识别中..." && trimmed != "未识别到文字" && !trimmed.hasPrefix("OCR 失败")
@@ -355,7 +465,7 @@ final class OCRResultPanelController: NSWindowController {
     private func selectTab(_ tab: OCRTab) {
         selectedTab = tab == .translated && translatedText == nil ? .original : tab
         tabSwitch.selectedTab = selectedTab
-        textView.string = displayedText
+        textView.string = presentedText
         textView.scrollToBeginningOfDocument(nil)
         updateTabState()
     }

@@ -102,15 +102,15 @@ final class EditorWindowController: NSWindowController {
     private func runOCR() {
         showOCRPanel(text: "OCR 识别中...")
         toolbarController.setBusy(true)
-        OCRService().recognizeText(in: state.capture.image) { [weak self] result in
+        OCRService().recognizeContent(in: state.capture.image) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.toolbarController.setBusy(false)
                 switch result {
-                case .success(let lines):
-                    self.state.ocrLines = lines
+                case .success(let content):
+                    self.state.ocrLines = content.lines
                     self.canvasView.needsDisplay = true
-                    self.updateOCRPanel(lines)
+                    self.updateOCRPanel(content)
                 case .failure(let error):
                     self.showOCRPanel(text: "OCR 失败：\(error.localizedDescription)")
                 }
@@ -162,11 +162,12 @@ final class EditorWindowController: NSWindowController {
         panel.show()
     }
 
-    private func updateOCRPanel(_ lines: [OCRLine]) {
+    private func updateOCRPanel(_ result: OCRRecognitionResult) {
         if ocrPanelController == nil {
-            showOCRPanel(text: lines.map(\.text).joined(separator: "\n"))
+            showOCRPanel(text: result.lines.map(\.text).joined(separator: "\n"))
+            ocrPanelController?.update(result: result)
         } else {
-            ocrPanelController?.update(lines: lines)
+            ocrPanelController?.update(result: result)
         }
     }
 

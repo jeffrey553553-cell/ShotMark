@@ -11,7 +11,7 @@ permissions, multi-display behavior, and regression coverage are all verified.
 | Area and window capture | Fast global shortcut, frozen screen, smart window selection, Retina and multi-display correctness | Implemented | 99.5% successful activation and export across the supported test matrix |
 | Scrolling capture | Vertical and horizontal live preview, fixed-element removal, manual and automatic capture, recovery after poor overlap | Bidirectional vertical and horizontal manual capture plus optional vertical automatic capture implemented | 95% first-attempt success in the real-app corpus; no missing or duplicated content in deterministic fixtures |
 | Annotation | Consistent selection, undo/redo, polished arrows, text, counters, blur and callouts | Implemented | Every annotation follows the same select/move/resize/edit/Esc rules and exports pixel-identically |
-| OCR and translation | Automatic language recognition, selectable text, reliable copy and translation | Implemented | Chinese and English fixture accuracy is tracked; all empty, permission and network failures are actionable |
+| OCR and translation | Automatic language recognition, QR/barcode detection, selectable text, reliable copy and translation | Implemented | Chinese and English fixture accuracy plus QR decoding are tracked; all empty, permission and network failures are actionable |
 | Recording | Native resolution, system and microphone audio, pause/resume, cursor options | Implemented | 30-minute stability run, audio sync, low-disk failure and permission recovery pass |
 | Pinning | Multiple always-on-top images, zoom, opacity, pass-through and close-all | Implemented | Multi-display restore and lifecycle tests pass without orphan windows |
 | Distribution | Recognizable app icon, signed/notarized installer, replacement install and automatic updates | Local signing and GitHub Releases | Developer ID notarization, Sparkle feed, rollback-safe updates and release automation |
@@ -45,6 +45,13 @@ permissions, multi-display behavior, and regression coverage are all verified.
 
 ## Current Iteration
 
+- OCR now performs text and barcode detection in one Vision pass. QR, Aztec,
+  Data Matrix, PDF417, Code 128, EAN-13, EAN-8 and UPC-E payloads are deduplicated,
+  selectable in a compact result row and copyable individually or with all text.
+- A code-only capture is now a successful OCR result. Loading and error
+  placeholders cannot be copied, the panel uses adaptive light/dark colors, and
+  it opens on the display containing the capture instead of always using the
+  primary display. Added a generated real-QR test and AppKit rendering coverage.
 - Long-screenshot diagnostics now record the resolved axis and aggregate
   completion and frame-acceptance rates separately for vertical and horizontal
   sessions. Legacy reports without an axis remain readable as vertical data,

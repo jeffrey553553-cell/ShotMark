@@ -38,7 +38,7 @@ adapted because upstream projects can change.
 | Smart window selection | Implemented with ScreenCaptureKit, CGWindow and AX calibration | Snapzy | Add application/element mode and window-shadow export |
 | Selection precision | Magnifier, color readout and physical-pixel keyboard movement implemented | Snapzy, Flameshot | Add optional standalone color picker |
 | Annotation | Editable rectangle, ellipse, arrow, freehand pen, non-compounding highlighter, number, text, callout and blur | capcap, Snapzy, Flameshot | Add constrained geometry, spotlight and multi-selection |
-| OCR and translation | Implemented with Vision and Translation | Snapzy, Apple Vision | Preserve layout and add language chooser |
+| OCR and translation | Text plus QR/common barcode detection implemented with Vision; translation uses Apple Translation | Snapzy, iShot, CleanShot X, Apple Vision | Preserve layout and add an explicit language chooser |
 | Scrolling capture | Bidirectional vertical and horizontal stitching, dynamic-region consensus, fixed-element cleanup, axis-aware live crop and safety limits | Snapzy, ScrollSnap, ShareX, CleanShot X | Expand real-app success metrics across browsers, documents and design canvases |
 | Recording | Native-size MP4, four audio modes, system click highlight, pause/resume with H.264 segment merging | Kap, Snapzy, Apple ScreenCaptureKit | GIF export, keystroke overlay and lightweight trim |
 | Pinning | Independent windows with constrained zoom, opacity, copy/save, mouse pass-through lock and multi-pin management | Snapzy, Shotnix | Pin groups and persisted workspaces |

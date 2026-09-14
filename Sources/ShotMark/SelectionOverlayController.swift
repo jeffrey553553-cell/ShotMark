@@ -4021,14 +4021,14 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         switch result {
         case .success(let capture):
             showOCRPanel(text: "OCR 识别中...")
-            OCRService().recognizeText(in: capture.image) { [weak self] ocrResult in
+            OCRService().recognizeContent(in: capture.image) { [weak self] ocrResult in
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.isOCRBusy = false
                     self.needsDisplay = true
                     switch ocrResult {
-                    case .success(let lines):
-                        self.updateOCRPanel(lines)
+                    case .success(let content):
+                        self.updateOCRPanel(content)
                     case .failure(let error):
                         self.showOCRPanel(text: "OCR 失败：\(error.localizedDescription)")
                     }
@@ -4072,15 +4072,12 @@ final class SelectionOverlayView: NSView, NSTextViewDelegate {
         installOCRDismissEventMonitor()
     }
 
-    private func updateOCRPanel(_ lines: [OCRLine]) {
-        if lines.isEmpty {
-            showOCRPanel(text: "未识别到文字")
-            return
-        }
+    private func updateOCRPanel(_ result: OCRRecognitionResult) {
         if ocrPanelController == nil {
-            showOCRPanel(text: lines.map(\.text).joined(separator: "\n"))
+            showOCRPanel(text: result.lines.map(\.text).joined(separator: "\n"))
+            ocrPanelController?.update(result: result)
         } else {
-            ocrPanelController?.update(lines: lines)
+            ocrPanelController?.update(result: result)
         }
     }
 

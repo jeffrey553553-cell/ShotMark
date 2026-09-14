@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import Vision
 
 struct CaptureSelection {
     let rectInScreen: CGRect
@@ -165,6 +166,33 @@ enum Annotation {
 struct OCRLine {
     let text: String
     let boundingBox: CGRect
+}
+
+struct OCRDetectedCode: Equatable {
+    let payload: String
+    let symbology: VNBarcodeSymbology
+    let boundingBox: CGRect
+
+    var displayName: String {
+        switch symbology {
+        case .qr: "二维码"
+        case .aztec: "Aztec"
+        case .dataMatrix: "Data Matrix"
+        case .pdf417: "PDF417"
+        case .code128: "Code 128"
+        case .ean13: "EAN-13"
+        case .ean8: "EAN-8"
+        case .upce: "UPC-E"
+        default: "条码"
+        }
+    }
+}
+
+struct OCRRecognitionResult {
+    let lines: [OCRLine]
+    let codes: [OCRDetectedCode]
+
+    var isEmpty: Bool { lines.isEmpty && codes.isEmpty }
 }
 
 enum ExportDestination {
