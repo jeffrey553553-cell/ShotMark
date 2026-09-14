@@ -647,6 +647,7 @@ final class LongScreenshotSessionController {
                 return
             }
             captureAxis = motion.axis
+            qualityTracker.recordAxis(motion.axis)
             controlView?.captureAxis = motion.axis
             previewView?.captureAxis = motion.axis
             if motion.axis == .horizontal {
@@ -1252,6 +1253,7 @@ final class LongScreenshotSessionController {
                 return
             }
             captureAxis = .vertical
+            qualityTracker.recordAxis(.vertical)
             controlView?.captureAxis = .vertical
             previewView?.captureAxis = .vertical
         }

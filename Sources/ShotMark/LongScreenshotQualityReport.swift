@@ -26,6 +26,7 @@ struct LongScreenshotQualityReport: Codable, Equatable, Identifiable {
     let viewportHeight: Int
     let outputWidth: Int
     let outputHeight: Int
+    let axis: LongScreenshotAxis?
     let stitchAttempts: Int
     let acceptedFrames: Int
     let appendedFrames: Int
@@ -101,6 +102,18 @@ final class LongScreenshotQualityReportStore {
         let alignmentFailures = reports.reduce(0) { $0 + $1.alignmentFailureFrames }
         let retries = reports.reduce(0) { $0 + $1.retryCount }
         let capacityStops = reports.filter(\.reachedCapacityLimit).count
+        let vertical = reports.filter { ($0.axis ?? .vertical) == .vertical }
+        let horizontal = reports.filter { $0.axis == .horizontal }
+        let unresolved = reports.filter { $0.axis == .undetermined }
+        func axisSummary(_ reports: [LongScreenshotQualityReport]) -> String {
+            let completed = reports.filter {
+                $0.completion == .completedForSave || $0.completion == .completedForCopy
+            }
+            let acceptance = completed.isEmpty
+                ? 0
+                : completed.reduce(0) { $0 + $1.acceptanceRate } / Double(completed.count)
+            return "\(reports.count)（完成 \(completed.count)，采纳率 \(Int((acceptance * 100).rounded()))%）"
+        }
 
         var lines = [
             "ShotMark 长截图诊断摘要",
@@ -109,6 +122,9 @@ final class LongScreenshotQualityReportStore {
             "最近会话：\(reports.count)/\(Self.maximumReportCount)",
             "完成：\(completed.count)  取消：\(reports.filter { $0.completion == .cancelled }.count)  失败：\(reports.filter { $0.completion == .failed }.count)",
             "完成会话平均采纳率：\(Int((averageAcceptance * 100).rounded()))%",
+            "纵向：\(axisSummary(vertical))",
+            "横向：\(axisSummary(horizontal))",
+            "待识别方向：\(unresolved.count)",
             "对齐失败帧：\(alignmentFailures)  自动重试：\(retries)  安全上限停止：\(capacityStops)",
             "",
             "最近 10 次："
@@ -117,11 +133,12 @@ final class LongScreenshotQualityReportStore {
         for report in reports.suffix(10).reversed() {
             let confidence = Int((report.averageConfidence * 100).rounded())
             let mode = report.usedAutomaticScrolling ? "自动+手动" : "手动"
+            let axis = (report.axis ?? .vertical).displayName
             lines.append(
                 "\(Self.dateFormatter.string(from: report.startedAt)) | \(report.completion.displayName) | "
                     + "\(report.outputWidth)x\(report.outputHeight) | \(String(format: "%.1fs", report.durationSeconds)) | "
                     + "采纳 \(report.acceptedFrames)/\(report.stitchAttempts) | 对齐失败 \(report.alignmentFailureFrames) | "
-                    + "置信度 \(confidence)% | \(mode)"
+                    + "置信度 \(confidence)% | \(axis) | \(mode)"
             )
         }
         return lines.joined(separator: "\n")
@@ -172,6 +189,7 @@ final class LongScreenshotQualityTracker {
     private var usedAutomaticScrolling = false
     private var usedCompatibilityCapture = false
     private var reachedCapacityLimit = false
+    private var axis: LongScreenshotAxis = .undetermined
     private var confidenceTotal = 0.0
     private var confidenceSampleCount = 0
     private var minimumConfidence = 1.0
@@ -232,6 +250,11 @@ final class LongScreenshotQualityTracker {
         usedCompatibilityCapture = true
     }
 
+    func recordAxis(_ axis: LongScreenshotAxis) {
+        guard self.axis == .undetermined, axis != .undetermined else { return }
+        self.axis = axis
+    }
+
     func finish(
         completion: LongScreenshotSessionCompletion,
         outputSize: CGSize = .zero,
@@ -248,6 +271,7 @@ final class LongScreenshotQualityTracker {
             viewportHeight: viewportHeight,
             outputWidth: max(0, Int(outputSize.width.rounded())),
             outputHeight: max(0, Int(outputSize.height.rounded())),
+            axis: axis,
             stitchAttempts: stitchAttempts,
             acceptedFrames: acceptedFrames,
             appendedFrames: appendedFrames,

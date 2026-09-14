@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-enum LongScreenshotAxis: Equatable {
+enum LongScreenshotAxis: String, Codable, Equatable {
     case undetermined
     case vertical
     case horizontal

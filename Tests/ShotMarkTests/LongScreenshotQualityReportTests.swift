@@ -42,6 +42,9 @@ final class LongScreenshotQualityReportTests: XCTestCase {
         XCTAssertTrue(summary.contains("最近会话：2/50"))
         XCTAssertTrue(summary.contains("完成：1"))
         XCTAssertTrue(summary.contains("取消：1"))
+        XCTAssertTrue(summary.contains("纵向：2（完成 1，采纳率 75%）"))
+        XCTAssertTrue(summary.contains("横向：0（完成 0，采纳率 0%）"))
+        XCTAssertTrue(summary.contains("待识别方向：0"))
     }
 
     func testTrackerRecordsOutcomesAndFinishesOnlyOnce() {
@@ -57,6 +60,7 @@ final class LongScreenshotQualityReportTests: XCTestCase {
         tracker.record(makeUpdate(outcome: .appended(deltaY: 500), direction: .upward, confidence: 0.8))
         tracker.recordRetry()
         tracker.recordAutomaticScrollingUsed()
+        tracker.recordAxis(.horizontal)
         tracker.finish(
             completion: .completedForCopy,
             outputSize: CGSize(width: 1_200, height: 3_100),
@@ -74,6 +78,7 @@ final class LongScreenshotQualityReportTests: XCTestCase {
         XCTAssertEqual(report?.retryCount, 1)
         XCTAssertEqual(report?.directionChangeCount, 1)
         XCTAssertEqual(report?.usedAutomaticScrolling, true)
+        XCTAssertEqual(report?.axis, .horizontal)
     }
 
     func testRecoveryAdviceBecomesDirectionalAfterRepeatedFailures() {
@@ -129,6 +134,7 @@ final class LongScreenshotQualityReportTests: XCTestCase {
             viewportHeight: 800,
             outputWidth: 1_000,
             outputHeight: outputHeight,
+            axis: nil,
             stitchAttempts: 4,
             acceptedFrames: 3,
             appendedFrames: 2,

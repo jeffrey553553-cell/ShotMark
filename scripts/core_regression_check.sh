@@ -192,6 +192,7 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "LongScreenshotCapacityPolicy" Sources/ShotMark/LongScreenshotCapacityPolicy.swift Sources/ShotMark/LongScreenshotStitcher.swift Tests/ShotMarkTests/LongScreenshotCapacityPolicyTests.swift
   rg -q "reachedMaximumHeight" Sources/ShotMark/LongScreenshotStitcher.swift Sources/ShotMark/LongScreenshotSessionController.swift Tests/ShotMarkTests/LongScreenshotStitcherTests.swift
   rg -q "LongScreenshotQualityReportStore" Sources/ShotMark/LongScreenshotQualityReport.swift Sources/ShotMark/SettingsWindowController.swift Tests/ShotMarkTests/LongScreenshotQualityReportTests.swift
+  rg -q "recordAxis" Sources/ShotMark/LongScreenshotQualityReport.swift Sources/ShotMark/LongScreenshotSessionController.swift Tests/ShotMarkTests/LongScreenshotQualityReportTests.swift
   rg -q "consecutiveAlignmentFailureCount" Sources/ShotMark/LongScreenshotSessionController.swift Tests/ShotMarkTests/LongScreenshotQualityReportTests.swift
   rg -q "isSessionActive" Sources/ShotMark/LongScreenshotSessionController.swift
   rg -q "UpdateCheckService" Sources/ShotMark/UpdateCheckService.swift Sources/ShotMark/AppDelegate.swift Tests/ShotMarkTests/UpdateCheckServiceTests.swift

@@ -45,6 +45,11 @@ permissions, multi-display behavior, and regression coverage are all verified.
 
 ## Current Iteration
 
+- Long-screenshot diagnostics now record the resolved axis and aggregate
+  completion and frame-acceptance rates separately for vertical and horizontal
+  sessions. Legacy reports without an axis remain readable as vertical data,
+  and reports continue to exclude image content, OCR text, application names
+  and file paths.
 - Added horizontal long screenshot capture. The first decisive scroll gesture
   locks the axis, trackpad cross-axis noise is ignored, and the existing mature
   overlap, fixed-element, reverse-scroll and capacity logic is reused without
