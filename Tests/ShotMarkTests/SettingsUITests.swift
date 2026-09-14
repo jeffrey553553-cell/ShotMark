@@ -30,7 +30,7 @@ final class SettingsUITests: XCTestCase {
         let controller = SettingsWindowController(
             onShortcutChange: { _ in },
             onShortcutRecordingStateChange: { _ in },
-            currentVersion: "0.1.58"
+            currentVersion: "0.1.59"
         )
         let window = try XCTUnwrap(controller.window)
         controller.showWindow(nil)

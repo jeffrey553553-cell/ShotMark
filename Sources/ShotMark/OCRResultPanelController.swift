@@ -23,6 +23,15 @@ enum OCRClipboardContent {
     }
 }
 
+enum OCRTextFormatting {
+    static func format(_ text: String, preservesLineBreaks: Bool) -> String {
+        guard !preservesLineBreaks else { return text }
+        return text
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+    }
+}
+
 final class OCRResultPanelController: NSWindowController {
     private let textView = NSTextView()
     private let statusLabel = NSTextField(labelWithString: "")
@@ -31,6 +40,12 @@ final class OCRResultPanelController: NSWindowController {
     private let tabSwitch = OCRTabSwitchView()
     private let codeRow = NSStackView()
     private let codePicker = NSPopUpButton()
+    private let lineBreakButton = NSButton(
+        checkboxWithTitle: "保留换行",
+        target: nil,
+        action: nil
+    )
+    private var codeControls: [NSView] = []
     private let translationModel = OCRTranslationRequestModel()
     private var availabilityTask: Task<Void, Never>?
     private var scrollTopWithoutTabs: NSLayoutConstraint?
@@ -43,13 +58,19 @@ final class OCRResultPanelController: NSWindowController {
     private var detectedCodes: [OCRDetectedCode] = []
     private var translatedText: String?
     private var selectedTab: OCRTab = .original
-    private var displayedText: String {
+    private var rawDisplayedText: String {
         switch selectedTab {
         case .original:
             return recognizedText
         case .translated:
             return translatedText ?? ""
         }
+    }
+    private var displayedText: String {
+        OCRTextFormatting.format(
+            rawDisplayedText,
+            preservesLineBreaks: lineBreakButton.state == .on
+        )
     }
     private var presentedText: String {
         let trimmed = displayedText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -196,9 +217,21 @@ final class OCRResultPanelController: NSWindowController {
         codeRow.orientation = .horizontal
         codeRow.alignment = .centerY
         codeRow.spacing = 8
-        codeRow.isHidden = true
+        codeRow.isHidden = false
         codeRow.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(codeRow)
+
+        lineBreakButton.target = self
+        lineBreakButton.action = #selector(lineBreakPreferenceChanged)
+        lineBreakButton.controlSize = .small
+        lineBreakButton.state = AppSettings.shared.ocrPreservesLineBreaks ? .on : .off
+        lineBreakButton.toolTip = "关闭后，复制文字时会把换行合并为空格"
+        codeRow.addArrangedSubview(lineBreakButton)
+
+        let flexibleSpace = NSView()
+        flexibleSpace.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        flexibleSpace.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        codeRow.addArrangedSubview(flexibleSpace)
 
         let codeIcon = NSImageView(image: NSImage(
             systemSymbolName: "qrcode.viewfinder",
@@ -215,6 +248,7 @@ final class OCRResultPanelController: NSWindowController {
         copyCodeButton.controlSize = .small
         copyCodeButton.bezelStyle = .rounded
         copyCodeButton.toolTip = "复制当前二维码或条码内容"
+        codeControls = [codeIcon, codeLabel, codePicker, copyCodeButton]
         codeRow.addArrangedSubview(codeIcon)
         codeRow.addArrangedSubview(codeLabel)
         codeRow.addArrangedSubview(codePicker)
@@ -262,6 +296,7 @@ final class OCRResultPanelController: NSWindowController {
             bridgeView.heightAnchor.constraint(equalToConstant: 0)
         ])
         updateTabState()
+        updateCodeRow()
         updateActionState()
     }
 
@@ -299,6 +334,14 @@ final class OCRResultPanelController: NSWindowController {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(detectedCodes[index].payload, forType: .string)
         statusLabel.stringValue = "码内容已复制"
+    }
+
+    @objc private func lineBreakPreferenceChanged() {
+        AppSettings.shared.ocrPreservesLineBreaks = lineBreakButton.state == .on
+        textView.string = presentedText
+        textView.scrollToBeginningOfDocument(nil)
+        statusLabel.stringValue = lineBreakButton.state == .on ? "保留换行" : "已合并换行"
+        updateActionState()
     }
 
     @objc private func translateText() {
@@ -375,9 +418,10 @@ final class OCRResultPanelController: NSWindowController {
             codePicker.lastItem?.toolTip = code.payload
         }
         let hasCodes = !detectedCodes.isEmpty
-        codeRow.isHidden = !hasCodes
-        scrollBottomWithoutCodes?.isActive = !hasCodes
-        scrollBottomWithCodes?.isActive = hasCodes
+        codeControls.forEach { $0.isHidden = !hasCodes }
+        codeRow.isHidden = false
+        scrollBottomWithoutCodes?.isActive = false
+        scrollBottomWithCodes?.isActive = true
         window?.contentView?.layoutSubtreeIfNeeded()
     }
 

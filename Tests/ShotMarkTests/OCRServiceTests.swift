@@ -55,6 +55,43 @@ final class OCRServiceTests: XCTestCase {
         )
     }
 
+    func testLineBreakFormattingNeverChangesCodePayloads() {
+        let source = "第一行\n第二行\twith spaces"
+        XCTAssertEqual(
+            OCRTextFormatting.format(source, preservesLineBreaks: true),
+            source
+        )
+        XCTAssertEqual(
+            OCRTextFormatting.format(source, preservesLineBreaks: false),
+            "第一行 第二行 with spaces"
+        )
+
+        let code = OCRDetectedCode(
+            payload: "https://shotmark.app/a%0Ab?value=line1\nline2",
+            symbology: .qr,
+            boundingBox: .zero
+        )
+        XCTAssertEqual(
+            OCRClipboardContent.compose(
+                text: OCRTextFormatting.format(source, preservesLineBreaks: false),
+                codes: [code]
+            ),
+            "第一行 第二行 with spaces\n\nhttps://shotmark.app/a%0Ab?value=line1\nline2"
+        )
+    }
+
+    func testLineBreakPreferencePersistsAndDefaultsToPreservingLayout() {
+        let suiteName = "ShotMarkOCRTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let initial = AppSettings(defaults: defaults)
+        XCTAssertTrue(initial.ocrPreservesLineBreaks)
+        initial.ocrPreservesLineBreaks = false
+
+        XCTAssertFalse(AppSettings(defaults: defaults).ocrPreservesLineBreaks)
+    }
+
     private func makeQRCode(payload: String) throws -> CGImage {
         let filter = CIFilter.qrCodeGenerator()
         filter.message = Data(payload.utf8)

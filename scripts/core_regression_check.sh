@@ -55,7 +55,8 @@ run_step "Privacy metadata verify" env ROOT_DIR="$ROOT_DIR" bash -c '
   set -euo pipefail
   INFO="$ROOT_DIR/dist/ShotMark.app/Contents/Info.plist"
   [[ -n "$(plutil -extract NSMicrophoneUsageDescription raw -o - "$INFO")" ]]
-  codesign -dv --verbose=4 "$ROOT_DIR/dist/ShotMark.app" 2>&1 | rg -q "flags=.*runtime"
+  signature="$(codesign -dv --verbose=4 "$ROOT_DIR/dist/ShotMark.app" 2>&1)"
+  rg -q "flags=.*runtime" <<<"$signature"
 '
 run_step "Permission reset coverage verify" env ROOT_DIR="$ROOT_DIR" bash -c '
   set -euo pipefail
@@ -160,6 +161,9 @@ run_step "P1 editing and recording static checks" bash -c '
   rg -q "recognizeContent" Sources/ShotMark/OCRService.swift Sources/ShotMark/EditorWindowController.swift Sources/ShotMark/SelectionOverlayController.swift
   rg -q "testRecognizeContentDecodesQRCodePayload" Tests/ShotMarkTests/OCRServiceTests.swift
   rg -q "testMixedTextAndCodesRenderInLightAndDarkAppearances" Tests/ShotMarkTests/OCRResultPanelUITests.swift
+  rg -q "ocrPreservesLineBreaks" Sources/ShotMark/Models.swift Sources/ShotMark/OCRResultPanelController.swift Tests/ShotMarkTests/OCRServiceTests.swift
+  rg -q "testLineBreakFormattingNeverChangesCodePayloads" Tests/ShotMarkTests/OCRServiceTests.swift
+  rg -q "testLineBreakPreferencePersistsAndDefaultsToPreservingLayout" Tests/ShotMarkTests/OCRServiceTests.swift
   rg -q "ScreenSnapshot" Sources/ShotMark/Models.swift
   rg -q "captureSnapshots" Sources/ShotMark/CaptureService.swift
   rg -q "frozenSnapshot" Sources/ShotMark/SelectionOverlayController.swift
@@ -378,6 +382,7 @@ Mark each item PASS/FAIL after running it.
 | Multiple pins | Create two pins, then use the status menu | Count is correct; Show All and Close All affect every pin | |
 | OCR | Click OCR on Chinese+English text | OCR panel shows recognized text; copy all works | |
 | OCR | Capture one or more QR/common barcodes, including a code-only region | Each unique payload appears once; individual copy and Copy All preserve the complete value | |
+| OCR | Turn Preserve Line Breaks off, copy text, close OCR and reopen it | Text is shown/copied as a continuous line, code payloads are unchanged, and the preference remains off | |
 | OCR | Open OCR from an external display | Result panel opens beside the selection on that display and remains fully visible | |
 | OCR | Open OCR panel and press Esc | OCR panel closes and screenshot/editor focus returns | |
 | Toast | Save or copy in light mode | Success toast remains readable with dark pill, check icon and white text | |

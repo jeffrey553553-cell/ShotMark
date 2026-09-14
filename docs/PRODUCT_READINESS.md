@@ -45,6 +45,13 @@ permissions, multi-display behavior, and regression coverage are all verified.
 
 ## Current Iteration
 
+- Added a persistent Preserve Line Breaks control to OCR results. It defaults
+  to preserving detected layout; when disabled, visible and copied text is
+  normalized into a continuous line while QR and barcode payloads remain byte
+  for byte unchanged. Loading and error placeholders remain non-copyable.
+- The compact footer collapses code-specific controls when no codes exist and
+  expands them only for mixed/code results. Added preference migration,
+  formatting and light/dark panel rendering tests.
 - OCR now performs text and barcode detection in one Vision pass. QR, Aztec,
   Data Matrix, PDF417, Code 128, EAN-13, EAN-8 and UPC-E payloads are deduplicated,
   selectable in a compact result row and copyable individually or with all text.

@@ -249,6 +249,7 @@ final class AppSettings {
     private let hasPresentedOnboardingKey = "shotmark.hasPresentedOnboarding.v1"
     private let hasCompletedOnboardingKey = "shotmark.hasCompletedOnboarding.v1"
     private let previousCaptureAreaKey = "shotmark.previousCaptureArea.v1"
+    private let ocrPreservesLineBreaksKey = "shotmark.ocrPreservesLineBreaks"
 
     init(defaults: UserDefaults) {
         self.defaults = defaults
@@ -287,6 +288,15 @@ final class AppSettings {
                 : defaults.bool(forKey: automaticallyChecksForUpdatesKey)
         }
         set { defaults.set(newValue, forKey: automaticallyChecksForUpdatesKey) }
+    }
+
+    var ocrPreservesLineBreaks: Bool {
+        get {
+            defaults.object(forKey: ocrPreservesLineBreaksKey) == nil
+                ? true
+                : defaults.bool(forKey: ocrPreservesLineBreaksKey)
+        }
+        set { defaults.set(newValue, forKey: ocrPreservesLineBreaksKey) }
     }
 
     var lastUpdateCheckAt: Date? {
